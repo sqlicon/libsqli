@@ -1,0 +1,183 @@
+.TH SQ LICON 1 "2026-06-22" "sqlicon 0.1.4" "User Commands"
+.SH NAME
+sqlicon \- interactive shell for Informix
+.SH SYNOPSIS
+.B sqlicon
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B Sqlicon
+is a command-line interface for IBM Informix databases. It connects directly
+using the Informix SQLI wire protocol (no Informix Client SDK required) and
+provides an interactive SQL prompt, batch mode, and script execution.
+.SH OPTIONS
+.TP
+.B \-c, \-\-command \fIsql\fR
+Execute a single SQL statement and exit.
+.TP
+.B \-e, \-\-execute \fIsql\fR
+Execute a single SQL statement and exit (same as \fB\-c\fR).
+.TP
+.B \-f, \-\-file \fIpath\fR
+Execute SQL statements from a script file and exit.
+.TP
+.B \-h, \-\-help
+Show help and exit.
+.TP
+.B \-p, \-\-profile \fIname\fR
+Use a named connection profile (stored in ~/.config/sqlicon/profiles).
+.TP
+.B \-\-profile\-create \fIname\fR
+Create a connection profile from the given connection flags.
+.TP
+.B \-\-profile\-show \fIname\fR
+Show profile connection details (password masked).
+.TP
+.B \-\-profile\-list
+List all available connection profiles.
+.TP
+.B \-\-profile\-update \fIname\fR
+Update a profile's fields from the given connection flags.
+.TP
+.B \-\-profile\-delete \fIname\fR
+Delete a profile (requires \fB\-\-yes\fR).
+.TP
+.B \-\-profile\-default \fIname\fR
+Set the default profile name.
+.TP
+.B \-\-profile\-test \fIname\fR
+Test a profile's connection and exit.
+.TP
+.B \-\-show\-secret
+Show cleartext password in \fB\-\-profile\-show\fR.
+.TP
+.B \-\-yes
+Confirm destructive actions (required for \fB\-\-profile\-delete\fR).
+.TP
+.B \-\-host \fIname\fR
+Informix host name or IP address.
+.TP
+.B \-\-port \fIvalue\fR
+Informix service or port number.
+.TP
+.B \-\-server \fIname\fR
+Informix server name (from sqlhosts).
+.TP
+.B \-\-database \fIname\fR
+Database name to connect to.
+.TP
+.B \-\-user \fIname\fR
+User name for authentication.
+.TP
+.B \-\-password \fIvalue\fR
+Password for authentication (avoid in shell history).
+.TP
+.B \-\-client\-locale \fIvalue\fR
+Client locale (e.g. en_US.utf8).
+.TP
+.B \-\-db\-locale \fIvalue\fR
+Database locale (e.g. de_DE.CP1252).
+.SH MODES
+If no mode option is provided, sqlicon determines the mode automatically:
+.TP
+.B Interactive mode
+When stdin is a terminal (TTY), an interactive SQL prompt starts.
+.TP
+.B Batch mode
+When stdin is redirected (e.g., piped from a file), SQL statements are
+read from stdin until EOF.
+.SH DOT COMMANDS
+The following dot commands are available in interactive and batch modes:
+.TP
+.B .help
+Show a list of dot commands.
+.TP
+.B .quit, .exit
+Exit the shell.
+.TP
+.B .mode \fIMODE\fR
+Set output mode: \fBaligned\fR (default), \fBcsv\fR, \fBline\fR, \fBjson\fR, \fBmarkdown\fR.
+.TP
+.B .width \fIIDX WIDTH\fR
+Set minimum display width for column \fIIDX\fR in aligned mode.
+.TP
+.B .width off
+Reset all width overrides.
+.TP
+.B .headers on|off
+Toggle column headers in output.
+.TP
+.B .bail on|off
+Stop (\fBon\fR) or continue (\fBoff\fR) on SQL errors.
+.TP
+.B .timer on|off
+Show statement execution time on stderr.
+.TP
+.B .nullvalue \fITEXT\fR
+Set the display text for NULL values (default: "NULL").
+.TP
+.B .output \fIFILE|stdout\fR
+Redirect output to a file persistently, or to stdout.
+.TP
+.B .once \fIFILE\fR
+Redirect the next statement's output to a file, then resume normal output.
+.TP
+.B .read \fIFILE\fR
+Execute SQL and dot commands from a script file.
+.TP
+.B .explain on|off
+Execute SET EXPLAIN ON/OFF to show query execution plans.
+.TP
+.B .use \fIDATABASE\fR
+Switch the active database in the current session.
+.TP
+.B .databases
+List available databases.
+.TP
+.B .status
+Show current session and database metadata.
+.TP
+.B .schema \fITABLE\fR
+Show table columns and raw Informix data types.
+.TP
+.B .indexes \fITABLE\fR
+Show index metadata for a table.
+.TP
+.B .constraints \fITABLE\fR
+Show table constraints (PRIMARY KEY, FOREIGN KEY, UNIQUE, CHECK).
+.TP
+.B .dump [\fITABLE\fR]
+Export table rows as SQL INSERT statements. Omit TABLE to dump all user tables.
+.TP
+.B .import \fIFILE TABLE\fR
+Import a CSV file (with header row) into the specified table.
+.TP
+.B .tables
+List user tables in the current database.
+.SH PROFILES
+Connection profiles are stored in \fI~/.config/sqlicon/profiles/\fR.
+Passwords are encrypted using AES-256-GCM with a key derived from the
+user's UID and hostname. Profiles protect against accidental file
+disclosure but not against an attacker with access to the same
+machine and account.
+.SH ENVIRONMENT
+Profiles are loaded from \fI~/.config/sqlicon/profiles/\fR.
+.SH EXAMPLES
+.TP
+Connect interactively using a profile:
+.B sqlicon \-p mydb
+.TP
+Execute a single query:
+.B sqlicon \-p mydb \-c "SELECT COUNT(*) FROM orders"
+.TP
+Run a script file:
+.B sqlicon \-p mydb \-f migrate.sql
+.TP
+Pipe SQL from stdin:
+.B echo "SELECT * FROM systables" | sqlicon \-p mydb
+.TP
+Export query results as JSON:
+.B echo \e".mode json\\\\nSELECT * FROM products" | sqlicon \-p mydb
+.SH BUGS
+Report issues at https://github.com/libisql/libsqli/issues
+.SH AUTHOR
+the libisql authors <sqlicon0x7bc@gmail.com>
