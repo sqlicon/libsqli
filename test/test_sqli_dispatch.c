@@ -141,10 +141,10 @@ static size_t build_insertdone_response(uint8_t *buf, int64_t serial8)
     return p;
 }
 
-static size_t build_error_response(uint8_t *buf, int16_t sqlcode, int16_t isamcode)
+static size_t build_error_response_with_message(uint8_t *buf, int16_t sqlcode,
+                                                int16_t isamcode, const char *msg)
 {
     size_t p = 0;
-    const char *msg = "test error";
     uint16_t msg_len = (uint16_t)strlen(msg);
 
     buf[p++] = 0; buf[p++] = SQLI_SQ_ERR;
@@ -158,6 +158,11 @@ static size_t build_error_response(uint8_t *buf, int16_t sqlcode, int16_t isamco
         buf[p++] = 0;
 
     return p;
+}
+
+static size_t build_error_response(uint8_t *buf, int16_t sqlcode, int16_t isamcode)
+{
+    return build_error_response_with_message(buf, sqlcode, isamcode, "test error");
 }
 
 static size_t build_blob_chunk_response(uint8_t *buf, const uint8_t *payload, uint16_t len)
@@ -425,6 +430,40 @@ void test_dispatch_error_response_sets_error_info(void)
     TEST_ASSERT_NOT_NULL(strstr(conn.error_info.sql_message, "Socket connection to server"));
     TEST_ASSERT_NOT_NULL(strstr(conn.error_info.isam_message, "daemon is no longer running"));
     TEST_ASSERT_NOT_NULL(strstr(sqli_error(&conn), "SQLCODE -908"));
+
+    sqli_result_destroy(result);
+    close(read_fd);
+    close(write_fd);
+}
+
+void test_dispatch_error_response_drains_truncated_string(void)
+{
+    int read_fd = -1, write_fd = -1;
+    if (create_socket_pair(&read_fd, &write_fd) != 0)
+        TEST_IGNORE_MESSAGE("socketpair unavailable for dispatch test");
+
+    char long_msg[700];
+    memset(long_msg, 'x', sizeof(long_msg) - 1);
+    long_msg[sizeof(long_msg) - 1] = '\0';
+
+    uint8_t resp[1024];
+    size_t p = 0;
+    p += build_error_response_with_message(resp + p, -100, 0, long_msg);
+    resp[p++] = 0;
+    resp[p++] = SQLI_SQ_EOT;
+
+    TEST_ASSERT_EQUAL_INT((int)p, (int)write(write_fd, resp, p));
+    shutdown(write_fd, SHUT_WR);
+    set_nonblocking(read_fd);
+
+    sqli_result_t *result = calloc(1, sizeof(*result));
+    TEST_ASSERT_NOT_NULL(result);
+    TEST_ASSERT_EQUAL_INT(SQLI_PROTO_ERROR, sqli_receive_dispatch(read_fd, result, NULL));
+
+    uint8_t next[2] = {0};
+    TEST_ASSERT_EQUAL_INT(2, (int)read(read_fd, next, sizeof(next)));
+    TEST_ASSERT_EQUAL_UINT8(0, next[0]);
+    TEST_ASSERT_EQUAL_UINT8(SQLI_SQ_EOT, next[1]);
 
     sqli_result_destroy(result);
     close(read_fd);

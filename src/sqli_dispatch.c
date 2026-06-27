@@ -32,6 +32,7 @@ static sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
                                             const uint8_t *tuple_buf,
                                             size_t tuple_len, size_t *data_start,
                                             size_t *data_len, size_t *span);
+static sqli_status drain_bytes(sqli_conn_t *conn, int fd, size_t count);
 
 static bool grow_capacity_doubling(size_t current, size_t needed, size_t *out_cap)
 {
@@ -219,7 +220,7 @@ static sqli_status read_be32(sqli_conn_t *conn, int fd, uint32_t *val)
 
 static sqli_status read_str(sqli_conn_t *conn, int fd, char *out, size_t out_size)
 {
-    uint16_t len;
+    uint16_t len = 0;
     sqli_status rc = read_be16(conn, fd, &len);
     if (rc != SQLI_OK)
         return rc;
@@ -228,13 +229,31 @@ static sqli_status read_str(sqli_conn_t *conn, int fd, char *out, size_t out_siz
             out[0] = '\0';
         return SQLI_OK;
     }
-    if ((size_t)len >= out_size)
-        len = (uint16_t)(out_size - 1);
-    rc = read_exact(conn, fd, (uint8_t *)out, (size_t)len);
-    if (rc != SQLI_OK)
-        return rc;
-    out[len] = '\0';
-    if (len % 2 != 0) {
+
+    size_t remaining = (size_t)len;
+    size_t copy_len = 0;
+    if (out != NULL && out_size > 0) {
+        copy_len = remaining;
+        if (copy_len >= out_size)
+            copy_len = out_size - 1;
+    }
+
+    if (copy_len > 0) {
+        rc = read_exact(conn, fd, (uint8_t *)out, copy_len);
+        if (rc != SQLI_OK)
+            return rc;
+    }
+    if (out != NULL && out_size > 0)
+        out[copy_len] = '\0';
+
+    remaining -= copy_len;
+    if (remaining > 0) {
+        rc = drain_bytes(conn, fd, remaining);
+        if (rc != SQLI_OK)
+            return rc;
+    }
+
+    if ((len & 1u) != 0u) {
         uint8_t pad;
         rc = read_exact(conn, fd, &pad, 1);
         if (rc != SQLI_OK)

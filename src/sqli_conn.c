@@ -444,6 +444,9 @@ void sqli_destroy(sqli_conn_t *conn)
     if (conn == NULL)
         return;
 
+    /* Honor the public lifecycle contract and release transport resources too. */
+    sqli_close(conn);
+
     if (conn->decode_cd_ready && conn->decode_cd != (iconv_t)-1) {
         iconv_close(conn->decode_cd);
         conn->decode_cd = (iconv_t)-1;

@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+#
+# Copy to test_environment.sh, fill in the values, then source it:
+#   cp test_environment.sh.template test_environment.sh
+#   . ./test_environment.sh
+#
+# This template covers:
+# - the live integration test in test/test_integration.c
+# - tooling such as tools/run_live_must_type_suite.sh
+
+# ------------------------------------------------------------------
+# Live unit/integration test variables
+# Required by: test/test_integration.c:test_query_live_systables
+# ------------------------------------------------------------------
+export SQLI_TEST_HOST="127.0.0.1"
+export SQLI_TEST_PORT="9088"
+export SQLI_TEST_DB="sysmaster"
+export SQLI_TEST_USER="informix"
+export SQLI_TEST_PASS="change-me"
+
+# ------------------------------------------------------------------
+# Optional server name
+# Used by several tools and often useful for manual test runs.
+# ------------------------------------------------------------------
+export SQLI_TEST_SERVER="ol_informix1210"
+
+# ------------------------------------------------------------------
+# Live tooling variables
+# Required by: tools/run_live_must_type_suite.sh
+# If set, these can mirror the SQLI_TEST_* values above.
+# ------------------------------------------------------------------
+export SQLI_LIVE_HOST="${SQLI_TEST_HOST}"
+export SQLI_LIVE_PORT="${SQLI_TEST_PORT}"
+export SQLI_LIVE_DB="${SQLI_TEST_DB}"
+export SQLI_LIVE_SERVER="${SQLI_TEST_SERVER}"
+export SQLI_LIVE_USER="${SQLI_TEST_USER}"
+export SQLI_LIVE_PASS="${SQLI_TEST_PASS}"
+
+# ------------------------------------------------------------------
+# Optional locale settings
+# Defaults in tooling are shown here explicitly for reproducibility.
+# ------------------------------------------------------------------
+export SQLI_CLIENT_LOCALE="en_US.utf8"
+export SQLI_DB_LOCALE="de_DE.CP1252"
+
+# ------------------------------------------------------------------
+# Optional diagnostics
+# Uncomment when debugging live runs.
+# ------------------------------------------------------------------
+# export SQLI_LOG_LEVEL="DEBUG"
+# export SQLI_LOG_BYTES="1"
+# export SQLI_IO_TIMEOUT_SEC="10"

@@ -269,8 +269,10 @@ sqli_status sqli_connect_uri(sqli_conn_t *conn, const char *uri,
             const char *informixtmp = getenv("INFORMIXTMP");
             if (informixtmp && informixtmp[0] != '\0') {
                 snprintf(default_socket, sizeof(default_socket), "%s/%s.str", informixtmp, server);
-            } else {
+            } else if (access("/INFORMIXTMP", F_OK) == 0) {
                 snprintf(default_socket, sizeof(default_socket), "/INFORMIXTMP/%s.str", server);
+            } else {
+                snprintf(default_socket, sizeof(default_socket), "/tmp/.infosock.%s", server);
             }
             params.service = default_socket;
         }

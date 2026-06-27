@@ -6,6 +6,7 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
+#include <unistd.h>
 
 typedef struct {
     sqli_conn_t *conn;
@@ -116,21 +117,14 @@ static sqli_status ensure_slot_connected(sqli_pool_t *pool, size_t idx)
     return SQLI_OK;
 }
 
-static sqli_status acquire_from_pool_locked(sqli_pool_t *pool, sqli_conn_t **conn)
+static ssize_t find_available_slot_locked(sqli_pool_t *pool)
 {
     for (size_t i = 0; i < pool->size; i++) {
         if (pool->slots[i].in_use)
             continue;
-
-        sqli_status rc = ensure_slot_connected(pool, i);
-        if (rc != SQLI_OK)
-            continue;
-
-        pool->slots[i].in_use = true;
-        *conn = pool->slots[i].conn;
-        return SQLI_OK;
+        return (ssize_t)i;
     }
-    return SQLI_TIMEOUT;
+    return -1;
 }
 
 sqli_status sqli_pool_create(sqli_pool_t **pool,
@@ -219,10 +213,43 @@ sqli_status sqli_pool_acquire_timeout(sqli_pool_t *pool, sqli_conn_t **conn,
     }
 
     while (!pool->shutting_down) {
-        sqli_status rc = acquire_from_pool_locked(pool, conn);
-        if (rc == SQLI_OK) {
+        ssize_t idx = find_available_slot_locked(pool);
+        if (idx >= 0) {
+            sqli_pool_slot *slot = &pool->slots[idx];
+            slot->in_use = true;
+
+            if (slot->conn != NULL &&
+                slot->conn->state == SQLI_CONN_READY &&
+                slot->conn->socket_fd >= 0) {
+                *conn = slot->conn;
+                pthread_mutex_unlock(&pool->mu);
+                return SQLI_OK;
+            }
+
             pthread_mutex_unlock(&pool->mu);
-            return SQLI_OK;
+            sqli_status rc = ensure_slot_connected(pool, (size_t)idx);
+            if (pthread_mutex_lock(&pool->mu) != 0)
+                return SQLI_ERR;
+
+            if (pool->shutting_down) {
+                if (rc == SQLI_OK) {
+                    sqli_close(pool->slots[idx].conn);
+                    sqli_destroy(pool->slots[idx].conn);
+                    pool->slots[idx].conn = NULL;
+                }
+                pool->slots[idx].in_use = false;
+                break;
+            }
+
+            if (rc == SQLI_OK) {
+                *conn = pool->slots[idx].conn;
+                pthread_mutex_unlock(&pool->mu);
+                return SQLI_OK;
+            }
+
+            pool->slots[idx].in_use = false;
+            pthread_cond_signal(&pool->cv);
+            continue;
         }
 
         if (!use_timeout) {
@@ -254,10 +281,6 @@ sqli_status sqli_pool_release(sqli_pool_t *pool, sqli_conn_t *conn)
 
     for (size_t i = 0; i < pool->size; i++) {
         if (pool->slots[i].conn == conn) {
-            if (pool->slots[i].conn->state != SQLI_CONN_READY ||
-                pool->slots[i].conn->socket_fd < 0) {
-                (void)ensure_slot_connected(pool, i);
-            }
             pool->slots[i].in_use = false;
             pthread_cond_signal(&pool->cv);
             pthread_mutex_unlock(&pool->mu);

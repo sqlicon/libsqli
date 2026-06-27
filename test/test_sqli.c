@@ -6,8 +6,13 @@
  */
 
 #include "libsqli/sqli.h"
+#include "sqli_internal.h"
 
 #include "unity.h"
+
+#include <sys/socket.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 /* ----------------------------------------------------------------
  * test_sqli_create_destroy
@@ -55,6 +60,26 @@ void test_sqli_create_multiple(void)
 
     sqli_destroy(a);
     sqli_destroy(b);
+}
+
+void test_sqli_destroy_closes_socket(void)
+{
+    int sv[2] = {-1, -1};
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0)
+        TEST_IGNORE_MESSAGE("socketpair unavailable");
+
+    sqli_conn_t *conn = NULL;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_create(&conn));
+    TEST_ASSERT_NOT_NULL(conn);
+
+    conn->socket_fd = sv[0];
+    conn->state = SQLI_CONN_READY;
+    conn->database_open = false;
+
+    sqli_destroy(conn);
+
+    TEST_ASSERT_EQUAL_INT(-1, fcntl(sv[0], F_GETFD));
+    close(sv[1]);
 }
 
 /* ----------------------------------------------------------------

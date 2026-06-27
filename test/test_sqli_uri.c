@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 /*
  * Phase 7 — URI connection tests.
  *
@@ -12,6 +13,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 /* ----------------------------------------------------------------
  * Null / invalid input
@@ -196,6 +198,37 @@ void test_uri_onipcstr_custom_socket(void)
         "informix+onipcstr:///db?INFORMIXSERVER=s&SOCKET_PATH=/var/lib/informix/socket",
         NULL, NULL);
     TEST_ASSERT_NOT_EQUAL_INT(SQLI_INVALID_STATE, rc);
+    sqli_destroy(conn);
+}
+
+void test_uri_onipcstr_default_socket_priority(void)
+{
+    sqli_conn_t *conn = NULL;
+    char expected[512];
+    const char *old_informixtmp = getenv("INFORMIXTMP");
+    char saved_informixtmp[512];
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_create(&conn));
+
+    if (old_informixtmp != NULL) {
+        strncpy(saved_informixtmp, old_informixtmp, sizeof(saved_informixtmp) - 1);
+        saved_informixtmp[sizeof(saved_informixtmp) - 1] = '\0';
+    }
+    unsetenv("INFORMIXTMP");
+    if (access("/INFORMIXTMP", F_OK) == 0) {
+        snprintf(expected, sizeof(expected), "/INFORMIXTMP/%s.str", "srv1");
+    } else {
+        snprintf(expected, sizeof(expected), "/tmp/.infosock.%s", "srv1");
+    }
+
+    sqli_status rc = sqli_connect_uri(conn,
+        "informix+onipcstr:///db?INFORMIXSERVER=srv1",
+        NULL, NULL);
+    TEST_ASSERT_NOT_EQUAL_INT(SQLI_INVALID_STATE, rc);
+    TEST_ASSERT_EQUAL_STRING(expected, conn->service);
+
+    if (old_informixtmp != NULL)
+        setenv("INFORMIXTMP", saved_informixtmp, 1);
+
     sqli_destroy(conn);
 }
 
