@@ -92,6 +92,8 @@ void print_help(FILE *out)
             "\n"
             "Notes:\n"
             "  - If --connect-uri is given, individual connection flags are ignored.\n"
+            "  - For --profile-create/--profile-update, --connect-uri seeds host/port/server/\n"
+            "    database and can be overridden by explicit connection flags.\n"
             "  - If no mode option is provided and stdin is a TTY, interactive mode starts.\n"
             "  - If stdin is redirected and no mode option is provided, stdin batch mode starts.\n"
             "  - Profile encryption protects against accidental file disclosure only; it does not\n"
