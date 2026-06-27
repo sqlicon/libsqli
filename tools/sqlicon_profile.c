@@ -467,10 +467,19 @@ static int load_profile_store(sqlicon_profile_store *store)
             continue;
 
         const char *name_start = trimmed + 8;
-        const char *dot = strchr(name_start, '.');
-        if (dot == NULL)
+        char *eq = strchr((char *)name_start, '=');
+        const char *field_sep = NULL;
+        if (eq == NULL)
             continue;
-        size_t name_len = (size_t)(dot - name_start);
+        for (const char *scan = eq; scan > name_start; scan--) {
+            if (scan[-1] == '.') {
+                field_sep = scan - 1;
+                break;
+            }
+        }
+        if (field_sep == NULL)
+            continue;
+        size_t name_len = (size_t)(field_sep - name_start);
         if (name_len == 0)
             continue;
         char *name = dup_span(name_start, name_len);
@@ -478,12 +487,7 @@ static int load_profile_store(sqlicon_profile_store *store)
             fclose(fp);
             return SQLICON_PROFILE_LOAD_ERROR;
         }
-        char *eq = strchr((char *)dot + 1, '=');
-        if (eq == NULL) {
-            free(name);
-            continue;
-        }
-        char *field = dup_span(dot + 1, (size_t)(eq - (dot + 1)));
+        char *field = dup_span(field_sep + 1, (size_t)(eq - (field_sep + 1)));
         char *value = strdup(eq + 1);
         if (field == NULL || value == NULL) {
             free(name);
