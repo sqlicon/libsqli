@@ -237,8 +237,34 @@ static inline uint32_t buf_r32(const uint8_t *b, size_t pos)
            ((uint32_t)b[pos+2] << 8)  |  (uint32_t)b[pos+3];
 }
 
+static void set_connect_service_error(sqli_conn_t *c, sqli_status status,
+                                      uint16_t opcode, int svc_error,
+                                      const char *phase)
+{
+    if (c == NULL)
+        return;
+
+    set_error_context(c, phase, opcode);
+    set_error_fmt(c,
+                  "server rejected connection during %s (svcError=%d)",
+                  phase != NULL ? phase : "connect",
+                  svc_error);
+    c->error_info.status = status;
+    c->error_info.opcode = opcode;
+    if (c->error_context[0] != '\0') {
+        snprintf(c->error_info.context, sizeof(c->error_info.context),
+                 "%s", c->error_context);
+    }
+    snprintf(c->error_info.server_message,
+             sizeof(c->error_info.server_message),
+             "svcError=%d", svc_error);
+    snprintf(c->error_info.message, sizeof(c->error_info.message),
+             "%s", c->errmsg);
+}
+
 static sqli_status parse_conacc_body(sqli_conn_t *c,
-                                     const uint8_t *body, uint16_t body_len)
+                                     const uint8_t *body, uint16_t body_len,
+                                     const char *phase, uint16_t opcode)
 {
     if (body_len < 4)
         return SQLI_PROTO_ERROR;
@@ -305,7 +331,8 @@ scan_for_102:
             /* svcError is at byte offset +6 from tag start */
             int16_t svc_error = (int16_t)buf_r16(body, pos + 6);
             if (svc_error != 0) {
-                set_error_fmt(c, "server authentication error: %d", svc_error);
+                set_connect_service_error(c, SQLI_AUTH_FAIL, opcode,
+                                          svc_error, phase);
                 return SQLI_AUTH_FAIL;
             }
             break;
@@ -345,7 +372,8 @@ static sqli_status handle_conrej_body(sqli_conn_t *c, uint8_t resp_type, uint16_
         return rc;
     }
 
-    rc = parse_conacc_body(c, conrej_body, conrej_body_len);
+    rc = parse_conacc_body(c, conrej_body, conrej_body_len,
+                           "connect/conrej", resp_type);
     free(conrej_body);
     return rc;
 }
@@ -684,7 +712,8 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
                 goto out;
             }
 
-            rc = parse_conacc_body(c, resp_body, body_len);
+            rc = parse_conacc_body(c, resp_body, body_len,
+                                   "connect/ipc_conacc", 0);
             free(resp_body);
             if (rc != SQLI_OK)
                 goto out;
@@ -734,11 +763,10 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
 
         /* Step 3: Read SL header from server */
         uint8_t sl_buf[SQLI_SL_HEADER_SIZE];
-        ssize_t n = sqli_tcp_read(c->socket_fd, sl_buf, SQLI_SL_HEADER_SIZE);
-        if (n < 0 || (size_t)n != SQLI_SL_HEADER_SIZE) {
+        rc = hs_read_exact(c->socket_fd, sl_buf, sizeof(sl_buf));
+        if (rc != SQLI_OK) {
             set_error_context(c, "connect/sl_header_read", 0);
             set_error(c, "failed to read server response header");
-            rc = SQLI_IO_ERROR;
             goto out;
         }
 
@@ -787,16 +815,16 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
             goto out;
         }
 
-        n = sqli_tcp_read(c->socket_fd, resp_body, body_len_field);
-        if (n < 0 || (size_t)n != body_len_field) {
+        rc = hs_read_exact(c->socket_fd, resp_body, body_len_field);
+        if (rc != SQLI_OK) {
             free(resp_body);
             set_error_context(c, "connect/conacc", resp_type);
             set_error(c, "failed to read server response body");
-            rc = SQLI_IO_ERROR;
             goto out;
         }
 
-        rc = parse_conacc_body(c, resp_body, body_len_field);
+        rc = parse_conacc_body(c, resp_body, body_len_field,
+                               "connect/conacc", resp_type);
         free(resp_body);
         if (rc != SQLI_OK)
             goto out;

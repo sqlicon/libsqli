@@ -324,6 +324,48 @@ static void mock_send_conacc(int fd)
     send(fd, buf, len, MSG_NOSIGNAL);
 }
 
+static size_t build_conrej_response(uint8_t *buf, size_t buf_size, int16_t svc_error)
+{
+    size_t len = build_conacc_response(buf, buf_size);
+
+    if (len < 8 || buf == NULL || buf_size < len + 8)
+        return 0;
+
+    buf[2] = SQLI_SLTYPE_CONREJ;
+    len -= 2; /* replace final tag 127 */
+    buf[len++] = 0;
+    buf[len++] = 102;
+    buf[len++] = 0;
+    buf[len++] = 0;
+    buf[len++] = 0;
+    buf[len++] = 0;
+    buf[len++] = (uint8_t)(svc_error >> 8);
+    buf[len++] = (uint8_t)svc_error;
+    buf[len++] = 0;
+    buf[len++] = SQLI_TAG_END;
+    buf[0] = (uint8_t)(len >> 8);
+    buf[1] = (uint8_t)(len & 0xFF);
+    return len;
+}
+
+static ssize_t mock_send_fragmented(int fd, const uint8_t *buf, size_t len,
+                                    size_t first_chunk)
+{
+    ssize_t sent;
+
+    if (buf == NULL || len == 0)
+        return -1;
+    if (first_chunk == 0 || first_chunk >= len)
+        return send(fd, buf, len, MSG_NOSIGNAL);
+
+    sent = send(fd, buf, first_chunk, MSG_NOSIGNAL);
+    if (sent < 0 || (size_t)sent != first_chunk)
+        return -1;
+
+    usleep(20000);
+    return send(fd, buf + first_chunk, len - first_chunk, MSG_NOSIGNAL);
+}
+
 /* Set socket timeouts on the server-side connection. */
 static void set_server_socket_timeout(int fd)
 {
@@ -444,6 +486,75 @@ static void *mock_server_handshake(void *arg)
 
     if (mock_read_conreq(conn_fd) < 0) goto done;
     mock_send_conacc(conn_fd);
+
+    mock_handle_protocols(conn_fd);
+    mock_handle_info(conn_fd);
+    mock_handle_dbopen(conn_fd, 0);
+
+done:
+    shutdown(conn_fd, SHUT_RDWR);
+    close(conn_fd);
+    return NULL;
+}
+
+static void *mock_server_handshake_reject(void *arg)
+{
+    mock_srv_ctx *ctx = (mock_srv_ctx *)arg;
+    uint8_t buf[512];
+    size_t len;
+
+    uint8_t ready = 1;
+    write(ctx->ready_pipe[1], &ready, 1);
+
+    struct sockaddr_in addr;
+    socklen_t addr_len = sizeof(addr);
+    int conn_fd = accept(ctx->listener_fd, (struct sockaddr *)&addr, &addr_len);
+    if (conn_fd < 0)
+        return NULL;
+    ctx->conn_fd = conn_fd;
+
+    set_server_socket_timeout(conn_fd);
+
+    if (mock_read_conreq(conn_fd) < 0)
+        goto done;
+
+    len = build_conrej_response(buf, sizeof(buf), 255);
+    if (len == 0)
+        goto done;
+    mock_send_fragmented(conn_fd, buf, len, SQLI_SL_HEADER_SIZE + 3);
+
+done:
+    mock_drain_socket(conn_fd);
+    shutdown(conn_fd, SHUT_RDWR);
+    close(conn_fd);
+    return NULL;
+}
+
+static void *mock_server_handshake_fragmented_conacc(void *arg)
+{
+    mock_srv_ctx *ctx = (mock_srv_ctx *)arg;
+    uint8_t buf[512];
+    size_t len;
+
+    uint8_t ready = 1;
+    write(ctx->ready_pipe[1], &ready, 1);
+
+    struct sockaddr_in addr;
+    socklen_t addr_len = sizeof(addr);
+    int conn_fd = accept(ctx->listener_fd, (struct sockaddr *)&addr, &addr_len);
+    if (conn_fd < 0)
+        return NULL;
+    ctx->conn_fd = conn_fd;
+
+    set_server_socket_timeout(conn_fd);
+
+    if (mock_read_conreq(conn_fd) < 0)
+        goto done;
+
+    len = build_conacc_response(buf, sizeof(buf));
+    if (len == 0)
+        goto done;
+    mock_send_fragmented(conn_fd, buf, len, SQLI_SL_HEADER_SIZE + 5);
 
     mock_handle_protocols(conn_fd);
     mock_handle_info(conn_fd);
@@ -866,7 +977,7 @@ void test_connect_reject(void)
     require_test_listener_or_skip(ctx);
 
     pthread_t thread;
-    pthread_create(&thread, NULL, mock_server_handshake, ctx);
+    pthread_create(&thread, NULL, mock_server_handshake_reject, ctx);
 
     wait_for_server(ctx);
 
@@ -877,8 +988,52 @@ void test_connect_reject(void)
     fill_connect_params(ctx, &params);
 
     sqli_status rc = sqli_connect(conn, &params);
-    TEST_ASSERT_TRUE(rc == SQLI_OK || rc == SQLI_IO_ERROR);
+    sqli_error_info info;
+    const char *errmsg;
 
+    TEST_ASSERT_EQUAL_INT(SQLI_AUTH_FAIL, rc);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_error_get_info(conn, &info));
+    TEST_ASSERT_TRUE(info.has_error);
+    TEST_ASSERT_EQUAL_INT(SQLI_AUTH_FAIL, info.status);
+    TEST_ASSERT_EQUAL_INT(SQLI_SLTYPE_CONREJ, info.opcode);
+    TEST_ASSERT_EQUAL_STRING("connect/conrej", info.context);
+    TEST_ASSERT_EQUAL_STRING("svcError=255", info.server_message);
+    errmsg = sqli_error(conn);
+    TEST_ASSERT_NOT_NULL(errmsg);
+    TEST_ASSERT_NOT_NULL(strstr(errmsg, "svcError=255"));
+
+    sqli_destroy(conn);
+    pthread_join(thread, NULL);
+    close(ctx->listener_fd);
+    mock_srv_ctx_destroy(ctx);
+    free(ctx);
+}
+
+void test_connect_fragmented_conacc_body(void)
+{
+    mock_srv_ctx *ctx = calloc(1, sizeof(*ctx));
+    TEST_ASSERT_NOT_NULL(ctx);
+    mock_srv_ctx_init(ctx);
+
+    require_test_listener_or_skip(ctx);
+
+    pthread_t thread;
+    pthread_create(&thread, NULL, mock_server_handshake_fragmented_conacc, ctx);
+
+    wait_for_server(ctx);
+
+    sqli_conn_t *conn = NULL;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_create(&conn));
+
+    sqli_connect_params params = {0};
+    fill_connect_params(ctx, &params);
+
+    sqli_status rc = sqli_connect(conn, &params);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, rc);
+    TEST_ASSERT_EQUAL_INT(SQLI_CONN_READY, conn->state);
+    TEST_ASSERT_TRUE(conn->database_open);
+
+    sqli_close(conn);
     sqli_destroy(conn);
     pthread_join(thread, NULL);
     close(ctx->listener_fd);

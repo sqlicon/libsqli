@@ -288,6 +288,7 @@ void test_uri_onsoctcp_missing_port(void);
 /* Phase 6 tests — integration tests */
 void test_connect_success(void);
 void test_connect_reject(void);
+void test_connect_fragmented_conacc_body(void);
 void test_connect_redirect(void);
 void test_connect_bad_done(void);
 void test_connect_tcp_fail(void);
@@ -604,6 +605,7 @@ int main(void)
     /* Phase 6 — integration tests */
     RUN_TEST(test_connect_success);
     RUN_TEST(test_connect_reject);
+    RUN_TEST(test_connect_fragmented_conacc_body);
     RUN_TEST(test_connect_redirect);
     RUN_TEST(test_connect_bad_done);
     RUN_TEST(test_connect_tcp_fail);
