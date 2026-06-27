@@ -399,7 +399,6 @@ struct sqli_result {
 
     /* --- Current-row view (set by sqli_result_next) --- */
     uint8_t *tuple_buffer;  /* points into rows[cursor]; NULL if not positioned */
-    size_t tuple_capacity;  /* unused; kept for layout compatibility */
     size_t tuple_len;
     int current_row;        /* same as cursor; checked by typed accessors */
     int eof;                /* true after DONE received */
@@ -414,7 +413,7 @@ struct sqli_result {
 };
 
 /* ----------------------------------------------------------------
- * Protocol dispatch (sqli_dispatch.c)
+ * Protocol read/write operations (sqli_dispatch.c, sqli_protocol_write.c)
  * ---------------------------------------------------------------- */
 
 sqli_status sqli_send_eot(int fd);

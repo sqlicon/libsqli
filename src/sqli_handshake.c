@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <time.h>
@@ -85,6 +86,96 @@ static sqli_status hs_drain(int fd, size_t count)
         if (rc != SQLI_OK) return rc;
         count -= chunk;
     }
+    return SQLI_OK;
+}
+
+#define SQLI_CLOSE_DRAIN_TIMEOUT_MS 200
+
+static sqli_status hs_wait_readable(int fd, int timeout_ms)
+{
+    struct pollfd pfd;
+    int prc;
+
+    if (fd < 0 || timeout_ms < 0) {
+        errno = EINVAL;
+        return SQLI_INVALID_STATE;
+    }
+
+    pfd.fd = fd;
+    pfd.events = POLLIN | POLLERR | POLLHUP;
+    pfd.revents = 0;
+
+    do {
+        prc = poll(&pfd, 1, timeout_ms);
+    } while (prc < 0 && errno == EINTR);
+
+    if (prc == 0)
+        return SQLI_TIMEOUT;
+
+    if (prc < 0) {
+        sqli_log(SQLI_LOG_WARN,
+                 "poll failed while draining close response on fd=%d: %s",
+                 fd, strerror(errno));
+        return SQLI_IO_ERROR;
+    }
+
+    if ((pfd.revents & POLLNVAL) != 0)
+        return SQLI_IO_ERROR;
+
+    return SQLI_OK;
+}
+
+static sqli_status hs_read_exact_timed(int fd, uint8_t *buf, size_t count)
+{
+    ssize_t total = 0;
+
+    if (fd < 0 || buf == NULL || count == 0)
+        return SQLI_INVALID_STATE;
+
+    while ((size_t)total < count) {
+        sqli_status rc = hs_wait_readable(fd, SQLI_CLOSE_DRAIN_TIMEOUT_MS);
+        ssize_t n;
+
+        if (rc != SQLI_OK)
+            return rc;
+
+        n = sqli_tcp_read_some(fd, buf + (size_t)total, count - (size_t)total);
+        if (n <= 0)
+            return SQLI_IO_ERROR;
+        total += n;
+    }
+
+    return SQLI_OK;
+}
+
+static sqli_status hs_read_be16_timed(int fd, uint16_t *val)
+{
+    uint8_t buf[2];
+    sqli_status rc;
+
+    if (val == NULL)
+        return SQLI_INVALID_STATE;
+
+    rc = hs_read_exact_timed(fd, buf, sizeof(buf));
+    if (rc != SQLI_OK)
+        return rc;
+
+    *val = (uint16_t)((buf[0] << 8) | buf[1]);
+    return SQLI_OK;
+}
+
+static sqli_status hs_drain_timed(int fd, size_t count)
+{
+    uint8_t tmp[256];
+
+    while (count > 0) {
+        size_t chunk = count > sizeof(tmp) ? sizeof(tmp) : count;
+        sqli_status rc = hs_read_exact_timed(fd, tmp, chunk);
+        if (rc != SQLI_OK)
+            return rc;
+        count -= chunk;
+    }
+
     return SQLI_OK;
 }
 
@@ -952,10 +1043,11 @@ void sqli_close(sqli_conn_t *conn)
             /* Drain until SQ_EXIT(56) or SQ_EOT(12) */
             for (;;) {
                 uint16_t op;
-                if (hs_read_be16(conn->socket_fd, &op) != SQLI_OK)
+                if (hs_read_be16_timed(conn->socket_fd, &op) != SQLI_OK)
                     break;
                 if (op == SQLI_SQ_XACTSTAT) { /* 99: skip 6 bytes */
-                    hs_drain(conn->socket_fd, 6);
+                    if (hs_drain_timed(conn->socket_fd, 6) != SQLI_OK)
+                        break;
                     continue;
                 }
                 /* SQ_EXIT=56 or SQ_EOT=12 → done */

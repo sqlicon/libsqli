@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ARTIFACT_DIR="$ROOT_DIR/doc/status/artifacts"
-mkdir -p "$ARTIFACT_DIR"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+readonly DEFAULT_BUILD_DIR="${ROOT_DIR}/build"
+readonly ARTIFACT_DIR="${ROOT_DIR}/doc/status/artifacts"
+mkdir -p "${ARTIFACT_DIR}"
 
 host="${SQLI_LIVE_HOST:-${SQLI_BENCH_HOST:-}}"
 port="${SQLI_LIVE_PORT:-${SQLI_BENCH_PORT:-}}"
@@ -25,26 +27,39 @@ EOF
   exit 2
 fi
 
-sqliconn="$ROOT_DIR/build/sqliconn"
-if [[ ! -x "$sqliconn" ]]; then
-  echo "sqliconn binary not found: $sqliconn" >&2
+readonly BUILD_DIR="${SQLI_BUILD_DIR:-${DEFAULT_BUILD_DIR}}"
+readonly SQLICONN_BIN="${BUILD_DIR}/sqliconn"
+readonly PREPARED_PROBE_BIN="${BUILD_DIR}/sqli_prepared_probe"
+
+if [[ ! -x "${SQLICONN_BIN}" ]]; then
+  echo "sqliconn binary not found: ${SQLICONN_BIN}" >&2
   exit 2
 fi
-prepared_probe="$ROOT_DIR/build/sqli_prepared_probe"
-if [[ ! -x "$prepared_probe" ]]; then
-  echo "sqli_prepared_probe binary not found: $prepared_probe" >&2
+if [[ ! -x "${PREPARED_PROBE_BIN}" ]]; then
+  echo "sqli_prepared_probe binary not found: ${PREPARED_PROBE_BIN}" >&2
   exit 2
 fi
 
 table_name="sqli_dt_must_$(date +%s)"
-tmp_dir="$ARTIFACT_DIR/dt_tmp"
-rm -rf "$tmp_dir"
-mkdir -p "$tmp_dir"
+tmp_dir="${ARTIFACT_DIR}/dt_tmp"
+rm -rf "${tmp_dir}"
+mkdir -p "${tmp_dir}"
 
-report="$ARTIFACT_DIR/dt_must_type_report.md"
+report="${ARTIFACT_DIR}/dt_must_type_report.md"
 pass_count=0
 fail_count=0
 declare -a lines
+
+record_failure() {
+  local label="$1"
+  local file_base="$2"
+
+  echo "Command failed for ${label}" >&2
+  if [[ -f "${file_base}.err" ]]; then
+    echo "--- ${label} stderr ---" >&2
+    cat "${file_base}.err" >&2
+  fi
+}
 
 run_sql() {
   local sql="$1"
@@ -52,7 +67,7 @@ run_sql() {
   SQLI_LOG_LEVEL=ERROR \
   SQLI_CLIENT_LOCALE="$client_locale" \
   SQLI_DB_LOCALE="$db_locale" \
-  "$sqliconn" "$host" "$port" "$db" "$user" "$pass" "$server" "$sql" >"$out_file.out" 2>"$out_file.err"
+  "${SQLICONN_BIN}" "${host}" "${port}" "${db}" "${user}" "${pass}" "${server}" "${sql}" >"${out_file}.out" 2>"${out_file}.err"
 }
 
 check_ok() {
@@ -90,16 +105,17 @@ CREATE TABLE ${table_name} (
   c_bool BOOLEAN
 )"
 if ! run_sql "$create_sql" "$setup_key"; then
+  record_failure "create_table" "${setup_key}"
   setup_ok=false
 fi
 
 if $setup_ok; then
-  run_sql "INSERT INTO ${table_name} (id,c_varchar,c_char,c_nvarchar,c_nchar,c_small,c_int,c_big,c_dec,c_num,c_money,c_smallfloat,c_float,c_date,c_bool) VALUES (1,'hello','AB','hello_n','AB',32767,2147483647,9223372036854775807,12345.6789,-42.125,-98765.43,12.5,123.25,DATE('2026-06-20'),'t')" "${tmp_dir}/ins1" || true
-  run_sql "INSERT INTO ${table_name} (id,c_varchar,c_char,c_nvarchar,c_nchar,c_small,c_int,c_big,c_dec,c_num,c_money,c_smallfloat,c_float,c_date,c_bool) VALUES (2,'ÄÖÜß','XY','ÄÖÜß_n','XY',-32767,-2147483647,-9223372036854775807,0.0001,0.125,1.00,-7.5,-3.75,DATE('2024-01-01'),'f')" "${tmp_dir}/ins2" || true
-  run_sql "INSERT INTO ${table_name} (id,c_varchar,c_char,c_nvarchar,c_nchar,c_small,c_int,c_big,c_dec,c_num,c_money,c_smallfloat,c_float,c_date,c_bool) VALUES (3,'','CD',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)" "${tmp_dir}/ins3" || true
-  run_sql "INSERT INTO ${table_name} (id,c_varchar,c_char,c_nvarchar,c_nchar,c_small,c_int,c_big,c_dec,c_num,c_money,c_smallfloat,c_float,c_date,c_bool) VALUES (4,'BBBB','EF','BBBB_n','EF',1,2,3,4.0000,5.000,6.00,7.0,8.0,DATE('2023-12-31'),'t')" "${tmp_dir}/ins4" || true
-  run_sql "INSERT INTO ${table_name} (id,c_varchar,c_char,c_nvarchar,c_nchar,c_small,c_int,c_big,c_dec,c_num,c_money,c_smallfloat,c_float,c_date,c_bool) VALUES (5,'AAAA','GH','AAAA_n','GH',1,2,3,4.0000,5.000,6.00,7.0,8.0,DATE('2023-12-31'),'t')" "${tmp_dir}/ins5" || true
-  run_sql "INSERT INTO ${table_name} (id,c_varchar,c_char,c_nvarchar,c_nchar,c_small,c_int,c_big,c_dec,c_num,c_money,c_smallfloat,c_float,c_date,c_bool) VALUES (6,'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567','IJ','long_n','IJ',1,2,3,4.0000,5.000,6.00,7.0,8.0,DATE('2023-12-31'),'t')" "${tmp_dir}/ins6" || true
+  if ! run_sql "INSERT INTO ${table_name} (id,c_varchar,c_char,c_nvarchar,c_nchar,c_small,c_int,c_big,c_dec,c_num,c_money,c_smallfloat,c_float,c_date,c_bool) VALUES (1,'hello','AB','hello_n','AB',32767,2147483647,9223372036854775807,12345.6789,-42.125,-98765.43,12.5,123.25,DATE('2026-06-20'),'t')" "${tmp_dir}/ins1"; then record_failure "insert_1" "${tmp_dir}/ins1"; setup_ok=false; fi
+  if ! run_sql "INSERT INTO ${table_name} (id,c_varchar,c_char,c_nvarchar,c_nchar,c_small,c_int,c_big,c_dec,c_num,c_money,c_smallfloat,c_float,c_date,c_bool) VALUES (2,'ÄÖÜß','XY','ÄÖÜß_n','XY',-32767,-2147483647,-9223372036854775807,0.0001,0.125,1.00,-7.5,-3.75,DATE('2024-01-01'),'f')" "${tmp_dir}/ins2"; then record_failure "insert_2" "${tmp_dir}/ins2"; setup_ok=false; fi
+  if ! run_sql "INSERT INTO ${table_name} (id,c_varchar,c_char,c_nvarchar,c_nchar,c_small,c_int,c_big,c_dec,c_num,c_money,c_smallfloat,c_float,c_date,c_bool) VALUES (3,'','CD',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)" "${tmp_dir}/ins3"; then record_failure "insert_3" "${tmp_dir}/ins3"; setup_ok=false; fi
+  if ! run_sql "INSERT INTO ${table_name} (id,c_varchar,c_char,c_nvarchar,c_nchar,c_small,c_int,c_big,c_dec,c_num,c_money,c_smallfloat,c_float,c_date,c_bool) VALUES (4,'BBBB','EF','BBBB_n','EF',1,2,3,4.0000,5.000,6.00,7.0,8.0,DATE('2023-12-31'),'t')" "${tmp_dir}/ins4"; then record_failure "insert_4" "${tmp_dir}/ins4"; setup_ok=false; fi
+  if ! run_sql "INSERT INTO ${table_name} (id,c_varchar,c_char,c_nvarchar,c_nchar,c_small,c_int,c_big,c_dec,c_num,c_money,c_smallfloat,c_float,c_date,c_bool) VALUES (5,'AAAA','GH','AAAA_n','GH',1,2,3,4.0000,5.000,6.00,7.0,8.0,DATE('2023-12-31'),'t')" "${tmp_dir}/ins5"; then record_failure "insert_5" "${tmp_dir}/ins5"; setup_ok=false; fi
+  if ! run_sql "INSERT INTO ${table_name} (id,c_varchar,c_char,c_nvarchar,c_nchar,c_small,c_int,c_big,c_dec,c_num,c_money,c_smallfloat,c_float,c_date,c_bool) VALUES (6,'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567','IJ','long_n','IJ',1,2,3,4.0000,5.000,6.00,7.0,8.0,DATE('2023-12-31'),'t')" "${tmp_dir}/ins6"; then record_failure "insert_6" "${tmp_dir}/ins6"; setup_ok=false; fi
 fi
 
 if $setup_ok; then
@@ -148,9 +164,11 @@ if $setup_ok; then
 
   prep_key="${tmp_dir}/prepared"
   if SQLI_LOG_LEVEL=ERROR SQLI_CLIENT_LOCALE="$client_locale" SQLI_DB_LOCALE="$db_locale" \
-      "$prepared_probe" "$host" "$port" "$db" "$user" "$pass" "$table_name" "$server" "$client_locale" "$db_locale" \
+      "${PREPARED_PROBE_BIN}" "${host}" "${port}" "${db}" "${user}" "${pass}" "${table_name}" "${server}" "${client_locale}" "${db_locale}" \
       >"${prep_key}.out" 2>"${prep_key}.err"; then
     :
+  else
+    record_failure "prepared_probe" "${prep_key}"
   fi
   if grep -q "DT-008=PASS" "${prep_key}.out"; then lines+=("| DT-008 | PASS | Prepared string binding coverage |"); pass_count=$((pass_count + 1)); else lines+=("| DT-008 | FAIL | Prepared string binding coverage |"); fail_count=$((fail_count + 1)); fi
   if grep -q "DT-107=PASS" "${prep_key}.out"; then lines+=("| DT-107 | PASS | Prepared Int32/Int64 binding coverage |"); pass_count=$((pass_count + 1)); else lines+=("| DT-107 | FAIL | Prepared Int32/Int64 binding coverage |"); fail_count=$((fail_count + 1)); fi
@@ -162,7 +180,9 @@ else
   fail_count=$((fail_count + 1))
 fi
 
-run_sql "DROP TABLE ${table_name}" "${tmp_dir}/drop" || true
+if ! run_sql "DROP TABLE ${table_name}" "${tmp_dir}/drop"; then
+  record_failure "drop_table" "${tmp_dir}/drop"
+fi
 
 total=$((pass_count + fail_count))
 pass_rate="0"
@@ -197,5 +217,5 @@ $(printf '%s\n' "${lines[@]}")
 - Prepared-binding IDs (\`DT-008/107/207/307/405\`) are validated through \`sqli_prepared_probe\`.
 EOF
 
-rm -rf "$tmp_dir"
+rm -rf "${tmp_dir}"
 echo "Wrote ${report}"

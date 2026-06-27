@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ARTIFACT_DIR="$ROOT_DIR/doc/status/artifacts"
-TMP_DIR="$ARTIFACT_DIR/stress_tmp"
-mkdir -p "$ARTIFACT_DIR" "$TMP_DIR"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+readonly DEFAULT_BUILD_DIR="${ROOT_DIR}/build"
+readonly ARTIFACT_DIR="${ROOT_DIR}/doc/status/artifacts"
+readonly TMP_DIR="${ARTIFACT_DIR}/stress_tmp"
+mkdir -p "${ARTIFACT_DIR}" "${TMP_DIR}"
 
 : "${SQLI_BENCH_HOST:?missing SQLI_BENCH_HOST}"
 : "${SQLI_BENCH_PORT:?missing SQLI_BENCH_PORT}"
@@ -20,40 +22,61 @@ iterations="${SQLI_STRESS_ITERATIONS:-300}"
 stress_sql="${SQLI_STRESS_SQL:-SELECT FIRST 1 u01_nr FROM uno_msg}"
 fetch_seconds="${SQLI_FETCH_SECONDS:-60}"
 
-report="$ARTIFACT_DIR/stress_envelope_report.md"
-stress_log="$TMP_DIR/stress_runs.log"
-fetch_log="$TMP_DIR/fetch_runs.log"
-: >"$stress_log"
-: >"$fetch_log"
+readonly REPORT="${ARTIFACT_DIR}/stress_envelope_report.md"
+readonly STRESS_LOG="${TMP_DIR}/stress_runs.log"
+readonly FETCH_LOG="${TMP_DIR}/fetch_runs.log"
+: >"${STRESS_LOG}"
+: >"${FETCH_LOG}"
+
+build_dir="${SQLI_BUILD_DIR:-${DEFAULT_BUILD_DIR}}"
+readonly build_dir
+stress_bin="${build_dir}/sqli_stress"
+readonly stress_bin
+export_csv_bin="${build_dir}/sqli_export_csv"
+readonly export_csv_bin
 
 run_stress_case() {
   local threads="$1"
-  local out
+  local out rc
+
+  set +e
   out="$(
     LSAN_OPTIONS=detect_leaks=0 \
     SQLI_LOG_LEVEL=ERROR \
-    SQLI_CLIENT_LOCALE="$client_locale" \
-    SQLI_DB_LOCALE="$db_locale" \
-    "$ROOT_DIR/build/sqli_stress" \
-      "$SQLI_BENCH_HOST" "$SQLI_BENCH_PORT" "$SQLI_BENCH_DB" \
-      "$SQLI_BENCH_USER" "$SQLI_BENCH_PASS" \
-      "$threads" "$iterations" "$threads" "$stress_sql" 2>&1 || true
+    SQLI_CLIENT_LOCALE="${client_locale}" \
+    SQLI_DB_LOCALE="${db_locale}" \
+    "${stress_bin}" \
+      "${SQLI_BENCH_HOST}" "${SQLI_BENCH_PORT}" "${SQLI_BENCH_DB}" \
+      "${SQLI_BENCH_USER}" "${SQLI_BENCH_PASS}" \
+      "${threads}" "${iterations}" "${threads}" "${stress_sql}" 2>&1
   )"
-  echo "$out" >>"$stress_log"
-  echo "$out"
+  rc=$?
+  set -e
+
+  printf 'threads=%s exit_code=%s\n%s\n' "${threads}" "${rc}" "${out}" >>"${STRESS_LOG}"
+
+  if [[ ${rc} -ne 0 ]]; then
+    echo "sqli_stress failed for ${threads} threads with exit code ${rc}" >&2
+    return 1
+  fi
+
+  printf '%s\n' "${out}"
 }
 
 run_fetch_loop() {
   local workers="$1"
   local tag="$2"
-  local loop_dir="$TMP_DIR/$tag"
-  rm -rf "$loop_dir"
-  mkdir -p "$loop_dir"
+  local loop_dir="${TMP_DIR}/${tag}"
+  local run_log="${loop_dir}/fetch_failures.log"
+  rm -rf "${loop_dir}"
+  mkdir -p "${loop_dir}"
+  : >"${run_log}"
 
   local start end elapsed total_bytes files mibps
+  local timeout_rc
   start="$(date +%s)"
   if [[ "$workers" -eq 1 ]]; then
-    timeout "${fetch_seconds}s" bash -c '
+    if timeout "${fetch_seconds}s" bash -c '
       i=0
       while true; do
         i=$((i+1))
@@ -62,14 +85,23 @@ run_fetch_loop() {
         SQLI_LOG_LEVEL=ERROR \
         SQLI_CLIENT_LOCALE="'"$client_locale"'" \
         SQLI_DB_LOCALE="'"$db_locale"'" \
-        timeout 25s "'"$ROOT_DIR"'/build/sqli_export_csv" \
+        timeout 25s "'"${export_csv_bin}"'" \
           "'"$SQLI_BENCH_HOST"'" "'"$SQLI_BENCH_PORT"'" "'"$SQLI_BENCH_DB"'" \
           "'"$SQLI_BENCH_USER"'" "'"$SQLI_BENCH_PASS"'" "TABLE:mtst" "$out" "'"$SQLI_BENCH_SERVER"'" \
-          >/dev/null 2>&1 || true
+          >/dev/null 2>&1
+        rc=$?
+        if [[ "$rc" -ne 0 && "$rc" -ne 124 ]]; then
+          echo "worker=1 iteration=${i} exit_code=${rc}" >>"'"${run_log}"'"
+          exit "$rc"
+        fi
       done
-    ' || true
+    '; then
+      timeout_rc=0
+    else
+      timeout_rc=$?
+    fi
   else
-    timeout "${fetch_seconds}s" bash -c '
+    if timeout "${fetch_seconds}s" bash -c '
       i=0
       while true; do
         i=$((i+1))
@@ -79,7 +111,7 @@ run_fetch_loop() {
         SQLI_LOG_LEVEL=ERROR \
         SQLI_CLIENT_LOCALE="'"$client_locale"'" \
         SQLI_DB_LOCALE="'"$db_locale"'" \
-        timeout 25s "'"$ROOT_DIR"'/build/sqli_export_csv" \
+        timeout 25s "'"${export_csv_bin}"'" \
           "'"$SQLI_BENCH_HOST"'" "'"$SQLI_BENCH_PORT"'" "'"$SQLI_BENCH_DB"'" \
           "'"$SQLI_BENCH_USER"'" "'"$SQLI_BENCH_PASS"'" "TABLE:mtst" "$out1" "'"$SQLI_BENCH_SERVER"'" \
           >/dev/null 2>&1 &
@@ -88,27 +120,58 @@ run_fetch_loop() {
         SQLI_LOG_LEVEL=ERROR \
         SQLI_CLIENT_LOCALE="'"$client_locale"'" \
         SQLI_DB_LOCALE="'"$db_locale"'" \
-        timeout 25s "'"$ROOT_DIR"'/build/sqli_export_csv" \
+        timeout 25s "'"${export_csv_bin}"'" \
           "'"$SQLI_BENCH_HOST"'" "'"$SQLI_BENCH_PORT"'" "'"$SQLI_BENCH_DB"'" \
           "'"$SQLI_BENCH_USER"'" "'"$SQLI_BENCH_PASS"'" "TABLE:mtst" "$out2" "'"$SQLI_BENCH_SERVER"'" \
           >/dev/null 2>&1 &
         p2=$!
-        wait "$p1" || true
-        wait "$p2" || true
+        wait "$p1"
+        rc1=$?
+        wait "$p2"
+        rc2=$?
+        if [[ "$rc1" -ne 0 && "$rc1" -ne 124 ]]; then
+          echo "worker=1 iteration=${i} exit_code=${rc1}" >>"'"${run_log}"'"
+          exit "$rc1"
+        fi
+        if [[ "$rc2" -ne 0 && "$rc2" -ne 124 ]]; then
+          echo "worker=2 iteration=${i} exit_code=${rc2}" >>"'"${run_log}"'"
+          exit "$rc2"
+        fi
       done
-    ' || true
+    '; then
+      timeout_rc=0
+    else
+      timeout_rc=$?
+    fi
+  fi
+
+  if [[ "${timeout_rc}" -ne 0 && "${timeout_rc}" -ne 124 ]]; then
+    echo "fetch loop failed for tag ${tag} with exit code ${timeout_rc}" >&2
+    if [[ -s "${run_log}" ]]; then
+      cat "${run_log}" >&2
+    fi
+    return 1
   fi
   end="$(date +%s)"
   elapsed=$((end - start))
-  files="$(find "$loop_dir" -type f -name '*.csv' | wc -l | awk '{print $1}')"
-  total_bytes="$(find "$loop_dir" -type f -name '*.csv' -printf '%s\n' | awk '{s+=$1} END{print s+0}')"
+  files="$(find "${loop_dir}" -type f -name '*.csv' | wc -l | awk '{print $1}')"
+  total_bytes="$(find "${loop_dir}" -type f -name '*.csv' -printf '%s\n' | awk '{s+=$1} END{print s+0}')"
   mibps="$(awk -v b="$total_bytes" -v s="$elapsed" 'BEGIN{ if (s<=0) print "0.000"; else printf "%.3f", (b/1048576.0)/s }')"
-  echo "fetch_result tag=$tag workers=$workers elapsed_s=$elapsed files=$files bytes=$total_bytes mibps=$mibps" | tee -a "$fetch_log"
+  echo "fetch_result tag=$tag workers=$workers elapsed_s=$elapsed files=$files bytes=$total_bytes mibps=$mibps" | tee -a "${FETCH_LOG}"
 }
 
 # Ensure binaries are built.
-cmake -S "$ROOT_DIR/libsqli" -B "$ROOT_DIR/build" >/dev/null
-cmake --build "$ROOT_DIR/build" -j >/dev/null
+cmake -S "${ROOT_DIR}" -B "${build_dir}" >/dev/null
+cmake --build "${build_dir}" -j >/dev/null
+
+if [[ ! -x "${stress_bin}" ]]; then
+  echo "sqli_stress binary not found: ${stress_bin}" >&2
+  exit 1
+fi
+if [[ ! -x "${export_csv_bin}" ]]; then
+  echo "sqli_export_csv binary not found: ${export_csv_bin}" >&2
+  exit 1
+fi
 
 declare -a stress_rows
 max_stable_threads=0
@@ -144,8 +207,8 @@ done
 run_fetch_loop 1 "fetch_1w_${fetch_seconds}s"
 run_fetch_loop 2 "fetch_2w_${fetch_seconds}s"
 
-f1_line="$(grep 'tag=fetch_1w_' "$fetch_log" | tail -n 1 || true)"
-f2_line="$(grep 'tag=fetch_2w_' "$fetch_log" | tail -n 1 || true)"
+f1_line="$(grep 'tag=fetch_1w_' "${FETCH_LOG}" | tail -n 1 || true)"
+f2_line="$(grep 'tag=fetch_2w_' "${FETCH_LOG}" | tail -n 1 || true)"
 f1_mibps="$(awk '{for(i=1;i<=NF;i++) if($i ~ /^mibps=/){split($i,a,"="); print a[2]}}' <<<"$f1_line")"
 f2_mibps="$(awk '{for(i=1;i<=NF;i++) if($i ~ /^mibps=/){split($i,a,"="); print a[2]}}' <<<"$f2_line")"
 f1_files="$(awk '{for(i=1;i<=NF;i++) if($i ~ /^files=/){split($i,a,"="); print a[2]}}' <<<"$f1_line")"
@@ -155,7 +218,7 @@ if [[ -z "$f1_line" || -z "$f2_line" ]]; then
   overall="FAIL"
 fi
 
-cat >"$report" <<EOF
+cat >"${REPORT}" <<EOF
 # Stress Envelope Report
 
 - Timestamp (UTC): $(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -186,8 +249,8 @@ $(printf '%s\n' "${stress_rows[@]}")
 - \`doc/status/artifacts/stress_tmp/fetch_runs.log\`
 EOF
 
-echo "Wrote $report"
-if [[ "$overall" != "PASS" ]]; then
-  echo "Stress envelope failed: $report" >&2
+echo "Wrote ${REPORT}"
+if [[ "${overall}" != "PASS" ]]; then
+  echo "Stress envelope failed: ${REPORT}" >&2
   exit 1
 fi

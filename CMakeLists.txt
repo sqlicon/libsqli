@@ -40,6 +40,11 @@ add_library(sqli STATIC
     ${SQLI_SRC_DIR}/sqli_asc.c
     ${SQLI_SRC_DIR}/sqli_handshake.c
     ${SQLI_SRC_DIR}/sqli_dispatch.c
+    ${SQLI_SRC_DIR}/sqli_protocol_write.c
+    ${SQLI_SRC_DIR}/sqli_query.c
+    ${SQLI_SRC_DIR}/sqli_batch.c
+    ${SQLI_SRC_DIR}/sqli_result.c
+    ${SQLI_SRC_DIR}/sqli_result_value.c
     ${SQLI_SRC_DIR}/sqli_prepare.c
     ${SQLI_SRC_DIR}/sqli_types.c
     ${SQLI_SRC_DIR}/sqli_transaction.c
