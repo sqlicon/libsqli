@@ -17,7 +17,6 @@ readonly ROOT_DIR="${SCRIPT_DIR}"
 readonly CMAKE_FILE="${ROOT_DIR}/CMakeLists.txt"
 readonly TEST_BUILD_DIR="${ROOT_DIR}/build-release-check"
 readonly BUILD_DEB_SCRIPT="${ROOT_DIR}/tools/build_deb.sh"
-readonly VERSION_REGEX='project\([[:space:]]*[^[:space:]]+[[:space:]]+VERSION[[:space:]]+([0-9]+)\.([0-9]+)\.([0-9]+)\)'
 
 RESTORE_CMAKE_FILE=0
 ORIGINAL_CMAKE_CONTENT=""
@@ -56,16 +55,20 @@ require_clean_worktree() {
 }
 
 extract_version() {
-  local cmake_content="$1"
+  local version_line
+  local version
 
-  if [[ ! ${cmake_content} =~ ${VERSION_REGEX} ]]; then
+  version_line="$(grep -E '^project\([^)]* VERSION [0-9]+\.[0-9]+\.[0-9]+' "${CMAKE_FILE}" || true)"
+  if [[ -z "${version_line}" ]]; then
     die "could not parse version from ${CMAKE_FILE}"
   fi
 
-  printf '%s.%s.%s' \
-    "${BASH_REMATCH[1]}" \
-    "${BASH_REMATCH[2]}" \
-    "${BASH_REMATCH[3]}"
+  version="$(sed -E 's/^project\([^)]* VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/' <<<"${version_line}")"
+  if [[ ! ${version} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    die "parsed invalid version from ${CMAKE_FILE}: ${version}"
+  fi
+
+  printf '%s' "${version}"
 }
 
 increment_patch_version() {
@@ -131,7 +134,7 @@ main() {
   echo "==> Running release test suite"
   run_tests
 
-  current_version="$(extract_version "$(<"${CMAKE_FILE}")")"
+  current_version="$(extract_version)"
   next_version="$(increment_patch_version "${current_version}")"
 
   echo "==> Incrementing version: ${current_version} -> ${next_version}"
