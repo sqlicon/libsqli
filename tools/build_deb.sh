@@ -1,29 +1,30 @@
 #!/usr/bin/env bash
-# Build a .deb package for sqlicon
-# Usage: ./build_deb.sh [output_dir]
+# Build a .deb package for sqlicon.
+# Usage: ./tools/build_deb.sh [output_dir]
 set -euo pipefail
 
-SRCDIR="$(cd "$(dirname "$0")" && pwd)"
-OUTDIR="${1:-${SRCDIR}/../dist}"
-VERSION="$(grep -oP 'project\(\s*\S+\s+VERSION\s+\K[0-9.]+' "${SRCDIR}/CMakeLists.txt")"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+readonly CMAKE_FILE="${ROOT_DIR}/CMakeLists.txt"
+
+OUTDIR="${1:-${ROOT_DIR}/../dist}"
+VERSION="$(grep -oP 'project\(\s*\S+\s+VERSION\s+\K[0-9.]+' "${CMAKE_FILE}")"
 ARCH="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
 PKG="sqlicon_${VERSION}_${ARCH}"
 STAGING="${OUTDIR}/${PKG}"
 
 mkdir -p "${OUTDIR}"
 
-# Build release binary
 echo "==> Building sqlicon..."
-BUILDDIR="${SRCDIR}/build-deb"
+BUILDDIR="${ROOT_DIR}/build-deb"
 mkdir -p "${BUILDDIR}"
 cd "${BUILDDIR}"
-cmake "${SRCDIR}" \
+cmake "${ROOT_DIR}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DSQLI_ENABLE_SANITIZERS=OFF \
     -DSQLI_ENABLE_LIVE_TESTS=OFF
 make sqlicon -j"$(nproc)"
 
-# Create package staging
 echo "==> Staging package..."
 rm -rf "${STAGING}"
 mkdir -p "${STAGING}/usr/bin"
@@ -31,10 +32,9 @@ mkdir -p "${STAGING}/usr/share/man/man1"
 mkdir -p "${STAGING}/DEBIAN"
 
 cp "${BUILDDIR}/sqlicon" "${STAGING}/usr/bin/sqlicon"
-cp "${SRCDIR}/tools/sqlicon.1" "${STAGING}/usr/share/man/man1/sqlicon.1"
+cp "${ROOT_DIR}/tools/sqlicon.1" "${STAGING}/usr/share/man/man1/sqlicon.1"
 gzip -f "${STAGING}/usr/share/man/man1/sqlicon.1"
 
-# Write control file
 cat > "${STAGING}/DEBIAN/control" <<CTRL
 Package: sqlicon
 Version: ${VERSION}
@@ -58,12 +58,10 @@ Description: Interactive shell for Informix databases
   * TLS-encrypted connections via OpenSSL
 CTRL
 
-# Build the package
 DEB="${OUTDIR}/sqlicon_${VERSION}_${ARCH}.deb"
 echo "==> Building ${DEB}..."
 dpkg-deb --build --root-owner-group "${STAGING}" "${DEB}"
 
-# Clean up staging
 rm -rf "${STAGING}"
 
 echo "==> Done: ${DEB}"
