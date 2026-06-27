@@ -19,7 +19,7 @@ static bool is_valid_profile_name(const char *name)
         if ((*p >= 'a' && *p <= 'z') ||
             (*p >= 'A' && *p <= 'Z') ||
             (*p >= '0' && *p <= '9') ||
-            *p == '_' || *p == '-' || *p == '@') {
+            *p == '_' || *p == '-' || *p == '@' || *p == '.') {
             continue;
         }
         return false;
