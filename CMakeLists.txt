@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(sqli VERSION 0.1.20 LANGUAGES C)
+project(sqli VERSION 0.1.21 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
