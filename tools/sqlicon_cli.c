@@ -81,9 +81,12 @@ void print_help(FILE *out)
             "      --database <name>    Database name\n"
             "      --user <name>        User name\n"
             "      --password <value>   Password (avoid in shell history)\n"
+            "                           Alias: --passwort\n"
             "      --client-locale <v>  Client locale\n"
             "      --db-locale <v>      Database locale\n"
+            "                           Alias: --dblocale\n"
             "      --connect-uri <uri>  Connection URI (onsoctcp/onsocssl/onipcstr)\n"
+            "                           Alias: --connect-url\n"
             "\n"
             "URI formats:\n"
             "  informix+onsoctcp://user:pass@host:port/db?INFORMIXSERVER=srv\n"
@@ -237,7 +240,7 @@ sqlicon_exit_code parse_args(int argc, char **argv, sqlicon_cli_options *opt)
             }
             continue;
         }
-        if (strcmp(arg, "--password") == 0) {
+        if (strcmp(arg, "--password") == 0 || strcmp(arg, "--passwort") == 0) {
             if (!parse_option_value(argc, argv, &i, &opt->password)) {
                 fprintf(stderr, "error: %s requires a value\n", arg);
                 return SQLICON_EXIT_MISUSE;
@@ -251,14 +254,14 @@ sqlicon_exit_code parse_args(int argc, char **argv, sqlicon_cli_options *opt)
             }
             continue;
         }
-        if (strcmp(arg, "--db-locale") == 0) {
+        if (strcmp(arg, "--db-locale") == 0 || strcmp(arg, "--dblocale") == 0) {
             if (!parse_option_value(argc, argv, &i, &opt->db_locale)) {
                 fprintf(stderr, "error: %s requires a value\n", arg);
                 return SQLICON_EXIT_MISUSE;
             }
             continue;
         }
-        if (strcmp(arg, "--connect-uri") == 0) {
+        if (strcmp(arg, "--connect-uri") == 0 || strcmp(arg, "--connect-url") == 0) {
             if (!parse_option_value(argc, argv, &i, &opt->conn_uri)) {
                 fprintf(stderr, "error: %s requires a value\n", arg);
                 return SQLICON_EXIT_MISUSE;
