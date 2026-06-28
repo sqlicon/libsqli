@@ -352,6 +352,50 @@ sqli_status sqli_bind_datetime(sqli_stmt_t *stmt, int param_index, const char *v
     return set_param_string(stmt, param_index, SQLI_BIND_STRING, value);
 }
 
+sqli_status sqli_bind_timestamp(sqli_stmt_t *stmt, int param_index, const sqli_timestamp_t *value)
+{
+    sqli_status rc = validate_param_index(stmt, param_index);
+    if (rc != SQLI_OK) return rc;
+
+    if (value == NULL || value->is_null) {
+        return sqli_bind_null(stmt, param_index);
+    }
+
+    int y = (value->year >= 1 && value->year <= 9999) ? value->year : 1970;
+    int m = (value->month >= 1 && value->month <= 12) ? value->month : 1;
+    int d = (value->day >= 1 && value->day <= 31) ? value->day : 1;
+    int h = (value->hour >= 0 && value->hour <= 23) ? value->hour : 0;
+    int mi = (value->minute >= 0 && value->minute <= 59) ? value->minute : 0;
+    int s = (value->second >= 0 && value->second <= 59) ? value->second : 0;
+    int us = (value->microsecond >= 0 && value->microsecond <= 999999) ? value->microsecond : 0;
+
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%06d", y, m, d, h, mi, s, us);
+
+    return set_param_string(stmt, param_index, SQLI_BIND_STRING, buf);
+}
+
+sqli_status sqli_bind_epoch_sec(sqli_stmt_t *stmt, int param_index, int64_t sec)
+{
+    sqli_timestamp_t ts;
+    sqli_timestamp_from_epoch_sec(&ts, sec);
+    return sqli_bind_timestamp(stmt, param_index, &ts);
+}
+
+sqli_status sqli_bind_epoch_ms(sqli_stmt_t *stmt, int param_index, int64_t ms)
+{
+    sqli_timestamp_t ts;
+    sqli_timestamp_from_epoch_ms(&ts, ms);
+    return sqli_bind_timestamp(stmt, param_index, &ts);
+}
+
+sqli_status sqli_bind_epoch_days(sqli_stmt_t *stmt, int param_index, int32_t days)
+{
+    sqli_timestamp_t ts;
+    sqli_timestamp_from_epoch_days(&ts, days);
+    return sqli_bind_timestamp(stmt, param_index, &ts);
+}
+
 sqli_status sqli_bind_interval(sqli_stmt_t *stmt, int param_index, const char *value)
 {
     return set_param_string(stmt, param_index, SQLI_BIND_STRING, value);

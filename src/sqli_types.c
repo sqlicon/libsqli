@@ -217,3 +217,92 @@ void sqli_decode_datetime(const uint8_t *buf, size_t buf_len,
     *minute = digits[10] * 10 + digits[11];
     *second = digits[12] * 10 + digits[13];
 }
+
+void sqli_days_to_ymd_ifx(int32_t ifx_days, int *y, int *m, int *d);
+
+static int64_t ymd_to_days(int y, int m, int d)
+{
+    if (m <= 2) {
+        m += 12;
+        y -= 1;
+    }
+    int64_t era = (y >= 0 ? y : y - 399) / 400;
+    unsigned yoe = (unsigned)(y - era * 400);
+    unsigned doy = (153 * (m - 3) + 2) / 5 + d - 1;
+    unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + (int64_t)doe - 719468;
+}
+
+int64_t sqli_timestamp_to_epoch_sec(const sqli_timestamp_t *ts)
+{
+    if (ts == NULL || ts->is_null) return 0;
+    int64_t days = ymd_to_days(ts->year, ts->month, ts->day);
+    int64_t sec = days * 86400LL;
+    sec += ts->hour * 3600LL;
+    sec += ts->minute * 60LL;
+    sec += ts->second;
+    return sec;
+}
+
+int64_t sqli_timestamp_to_epoch_ms(const sqli_timestamp_t *ts)
+{
+    if (ts == NULL || ts->is_null) return 0;
+    int64_t sec = sqli_timestamp_to_epoch_sec(ts);
+    return sec * 1000LL + (ts->microsecond / 1000);
+}
+
+int32_t sqli_timestamp_to_epoch_days(const sqli_timestamp_t *ts)
+{
+    if (ts == NULL || ts->is_null) return 0;
+    return (int32_t)ymd_to_days(ts->year, ts->month, ts->day);
+}
+
+void sqli_timestamp_from_epoch_sec(sqli_timestamp_t *ts, int64_t sec)
+{
+    if (ts == NULL) return;
+    memset(ts, 0, sizeof(*ts));
+    ts->is_null = false;
+
+    int64_t days = sec / 86400LL;
+    int64_t rem = sec % 86400LL;
+    if (rem < 0) {
+        days -= 1;
+        rem += 86400LL;
+    }
+    ts->hour = (int)(rem / 3600LL);
+    rem %= 3600LL;
+    ts->minute = (int)(rem / 60LL);
+    ts->second = (int)(rem % 60LL);
+
+    int y = 0, m = 0, d = 0;
+    sqli_days_to_ymd_ifx((int32_t)days + 25568, &y, &m, &d);
+    ts->year = y;
+    ts->month = m;
+    ts->day = d;
+    ts->microsecond = 0;
+}
+
+void sqli_timestamp_from_epoch_ms(sqli_timestamp_t *ts, int64_t ms)
+{
+    if (ts == NULL) return;
+    int64_t sec = ms / 1000LL;
+    int64_t rem = ms % 1000LL;
+    if (rem < 0) {
+        sec -= 1;
+        rem += 1000LL;
+    }
+    sqli_timestamp_from_epoch_sec(ts, sec);
+    ts->microsecond = (int)(rem * 1000LL);
+}
+
+void sqli_timestamp_from_epoch_days(sqli_timestamp_t *ts, int32_t days)
+{
+    if (ts == NULL) return;
+    memset(ts, 0, sizeof(*ts));
+    ts->is_null = false;
+    int y = 0, m = 0, d = 0;
+    sqli_days_to_ymd_ifx(days + 25568, &y, &m, &d);
+    ts->year = y;
+    ts->month = m;
+    ts->day = d;
+}

@@ -477,7 +477,7 @@ static int sqli_base100_decode_parts(const uint8_t *raw, size_t len,
     return 1;
 }
 
-static void sqli_days_to_ymd_ifx(int32_t ifx_days, int *y, int *m, int *d)
+void sqli_days_to_ymd_ifx(int32_t ifx_days, int *y, int *m, int *d)
 {
     int64_t z = (int64_t)ifx_days - 25568; /* IFX wire epoch (1899-12-31) -> Unix epoch days */
     z += 719468;
@@ -938,5 +938,141 @@ sqli_status sqli_result_stream_bytes(sqli_result_t *result, int col_index,
             return SQLI_ERR;
         off += n;
     }
+    return SQLI_OK;
+}
+
+sqli_status sqli_result_get_timestamp(sqli_result_t *result, int col_index,
+                                      sqli_timestamp_t *out)
+{
+    if (result == NULL || out == NULL || col_index < 0 || col_index >= result->column_count)
+        return SQLI_INVALID_STATE;
+
+    memset(out, 0, sizeof(*out));
+    out->is_null = true;
+
+    if (result->current_row < 0 || result->tuple_len == 0)
+        return SQLI_INVALID_STATE;
+
+    result->last_was_null = sqli_result_is_null_internal(result, col_index);
+    if (result->last_was_null) {
+        return SQLI_OK;
+    }
+
+    const sqli_column_info *col = &result->columns[(size_t)col_index];
+    uint8_t type = (uint8_t)col->type;
+
+    if (type == SQLI_TYPE_DATE) {
+        sqli_date_value date_val;
+        sqli_status rc = sqli_result_get_date(result, col_index, &date_val);
+        if (rc != SQLI_OK) return rc;
+        out->is_null = date_val.is_null;
+        out->year = date_val.year;
+        out->month = date_val.month;
+        out->day = date_val.day;
+        out->hour = 0;
+        out->minute = 0;
+        out->second = 0;
+        out->microsecond = 0;
+        return SQLI_OK;
+    }
+
+    if (type == SQLI_TYPE_DATETIME) {
+        sqli_datetime_value dt;
+        sqli_status rc = sqli_result_get_datetime(result, col_index, &dt);
+        if (rc != SQLI_OK) return rc;
+        out->is_null = dt.is_null;
+        if (dt.is_null) return SQLI_OK;
+
+        out->year = (dt.year >= 0) ? dt.year : 1970;
+        out->month = (dt.month >= 0) ? dt.month : 1;
+        out->day = (dt.day >= 0) ? dt.day : 1;
+        out->hour = (dt.hour >= 0) ? dt.hour : 0;
+        out->minute = (dt.minute >= 0) ? dt.minute : 0;
+        out->second = (dt.second >= 0) ? dt.second : 0;
+
+        int microsecond = 0;
+        if (dt.fraction_scale > 0 && dt.fraction_scale <= 5) {
+            int scale_factors[6] = { 1000000, 100000, 10000, 1000, 100, 10 };
+            microsecond = dt.fraction * scale_factors[dt.fraction_scale];
+        }
+        out->microsecond = microsecond;
+        return SQLI_OK;
+    }
+
+    /* Fallback for string-based types */
+    if (type == SQLI_TYPE_CHAR || type == SQLI_TYPE_VARCHAR ||
+        type == SQLI_TYPE_NCHAR || type == SQLI_TYPE_NVCHAR ||
+        type == SQLI_TYPE_LVARCHAR) {
+        const char *s = sqli_result_get_string(result, col_index);
+        if (s == NULL || *s == '\0') {
+            return SQLI_OK;
+        }
+
+        int y = 1970, m = 1, d = 1, h = 0, mi = 0, sec = 0, frac = 0;
+        int parsed = sscanf(s, "%d-%d-%d %d:%d:%d.%d", &y, &m, &d, &h, &mi, &sec, &frac);
+        if (parsed >= 3) {
+            out->is_null = false;
+            out->year = y;
+            out->month = m;
+            out->day = d;
+            out->hour = (parsed >= 4) ? h : 0;
+            out->minute = (parsed >= 5) ? mi : 0;
+            out->second = (parsed >= 6) ? sec : 0;
+            if (parsed >= 7) {
+                const char *dot = strchr(s, '.');
+                if (dot != NULL) {
+                    dot++;
+                    int scale = 0;
+                    while (dot[scale] >= '0' && dot[scale] <= '9' && scale < 6) {
+                        scale++;
+                    }
+                    int scale_factors[7] = { 1000000, 100000, 10000, 1000, 100, 10, 1 };
+                    out->microsecond = frac * scale_factors[scale];
+                } else {
+                    out->microsecond = 0;
+                }
+            } else {
+                out->microsecond = 0;
+            }
+            return SQLI_OK;
+        }
+    }
+
+    return SQLI_ERR;
+}
+
+sqli_status sqli_result_get_epoch_sec(sqli_result_t *result, int col_index, int64_t *out_sec)
+{
+    if (out_sec == NULL) return SQLI_INVALID_STATE;
+    *out_sec = 0;
+    sqli_timestamp_t ts;
+    sqli_status rc = sqli_result_get_timestamp(result, col_index, &ts);
+    if (rc != SQLI_OK) return rc;
+    if (ts.is_null) return SQLI_OK;
+    *out_sec = sqli_timestamp_to_epoch_sec(&ts);
+    return SQLI_OK;
+}
+
+sqli_status sqli_result_get_epoch_ms(sqli_result_t *result, int col_index, int64_t *out_ms)
+{
+    if (out_ms == NULL) return SQLI_INVALID_STATE;
+    *out_ms = 0;
+    sqli_timestamp_t ts;
+    sqli_status rc = sqli_result_get_timestamp(result, col_index, &ts);
+    if (rc != SQLI_OK) return rc;
+    if (ts.is_null) return SQLI_OK;
+    *out_ms = sqli_timestamp_to_epoch_ms(&ts);
+    return SQLI_OK;
+}
+
+sqli_status sqli_result_get_epoch_days(sqli_result_t *result, int col_index, int32_t *out_days)
+{
+    if (out_days == NULL) return SQLI_INVALID_STATE;
+    *out_days = 0;
+    sqli_timestamp_t ts;
+    sqli_status rc = sqli_result_get_timestamp(result, col_index, &ts);
+    if (rc != SQLI_OK) return rc;
+    if (ts.is_null) return SQLI_OK;
+    *out_days = sqli_timestamp_to_epoch_days(&ts);
     return SQLI_OK;
 }

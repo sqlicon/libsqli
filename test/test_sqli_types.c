@@ -1115,3 +1115,136 @@ void test_dt_414_datetime_interval_two_column_layout(void)
     TEST_ASSERT_EQUAL_INT(5, iv.second);
     sqli_result_destroy(result);
 }
+
+void test_dt_timestamp_retrieval(void)
+{
+    /* 1. Test DATETIME YEAR TO SECOND: 2026-06-20 12:34:56 */
+    const uint8_t tuple[] = {0xC7, 20, 26, 6, 20, 12, 34, 56};
+    sqli_result_t *result = make_single_row_result(SQLI_TYPE_DATETIME, 0x00000E0Au,
+                                                    tuple, sizeof(tuple));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+
+    sqli_timestamp_t ts;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_timestamp(result, 0, &ts));
+    TEST_ASSERT_EQUAL_INT(0, ts.is_null);
+    TEST_ASSERT_EQUAL_INT(2026, ts.year);
+    TEST_ASSERT_EQUAL_INT(6, ts.month);
+    TEST_ASSERT_EQUAL_INT(20, ts.day);
+    TEST_ASSERT_EQUAL_INT(12, ts.hour);
+    TEST_ASSERT_EQUAL_INT(34, ts.minute);
+    TEST_ASSERT_EQUAL_INT(56, ts.second);
+    TEST_ASSERT_EQUAL_INT(0, ts.microsecond);
+    sqli_result_destroy(result);
+
+    /* 2. Test DATE: 2024-06-15 (represented as days since 1899-12-31, 2024-06-15 is 45457 days) */
+    const uint8_t date_tuple[] = {0x00, 0x00, 0xB1, 0x91};
+    result = make_single_row_result(SQLI_TYPE_DATE, 4, date_tuple, sizeof(date_tuple));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_timestamp(result, 0, &ts));
+    TEST_ASSERT_EQUAL_INT(0, ts.is_null);
+    TEST_ASSERT_EQUAL_INT(2024, ts.year);
+    TEST_ASSERT_EQUAL_INT(6, ts.month);
+    TEST_ASSERT_EQUAL_INT(15, ts.day);
+    TEST_ASSERT_EQUAL_INT(0, ts.hour);
+    TEST_ASSERT_EQUAL_INT(0, ts.minute);
+    TEST_ASSERT_EQUAL_INT(0, ts.second);
+    TEST_ASSERT_EQUAL_INT(0, ts.microsecond);
+    sqli_result_destroy(result);
+
+    /* 3. Test string fallback */
+    const char *str_val = "2026-06-28 02:29:16.123456";
+    size_t str_len = strlen(str_val);
+    uint8_t *str_tuple = malloc(1 + str_len);
+    str_tuple[0] = (uint8_t)str_len;
+    memcpy(str_tuple + 1, str_val, str_len);
+
+    result = make_single_row_result(SQLI_TYPE_VARCHAR, 0, str_tuple, 1 + str_len);
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_timestamp(result, 0, &ts));
+    TEST_ASSERT_EQUAL_INT(0, ts.is_null);
+    TEST_ASSERT_EQUAL_INT(2026, ts.year);
+    TEST_ASSERT_EQUAL_INT(6, ts.month);
+    TEST_ASSERT_EQUAL_INT(28, ts.day);
+    TEST_ASSERT_EQUAL_INT(2, ts.hour);
+    TEST_ASSERT_EQUAL_INT(29, ts.minute);
+    TEST_ASSERT_EQUAL_INT(16, ts.second);
+    TEST_ASSERT_EQUAL_INT(123456, ts.microsecond);
+
+    sqli_result_destroy(result);
+    free(str_tuple);
+}
+
+void test_sqli_epoch_helpers(void)
+{
+    /* 1. Test timestamp to epoch conversions */
+    sqli_timestamp_t ts = {
+        .is_null = false,
+        .year = 2026,
+        .month = 6,
+        .day = 28,
+        .hour = 2,
+        .minute = 33,
+        .second = 15,
+        .microsecond = 123456
+    };
+
+    int32_t days = sqli_timestamp_to_epoch_days(&ts);
+    TEST_ASSERT_EQUAL_INT32(20632, days);
+
+    int64_t sec = sqli_timestamp_to_epoch_sec(&ts);
+    TEST_ASSERT_EQUAL_INT64(1782613995LL, sec);
+
+    int64_t ms = sqli_timestamp_to_epoch_ms(&ts);
+    TEST_ASSERT_EQUAL_INT64(1782613995123LL, ms);
+
+    /* 2. Test epoch to timestamp conversions */
+    sqli_timestamp_t ts2;
+    sqli_timestamp_from_epoch_sec(&ts2, 1782613995LL);
+    TEST_ASSERT_EQUAL_INT(0, ts2.is_null);
+    TEST_ASSERT_EQUAL_INT(2026, ts2.year);
+    TEST_ASSERT_EQUAL_INT(6, ts2.month);
+    TEST_ASSERT_EQUAL_INT(28, ts2.day);
+    TEST_ASSERT_EQUAL_INT(2, ts2.hour);
+    TEST_ASSERT_EQUAL_INT(33, ts2.minute);
+    TEST_ASSERT_EQUAL_INT(15, ts2.second);
+    TEST_ASSERT_EQUAL_INT(0, ts2.microsecond);
+
+    sqli_timestamp_from_epoch_ms(&ts2, 1782613995123LL);
+    TEST_ASSERT_EQUAL_INT(0, ts2.is_null);
+    TEST_ASSERT_EQUAL_INT(2026, ts2.year);
+    TEST_ASSERT_EQUAL_INT(6, ts2.month);
+    TEST_ASSERT_EQUAL_INT(28, ts2.day);
+    TEST_ASSERT_EQUAL_INT(2, ts2.hour);
+    TEST_ASSERT_EQUAL_INT(33, ts2.minute);
+    TEST_ASSERT_EQUAL_INT(15, ts2.second);
+    TEST_ASSERT_EQUAL_INT(123000, ts2.microsecond);
+
+    sqli_timestamp_from_epoch_days(&ts2, 20632);
+    TEST_ASSERT_EQUAL_INT(0, ts2.is_null);
+    TEST_ASSERT_EQUAL_INT(2026, ts2.year);
+    TEST_ASSERT_EQUAL_INT(6, ts2.month);
+    TEST_ASSERT_EQUAL_INT(28, ts2.day);
+    TEST_ASSERT_EQUAL_INT(0, ts2.hour);
+    TEST_ASSERT_EQUAL_INT(0, ts2.minute);
+    TEST_ASSERT_EQUAL_INT(0, ts2.second);
+    TEST_ASSERT_EQUAL_INT(0, ts2.microsecond);
+
+    /* 3. Test direct result epoch functions */
+    const uint8_t tuple[] = {0xC7, 20, 26, 6, 28, 2, 33, 15};
+    sqli_result_t *result = make_single_row_result(SQLI_TYPE_DATETIME, 0x00000E0Au,
+                                                    tuple, sizeof(tuple));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+
+    int64_t out_sec = 0;
+    int64_t out_ms = 0;
+    int32_t out_days = 0;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_epoch_sec(result, 0, &out_sec));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_epoch_ms(result, 0, &out_ms));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_epoch_days(result, 0, &out_days));
+
+    TEST_ASSERT_EQUAL_INT64(1782613995LL, out_sec);
+    TEST_ASSERT_EQUAL_INT64(1782613995000LL, out_ms);
+    TEST_ASSERT_EQUAL_INT32(20632, out_days);
+
+    sqli_result_destroy(result);
+}

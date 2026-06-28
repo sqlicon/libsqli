@@ -722,3 +722,44 @@ void test_result_column_type_zero_count(void)
     r.column_count = 0;
     TEST_ASSERT_EQUAL_INT(-1, sqli_result_column_type(&r, 0));
 }
+
+void test_bind_timestamp_success(void)
+{
+    sqli_stmt_t *s = mock_stmt(2);
+
+    sqli_timestamp_t ts = {
+        .is_null = false,
+        .year = 2026,
+        .month = 6,
+        .day = 28,
+        .hour = 2,
+        .minute = 30,
+        .second = 15,
+        .microsecond = 123456
+    };
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_timestamp(s, 1, &ts));
+    TEST_ASSERT_EQUAL_STRING("2026-06-28 02:30:15.123456", s->params[0].sval);
+
+    sqli_timestamp_t ts_null = { .is_null = true };
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_timestamp(s, 2, &ts_null));
+    TEST_ASSERT_TRUE(s->params[1].is_null);
+
+    sqli_stmt_destroy(s);
+}
+
+void test_bind_epoch_success(void)
+{
+    sqli_stmt_t *s = mock_stmt(3);
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_epoch_sec(s, 1, 1782613995LL));
+    TEST_ASSERT_EQUAL_STRING("2026-06-28 02:33:15.000000", s->params[0].sval);
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_epoch_ms(s, 2, 1782613995123LL));
+    TEST_ASSERT_EQUAL_STRING("2026-06-28 02:33:15.123000", s->params[1].sval);
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_epoch_days(s, 3, 20632));
+    TEST_ASSERT_EQUAL_STRING("2026-06-28 00:00:00.000000", s->params[2].sval);
+
+    sqli_stmt_destroy(s);
+}

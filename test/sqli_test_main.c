@@ -143,6 +143,10 @@ void test_dt_611_stream_bytes_chunked(void);
 void test_dt_412_datetime_semantic_object(void);
 void test_dt_413_interval_semantic_object(void);
 void test_dt_414_datetime_interval_two_column_layout(void);
+void test_dt_timestamp_retrieval(void);
+void test_sqli_epoch_helpers(void);
+
+
 void test_stability_decimal_codec_loop(void);
 void test_stability_bind_api_reuse(void);
 void test_call_prepare_null_params(void);
@@ -153,6 +157,10 @@ void test_call_api_null_safe(void);
 void test_bind_int_success(void);
 void test_bind_int64_success(void);
 void test_bind_double_success(void);
+void test_bind_timestamp_success(void);
+void test_bind_epoch_success(void);
+
+
 void test_bind_int_invalid_index(void);
 void test_bind_int64_invalid_index(void);
 void test_bind_double_invalid_index(void);
@@ -460,6 +468,10 @@ int main(void)
     RUN_TEST(test_dt_412_datetime_semantic_object);
     RUN_TEST(test_dt_413_interval_semantic_object);
     RUN_TEST(test_dt_414_datetime_interval_two_column_layout);
+    RUN_TEST(test_dt_timestamp_retrieval);
+    RUN_TEST(test_sqli_epoch_helpers);
+
+
     RUN_TEST(test_stability_decimal_codec_loop);
     RUN_TEST(test_stability_bind_api_reuse);
     RUN_TEST(test_call_prepare_null_params);
@@ -470,6 +482,10 @@ int main(void)
     RUN_TEST(test_bind_int_success);
     RUN_TEST(test_bind_int64_success);
     RUN_TEST(test_bind_double_success);
+    RUN_TEST(test_bind_timestamp_success);
+    RUN_TEST(test_bind_epoch_success);
+
+
     RUN_TEST(test_bind_int_invalid_index);
     RUN_TEST(test_bind_int64_invalid_index);
     RUN_TEST(test_bind_double_invalid_index);

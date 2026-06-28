@@ -438,8 +438,32 @@ typedef enum {
  * Prepared statements
  * ---------------------------------------------------------------- */
 
+typedef struct {
+    bool is_null;
+    int year;
+    int month;
+    int day;
+    int hour;
+    int minute;
+    int second;
+    int microsecond;
+} sqli_timestamp_t;
+
+/*
+ * Unix epoch conversion helpers for sqli_timestamp_t.
+ */
+int64_t sqli_timestamp_to_epoch_sec(const sqli_timestamp_t *ts);
+int64_t sqli_timestamp_to_epoch_ms(const sqli_timestamp_t *ts);
+int32_t sqli_timestamp_to_epoch_days(const sqli_timestamp_t *ts);
+
+void sqli_timestamp_from_epoch_sec(sqli_timestamp_t *ts, int64_t sec);
+void sqli_timestamp_from_epoch_ms(sqli_timestamp_t *ts, int64_t ms);
+void sqli_timestamp_from_epoch_days(sqli_timestamp_t *ts, int32_t days);
+
+
 /* Opaque prepared statement handle */
 typedef struct sqli_stmt sqli_stmt_t;
+
 
 /*
  * Prepare an SQL statement with ? parameter markers.
@@ -496,6 +520,20 @@ sqli_status sqli_bind_date(sqli_stmt_t *stmt, int param_index, const char *value
  * Bind a DATETIME/TIMESTAMP-like value as text.
  */
 sqli_status sqli_bind_datetime(sqli_stmt_t *stmt, int param_index, const char *value);
+
+/*
+ * Bind a standard portable timestamp struct.
+ */
+sqli_status sqli_bind_timestamp(sqli_stmt_t *stmt, int param_index, const sqli_timestamp_t *value);
+
+/*
+ * Direct Unix epoch binding helpers (format as YYYY-MM-DD HH:MM:SS.ffffff or YYYY-MM-DD).
+ */
+sqli_status sqli_bind_epoch_sec(sqli_stmt_t *stmt, int param_index, int64_t sec);
+sqli_status sqli_bind_epoch_ms(sqli_stmt_t *stmt, int param_index, int64_t ms);
+sqli_status sqli_bind_epoch_days(sqli_stmt_t *stmt, int param_index, int32_t days);
+
+
 
 /*
  * Bind an INTERVAL value as text.
@@ -761,11 +799,23 @@ typedef struct {
 } sqli_interval_value;
 
 sqli_status sqli_result_get_date(sqli_result_t *result, int col_index,
+
                                  sqli_date_value *out);
 sqli_status sqli_result_get_datetime(sqli_result_t *result, int col_index,
                                      sqli_datetime_value *out);
 sqli_status sqli_result_get_interval(sqli_result_t *result, int col_index,
                                      sqli_interval_value *out);
+sqli_status sqli_result_get_timestamp(sqli_result_t *result, int col_index,
+                                      sqli_timestamp_t *out);
+
+/*
+ * Direct Unix epoch retrieval helpers (auto-padded and locale-independent).
+ */
+sqli_status sqli_result_get_epoch_sec(sqli_result_t *result, int col_index, int64_t *out_sec);
+sqli_status sqli_result_get_epoch_ms(sqli_result_t *result, int col_index, int64_t *out_ms);
+sqli_status sqli_result_get_epoch_days(sqli_result_t *result, int col_index, int32_t *out_days);
+
+
 
 /* ----------------------------------------------------------------
  * Type encoding utilities
