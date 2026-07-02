@@ -367,6 +367,7 @@ void test_get_bytes_fetchblob_roundtrip(void)
     TEST_ASSERT_EQUAL_UINT8(0, wire[4]);
     TEST_ASSERT_EQUAL_UINT8(SQLI_SQ_FETCHBLOB, wire[5]);
 
+    free(result->tuple_buffer);
     sqli_result_destroy(result);
     free(conn->read_buf);
     free(conn);
@@ -1007,7 +1008,9 @@ void test_result_scroll_navigation(void)
     TEST_ASSERT_FALSE(sqli_result_absolute(&result, 0));
     TEST_ASSERT_FALSE(sqli_result_relative(&result, 1));
 
-    free(result.columns);
+    result.rows = NULL;
+    result.row_lens = NULL;
+    sqli_result_cleanup(&result);
 }
 
 void test_result_first_scroll_refetches_with_sfetch_absolute(void)
@@ -1102,7 +1105,10 @@ void test_result_get_string_cp1252_to_utf8_iconv(void)
     TEST_ASSERT_NOT_NULL(out);
     TEST_ASSERT_EQUAL_STRING("Z\xC3\xA4hllisten updaten", out);
 
-    free(result.columns);
+    sqli_result_cleanup(&result);
+    if (conn.decode_cd_ready && conn.decode_cd != (iconv_t)-1) {
+        iconv_close(conn.decode_cd);
+    }
 }
 
 void test_result_destroy_skips_close_when_stmt_invalid(void)
