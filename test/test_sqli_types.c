@@ -805,10 +805,10 @@ void test_dt_010_lvarchar_marker_len8_roundtrip(void)
 
 void test_dt_101_smallint_bounds(void)
 {
-    const uint8_t tuple_min[] = {0x80, 0x00}; /* -32768 */
+    const uint8_t tuple_min[] = {0x80, 0x01}; /* -32767 */
     sqli_result_t *min_result = make_single_row_result(SQLI_TYPE_SMALLINT, 2, tuple_min, sizeof(tuple_min));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(min_result));
-    TEST_ASSERT_EQUAL_INT(-32768, sqli_result_get_int(min_result, 0));
+    TEST_ASSERT_EQUAL_INT(-32767, sqli_result_get_int(min_result, 0));
     sqli_result_destroy(min_result);
 
     const uint8_t tuple_max[] = {0x7F, 0xFF}; /* 32767 */
@@ -818,12 +818,23 @@ void test_dt_101_smallint_bounds(void)
     sqli_result_destroy(max_result);
 }
 
+void test_dt_101_smallint_null(void)
+{
+    const uint8_t tuple[] = {0x80, 0x00}; /* SMALLINT NULL sentinel */
+    sqli_result_t *result = make_single_row_result(SQLI_TYPE_SMALLINT, 2, tuple, sizeof(tuple));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(result, 0));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_get_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_was_null(result));
+    sqli_result_destroy(result);
+}
+
 void test_dt_102_integer_bounds(void)
 {
-    const uint8_t tuple_min[] = {0x80, 0x00, 0x00, 0x00}; /* INT32_MIN */
+    const uint8_t tuple_min[] = {0x80, 0x00, 0x00, 0x01}; /* -2147483647 */
     sqli_result_t *min_result = make_single_row_result(SQLI_TYPE_INT, 4, tuple_min, sizeof(tuple_min));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(min_result));
-    TEST_ASSERT_EQUAL_INT32(INT32_MIN, sqli_result_get_int(min_result, 0));
+    TEST_ASSERT_EQUAL_INT32(-2147483647, sqli_result_get_int(min_result, 0));
     sqli_result_destroy(min_result);
 
     const uint8_t tuple_max[] = {0x7F, 0xFF, 0xFF, 0xFF}; /* INT32_MAX */
@@ -833,12 +844,23 @@ void test_dt_102_integer_bounds(void)
     sqli_result_destroy(max_result);
 }
 
+void test_dt_102_integer_null(void)
+{
+    const uint8_t tuple[] = {0x80, 0x00, 0x00, 0x00}; /* INT NULL sentinel */
+    sqli_result_t *result = make_single_row_result(SQLI_TYPE_INT, 4, tuple, sizeof(tuple));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(result, 0));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_get_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_was_null(result));
+    sqli_result_destroy(result);
+}
+
 void test_dt_103_bigint_bounds(void)
 {
-    const uint8_t tuple_min[] = {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; /* INT64_MIN */
+    const uint8_t tuple_min[] = {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}; /* -9223372036854775807LL */
     sqli_result_t *min_result = make_single_row_result(SQLI_TYPE_BIGINT, 8, tuple_min, sizeof(tuple_min));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(min_result));
-    TEST_ASSERT_EQUAL_INT64(INT64_MIN, sqli_result_get_int64(min_result, 0));
+    TEST_ASSERT_EQUAL_INT64(-9223372036854775807LL, sqli_result_get_int64(min_result, 0));
     sqli_result_destroy(min_result);
 
     const uint8_t tuple_max[] = {0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; /* INT64_MAX */
@@ -846,6 +868,17 @@ void test_dt_103_bigint_bounds(void)
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(max_result));
     TEST_ASSERT_EQUAL_INT64(INT64_MAX, sqli_result_get_int64(max_result, 0));
     sqli_result_destroy(max_result);
+}
+
+void test_dt_103_bigint_null(void)
+{
+    const uint8_t tuple[] = {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; /* BIGINT NULL sentinel */
+    sqli_result_t *result = make_single_row_result(SQLI_TYPE_BIGINT, 8, tuple, sizeof(tuple));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(result, 0));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_get_int64(result, 0));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_was_null(result));
+    sqli_result_destroy(result);
 }
 
 void test_dt_104_serial8_bounds(void)

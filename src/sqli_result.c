@@ -411,6 +411,15 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
                                          (uint32_t)p[3]);
                 if (days == INT32_MIN)
                     is_null = 1;
+            } else if (type == SQLI_TYPE_SMALLINT && data_len == 2 && p[0] == 0x80 && p[1] == 0x00) {
+                is_null = 1;
+            } else if ((type == SQLI_TYPE_INT || type == SQLI_TYPE_SERIAL) && data_len == 4 &&
+                       p[0] == 0x80 && p[1] == 0x00 && p[2] == 0x00 && p[3] == 0x00) {
+                is_null = 1;
+            } else if ((type == SQLI_TYPE_BIGINT || type == SQLI_TYPE_BIGSERIAL) && data_len == 8 &&
+                       p[0] == 0x80 && p[1] == 0x00 && p[2] == 0x00 && p[3] == 0x00 &&
+                       p[4] == 0x00 && p[5] == 0x00 && p[6] == 0x00 && p[7] == 0x00) {
+                is_null = 1;
             } else if ((type == SQLI_TYPE_INT8 || type == SQLI_TYPE_SERIAL8) &&
                        data_len >= 2 && p[0] == 0 && p[1] == 0) {
                 is_null = 1;
@@ -468,6 +477,15 @@ bool sqli_result_is_null_internal(sqli_result_t *result, int col_index)
         if (days == INT32_MIN)
             return 1;
     }
+    if (type == SQLI_TYPE_SMALLINT && data_len == 2 && p[0] == 0x80 && p[1] == 0x00)
+        return 1;
+    if ((type == SQLI_TYPE_INT || type == SQLI_TYPE_SERIAL) && data_len == 4 &&
+        p[0] == 0x80 && p[1] == 0x00 && p[2] == 0x00 && p[3] == 0x00)
+        return 1;
+    if ((type == SQLI_TYPE_BIGINT || type == SQLI_TYPE_BIGSERIAL) && data_len == 8 &&
+        p[0] == 0x80 && p[1] == 0x00 && p[2] == 0x00 && p[3] == 0x00 &&
+        p[4] == 0x00 && p[5] == 0x00 && p[6] == 0x00 && p[7] == 0x00)
+        return 1;
     if ((type == SQLI_TYPE_INT8 || type == SQLI_TYPE_SERIAL8) &&
         data_len >= 2 && p[0] == 0 && p[1] == 0)
         return 1;
