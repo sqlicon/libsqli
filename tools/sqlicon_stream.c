@@ -130,6 +130,66 @@ static sqlicon_exit_code execute_pending_statements(sqli_conn_t *conn, char **pe
 }
 
 /* ---------------------------------------------------------------- */
+/* Execute a multi-statement string (for -c mode)                   */
+/* ---------------------------------------------------------------- */
+
+static sqlicon_exit_code execute_inline_query(sqli_conn_t *conn, const char *sql,
+                                              sqlicon_runtime *rt)
+{
+    char *buf = strdup(sql);
+    if (buf == NULL)
+        return SQLICON_EXIT_SQL_ERROR;
+    size_t len = strlen(buf);
+
+    sqlicon_exit_code rc = SQLICON_EXIT_OK;
+    while (len > 0) {
+        discard_leading_whitespace(buf, &len);
+        char *semi = strchr(buf, ';');
+
+        if (semi == NULL) {
+            /* No semicolon — execute remaining as a single statement. */
+            size_t trimmed_len = 0;
+            const char *trimmed = trim_span(buf, len, &trimmed_len);
+            if (trimmed_len > 0) {
+                char *stmt = dup_span(trimmed, trimmed_len);
+                if (stmt == NULL) {
+                    rc = SQLICON_EXIT_SQL_ERROR;
+                } else {
+                    rc = execute_sql_statement(conn, stmt, true, false, rt);
+                    free(stmt);
+                }
+            }
+            break;
+        }
+
+        size_t raw_len = (size_t)(semi - buf);
+        size_t trimmed_len = 0;
+        const char *trimmed = trim_span(buf, raw_len, &trimmed_len);
+
+        if (trimmed_len > 0) {
+            char *stmt = dup_span(trimmed, trimmed_len);
+            if (stmt == NULL) {
+                rc = SQLICON_EXIT_SQL_ERROR;
+            } else {
+                rc = execute_sql_statement(conn, stmt, true, false, rt);
+                free(stmt);
+            }
+            if (rc != SQLICON_EXIT_OK)
+                break;
+        }
+
+        size_t consumed = raw_len + 1;
+        size_t remain = len - consumed;
+        memmove(buf, buf + consumed, remain);
+        len = remain;
+        buf[len] = '\0';
+    }
+
+    free(buf);
+    return rc;
+}
+
+/* ---------------------------------------------------------------- */
 /* Stream processor (REPL / script / stdin batch)                   */
 /* ---------------------------------------------------------------- */
 
@@ -266,7 +326,7 @@ sqlicon_exit_code run_mode(sqlicon_mode mode, const sqlicon_cli_options *opt,
         rt->bail_on_error = false;
         return execute_stream(conn, stdin, true, rt);
     case SQLICON_MODE_INLINE_QUERY:
-        return execute_sql_statement(conn, opt->inline_query, true, false, rt);
+        return execute_inline_query(conn, opt->inline_query, rt);
     case SQLICON_MODE_STDIN_BATCH:
         return execute_stream(conn, stdin, false, rt);
     case SQLICON_MODE_SCRIPT: {

@@ -136,22 +136,28 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
     if (base >= tuple_len)
         return SQLI_PROTO_ERROR;
 
-    /* CHAR/NCHAR can arrive in either fixed-width or 1-byte-prefixed layout. */
+    /* CHAR/NCHAR can arrive in either fixed-width or 1-byte-prefixed layout.
+     * Prefer fixed-width (declared width) because it always advances the offset
+     * to the next column. The prefixed heuristic is kept as a fallback for
+     * server variants that send unpadded CHAR, but only when the computed span
+     * exactly matches the declared width — otherwise the offset would drift
+     * and corrupt all subsequent columns (e.g. COUNT(*) showing NULL in
+     * GROUP-BY-NULL rows). */
     if (type == SQLI_TYPE_CHAR || type == SQLI_TYPE_NCHAR) {
         if (width == 0 && col_info->encoded_length > 0)
             width = (size_t)col_info->encoded_length;
 
-        /* Heuristic: live Informix rows often encode CHAR as len8+payload.
-         * Accept prefixed layout only for short values to avoid colliding
-         * with regular fixed-width text where first byte is printable ASCII. */
-        if (base + 1 <= tuple_len) {
+        if (base + 1 <= tuple_len && width > 0) {
             uint8_t len8 = tuple_buf[base];
             size_t payload = (size_t)len8;
             size_t start = base + 1;
-            if (len8 > 0 && len8 < 32 && start + payload <= tuple_len) {
+            /* Only accept prefixed layout when span (1+payload) equals the
+             * declared width, and the length byte is reasonable. */
+            if (len8 > 0 && len8 < 32 && 1 + payload == width &&
+                start + payload <= tuple_len) {
                 *data_start = start;
                 *data_len = payload;
-                *span = 1 + payload;
+                *span = width;
                 return SQLI_OK;
             }
         }
@@ -198,18 +204,17 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
     }
 
     if (type == SQLI_TYPE_LVARCHAR) {
-        /* Observed live LVARCHAR layout:
+        /* LVARCHAR wire layout:
          *   [4-byte marker][1-byte len][payload]
+         * The marker is typically 0 for normal strings but can be
+         * non-zero (e.g., 0x01000000) for NULL values in GROUP BY
+         * results. The marker value does not affect the span.
          * Keep a len16 fallback for server variants. */
         if (base + 5 <= tuple_len) {
-            uint32_t marker = ((uint32_t)tuple_buf[base] << 24) |
-                              ((uint32_t)tuple_buf[base + 1] << 16) |
-                              ((uint32_t)tuple_buf[base + 2] << 8) |
-                              (uint32_t)tuple_buf[base + 3];
             uint8_t len8 = tuple_buf[base + 4];
             size_t start = base + 5;
             size_t payload = (size_t)len8;
-            if (marker == 0 && start + payload <= tuple_len) {
+            if (start + payload <= tuple_len) {
                 *data_start = start;
                 *data_len = payload;
                 *span = 5 + payload;
@@ -304,12 +309,35 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
         const sqli_column_info *col = &result->columns[i];
         uint8_t type = (uint8_t)col->type;
         size_t data_start = 0, data_len = 0, span = 0;
-        result->columns[i].col_start_pos = (uint32_t)offset;
         sqli_status rc = SQLI_OK;
 
         if (offset >= result->tuple_len) {
             rc = SQLI_PROTO_ERROR;
-        } else if (type == SQLI_TYPE_CHAR || type == SQLI_TYPE_NCHAR || type == SQLI_TYPE_BOOL) {
+        } else if (type == SQLI_TYPE_CHAR || type == SQLI_TYPE_NCHAR) {
+            size_t width = sqli_fixed_width_for_type(type);
+            if (width == 0 && col->encoded_length > 0)
+                width = (size_t)col->encoded_length;
+            /* Try fixed-width first. If the declared width exceeds the
+             * remaining tuple, the server may use 1-byte length-prefixed
+             * encoding instead (common for CHAR columns in projected tuples). */
+            if (width > 0 && offset + width <= result->tuple_len) {
+                data_start = offset;
+                data_len = width;
+                span = width;
+            } else if (offset + 1 < result->tuple_len) {
+                size_t payload = (size_t)result->tuple_buffer[offset];
+                size_t start = offset + 1;
+                if (start + payload <= result->tuple_len) {
+                    data_start = start;
+                    data_len = payload;
+                    span = 1 + payload;
+                } else {
+                    rc = SQLI_PROTO_ERROR;
+                }
+            } else {
+                rc = SQLI_PROTO_ERROR;
+            }
+        } else if (type == SQLI_TYPE_BOOL) {
             rc = sqli_tuple_locate_column(col, result->tuple_buffer, result->tuple_len,
                                           &data_start, &data_len, &span);
         } else {
@@ -393,6 +421,7 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
         }
         result->cur_col_data_start[i] = data_start;
         result->cur_col_data_len[i] = data_len;
+        result->columns[i].col_start_pos = (uint32_t)offset;
         offset += span;
 
         int is_null = 0;

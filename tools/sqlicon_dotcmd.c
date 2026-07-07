@@ -55,11 +55,20 @@ sqlicon_exit_code handle_dot_command(sqli_conn_t *conn, sqlicon_runtime *rt,
     while (*p != '\0' && !is_space_char(*p))
         p++;
     size_t cmd_len = (size_t)(p - cmd_start);
-    const char *arg = skip_spaces_str(p);
+
+    const char *arg_start = skip_spaces_str(p);
+    const char *arg_end = arg_start;
+    while (*arg_end != '\0' && !is_space_char(*arg_end))
+        arg_end++;
+    size_t arg_len = (size_t)(arg_end - arg_start);
 
     char *cmd = dup_span(cmd_start, cmd_len);
-    if (cmd == NULL)
+    char *arg = dup_span(arg_start, arg_len);
+    if (cmd == NULL || arg == NULL) {
+        free(cmd);
+        free(arg);
         return SQLICON_EXIT_SQL_ERROR;
+    }
 
     sqlicon_exit_code rc = SQLICON_EXIT_OK;
     if (strcmp(cmd, "quit") == 0 || strcmp(cmd, "exit") == 0) {
@@ -183,5 +192,6 @@ sqlicon_exit_code handle_dot_command(sqli_conn_t *conn, sqlicon_runtime *rt,
     }
 
     free(cmd);
+    free(arg);
     return rc;
 }

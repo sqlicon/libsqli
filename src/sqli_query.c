@@ -204,7 +204,7 @@ sqli_status sqli_query_ex(sqli_conn_t *conn, const char *sql,
                 sqli_result_destroy(r);
                 return rc;
             }
-            if (r->saw_done || r->saw_error)
+            if (r->saw_done || r->saw_error || r->eof)
                 break;
 
             if (sqli_protocol_has_buffered_data(conn, conn->socket_fd)) {

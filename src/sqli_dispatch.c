@@ -949,6 +949,17 @@ static sqli_status receive_cost(sqli_conn_t *conn, int fd)
 {
     uint8_t peek[4];
     ssize_t n = sqli_peek_bytes(conn, fd, peek, sizeof(peek));
+
+    /* If not enough data is available yet, wait briefly and retry. */
+    if (n < 2) {
+        struct pollfd pfd;
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        (void)poll(&pfd, 1, 50);
+        n = sqli_peek_bytes(conn, fd, peek, sizeof(peek));
+    }
+
     if (n >= 2) {
         uint16_t maybe_next = (uint16_t)((peek[0] << 8) | peek[1]);
         if (sqli_is_cost_follow_opcode(maybe_next)) {
@@ -962,6 +973,12 @@ static sqli_status receive_cost(sqli_conn_t *conn, int fd)
             sqli_log(SQLI_LOG_DEBUG, "SQ_COST: no payload (next opcodes detected)");
             return SQLI_OK;
         }
+    }
+
+    /* Still not enough data to peek — server likely sent SQ_COST with no payload. */
+    if (n < 2) {
+        sqli_log(SQLI_LOG_DEBUG, "SQ_COST: no payload (insufficient data)");
+        return SQLI_OK;
     }
 
     uint32_t estimated_rows = 0;

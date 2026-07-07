@@ -855,7 +855,7 @@ sqli_status sqli_execute(sqli_stmt_t *stmt)
         if (rc != SQLI_OK)
             break;
 
-        if (stmt->result.saw_done || stmt->result.saw_error)
+        if (stmt->result.saw_done || stmt->result.saw_error || stmt->result.eof)
             break;
 
         struct pollfd pfd;
