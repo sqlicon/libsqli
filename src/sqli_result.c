@@ -425,6 +425,17 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
         offset += span;
 
         int is_null = 0;
+        /* LVARCHAR NULL marker: when the 4-byte marker is non-zero and
+         * the length byte is zero, Informix signals a NULL value. This
+         * distinguishes NULL from an empty string (marker == 0, len == 0). */
+        if (type == SQLI_TYPE_LVARCHAR && data_len == 0 && offset >= 5) {
+            uint32_t lv_marker = ((uint32_t)result->tuple_buffer[offset - 5] << 24) |
+                                 ((uint32_t)result->tuple_buffer[offset - 4] << 16) |
+                                 ((uint32_t)result->tuple_buffer[offset - 3] << 8) |
+                                 (uint32_t)result->tuple_buffer[offset - 2];
+            if (lv_marker != 0)
+                is_null = 1;
+        }
         if (data_len == 0) {
             if (!sqli_is_stringy_type(type) &&
                 (sqli_type_is_two_byte_prefixed(type) ||
