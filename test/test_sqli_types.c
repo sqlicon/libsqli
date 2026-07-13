@@ -803,6 +803,16 @@ void test_dt_010_lvarchar_marker_len8_roundtrip(void)
     sqli_result_destroy(result);
 }
 
+void test_dt_011_lvarchar_marker_len16_roundtrip(void)
+{
+    /* [marker=0][len16=5]hello */
+    const uint8_t tuple[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 'h', 'e', 'l', 'l', 'o'};
+    sqli_result_t *result = make_single_row_result(SQLI_TYPE_LVARCHAR, 8000, tuple, sizeof(tuple));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+    TEST_ASSERT_EQUAL_STRING("hello", sqli_result_get_string(result, 0));
+    sqli_result_destroy(result);
+}
+
 void test_dt_101_smallint_bounds(void)
 {
     const uint8_t tuple_min[] = {0x80, 0x01}; /* -32767 */

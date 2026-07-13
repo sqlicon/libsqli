@@ -3,6 +3,7 @@
 #include "sqli_result_internal.h"
 
 #include <stdlib.h>
+#include "sqli_log.h"
 
 /* Client-compatible SQ_SFETCH direction codes used by IfxResultSet. */
 enum {
@@ -204,12 +205,25 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
     }
 
     if (type == SQLI_TYPE_LVARCHAR) {
-        /* LVARCHAR wire layout:
-         *   [4-byte marker][1-byte len][payload]
-         * The marker is typically 0 for normal strings but can be
-         * non-zero (e.g., 0x01000000) for NULL values in GROUP BY
-         * results. The marker value does not affect the span.
-         * Keep a len16 fallback for server variants. */
+        /* LVARCHAR wire layout can be:
+         *   1. [4-byte marker][2-byte len][payload] (6-byte header)
+         *   2. [4-byte marker][1-byte len][payload] (5-byte header)
+         *   3. [2-byte len][payload] (2-byte header, no marker)
+         * We try them in decreasing header-size order. Mathematical verification
+         * shows that a 6-byte check cannot false-positive on a valid 5-byte tuple. */
+        // Try 6-byte header first
+        if (base + 6 <= tuple_len) {
+            uint16_t len16 = (uint16_t)((tuple_buf[base + 4] << 8) | tuple_buf[base + 5]);
+            size_t start = base + 6;
+            size_t payload = (size_t)len16;
+            if (start + payload <= tuple_len) {
+                *data_start = start;
+                *data_len = payload;
+                *span = 6 + payload;
+                return SQLI_OK;
+            }
+        }
+        // Try 5-byte header next
         if (base + 5 <= tuple_len) {
             uint8_t len8 = tuple_buf[base + 4];
             size_t start = base + 5;
@@ -221,6 +235,7 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
                 return SQLI_OK;
             }
         }
+        // Try 2-byte header next (no marker)
         if (base + 2 <= tuple_len) {
             uint16_t len16 = (uint16_t)((tuple_buf[base] << 8) | tuple_buf[base + 1]);
             size_t payload = (size_t)len16;
@@ -306,6 +321,7 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
 
     size_t offset = 0;
     for (int i = 0; i < result->column_count; i++) {
+        result->columns[i].col_start_pos = (uint32_t)offset;
         const sqli_column_info *col = &result->columns[i];
         uint8_t type = (uint8_t)col->type;
         size_t data_start = 0, data_len = 0, span = 0;
@@ -428,11 +444,12 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
         /* LVARCHAR NULL marker: when the 4-byte marker is non-zero and
          * the length byte is zero, Informix signals a NULL value. This
          * distinguishes NULL from an empty string (marker == 0, len == 0). */
-        if (type == SQLI_TYPE_LVARCHAR && data_len == 0 && offset >= 5) {
-            uint32_t lv_marker = ((uint32_t)result->tuple_buffer[offset - 5] << 24) |
-                                 ((uint32_t)result->tuple_buffer[offset - 4] << 16) |
-                                 ((uint32_t)result->tuple_buffer[offset - 3] << 8) |
-                                 (uint32_t)result->tuple_buffer[offset - 2];
+        if (type == SQLI_TYPE_LVARCHAR && data_len == 0 && span >= 5) {
+            size_t marker_pos = offset - span;
+            uint32_t lv_marker = ((uint32_t)result->tuple_buffer[marker_pos] << 24) |
+                                 ((uint32_t)result->tuple_buffer[marker_pos + 1] << 16) |
+                                 ((uint32_t)result->tuple_buffer[marker_pos + 2] << 8) |
+                                 (uint32_t)result->tuple_buffer[marker_pos + 3];
             if (lv_marker != 0)
                 is_null = 1;
         }
