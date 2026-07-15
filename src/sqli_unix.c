@@ -26,7 +26,7 @@ static int read_timeout_from_env(const char *name, int fallback)
     return (int)parsed;
 }
 
-static const int IO_TIMEOUT_SEC = 10;
+static const int IO_TIMEOUT_SEC = 60;
 
 int sqli_unix_connect(const char *socket_path)
 {

@@ -14,6 +14,7 @@
 #include <endian.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <errno.h>
 
 #define SQLI_MAX_TUPLE_BYTES (64u * 1024u * 1024u)
 
@@ -120,7 +121,15 @@ static void set_error_info_from_sqerr(sqli_conn_t *conn, sqli_status status,
 static sqli_status read_exact(sqli_conn_t *conn, int fd, uint8_t *buf, size_t count)
 {
     if (conn == NULL || conn->socket_fd != fd || conn->read_buf == NULL) {
-        return socket_read_exact_fallback(fd, buf, count);
+        sqli_status rc = socket_read_exact_fallback(fd, buf, count);
+        if (rc != SQLI_OK && conn != NULL) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                set_error(conn, "network read timeout - server took too long to respond");
+            } else {
+                set_error(conn, "network I/O read error");
+            }
+        }
+        return rc;
     }
 
     size_t copied = 0;
@@ -129,8 +138,14 @@ static sqli_status read_exact(sqli_conn_t *conn, int fd, uint8_t *buf, size_t co
                      ? (conn->read_buf_len - conn->read_buf_pos) : 0;
         if (avail == 0) {
             ssize_t n = sqli_tcp_read_some(fd, conn->read_buf, conn->read_buf_cap);
-            if (n <= 0)
+            if (n <= 0) {
+                if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                    set_error(conn, "network read timeout - server took too long to respond");
+                } else {
+                    set_error(conn, "network I/O read error");
+                }
                 return SQLI_IO_ERROR;
+            }
             conn->read_buf_pos = 0;
             conn->read_buf_len = (size_t)n;
             avail = conn->read_buf_len;

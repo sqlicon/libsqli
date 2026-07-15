@@ -605,7 +605,11 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
         c->socket_fd = sqli_tcp_connect(c->hostname, c->service);
     }
     if (c->socket_fd < 0) {
-        set_error(c, "TCP connection failed");
+        if (!use_unix_socket && errno == ETIMEDOUT) {
+            set_error(c, "TCP connection timed out - server did not respond");
+        } else {
+            set_error(c, "TCP connection failed");
+        }
         rc = SQLI_IO_ERROR;
         goto out;
     }

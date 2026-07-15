@@ -63,7 +63,7 @@ static void dump_hex_full(const char *label, const unsigned char *buf, size_t le
  * Connection timeout (seconds)
  * ---------------------------------------------------------------- */
 
-static const int IO_TIMEOUT_SEC = 10;
+static const int IO_TIMEOUT_SEC = 60;
 
 static int read_timeout_from_env(const char *name, int fallback)
 {
