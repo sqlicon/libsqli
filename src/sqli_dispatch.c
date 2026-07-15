@@ -1112,6 +1112,7 @@ static sqli_status receive_command(sqli_conn_t *conn, int fd)
 sqli_status sqli_receive_dispatch(int fd, sqli_result_t *result, sqli_conn_t *conn)
 {
     sqli_status rc = SQLI_OK;
+    int start_rows = result ? result->row_count : 0;
 
     if (conn != NULL && result != NULL && result->owner_conn == NULL)
         result->owner_conn = conn;
@@ -1179,21 +1180,28 @@ sqli_status sqli_receive_dispatch(int fd, sqli_result_t *result, sqli_conn_t *co
             }
             if (rn <= 0) {
                 int can_end_group = 1;
-                if (conn != NULL &&
-                    ((strncmp(conn->error_context, "query/prepare_recv", 18) == 0) ||
-                     (strncmp(conn->error_context, "query_stream/prepare_recv", 25) == 0))) {
-                    if (result == NULL ||
-                        (result->statement_type == 0 &&
-                         result->stmt_id == 0 &&
-                         result->column_count == 0)) {
-                        can_end_group = 0;
+                if (conn != NULL) {
+                    if (strncmp(conn->error_context, "query/prepare_recv", 18) == 0 ||
+                        strncmp(conn->error_context, "query_stream/prepare_recv", 25) == 0) {
+                        if (result == NULL ||
+                            (result->statement_type == 0 &&
+                             result->stmt_id == 0 &&
+                             result->column_count == 0)) {
+                            can_end_group = 0;
+                        }
+                    } else if (strncmp(conn->error_context, "query/fetch_recv", 16) == 0 ||
+                               strncmp(conn->error_context, "query_stream/fetch_recv", 23) == 0) {
+                        int new_tuples = (result != NULL) ? (result->row_count - start_rows) : 0;
+                        if (result != NULL && !result->saw_done && new_tuples == 0) {
+                            can_end_group = 0;
+                        }
                     }
                 }
                 if (can_end_group) {
                     sqli_log(SQLI_LOG_DEBUG, "dispatch: EOT boundary/end-of-group");
                     result->eof = 1;
                 } else {
-                    sqli_log(SQLI_LOG_DEBUG, "dispatch: EOT boundary, awaiting first DESCRIBE/DONE");
+                    sqli_log(SQLI_LOG_DEBUG, "dispatch: EOT boundary, awaiting first DESCRIBE/DONE/TUPLE");
                 }
             }
         }

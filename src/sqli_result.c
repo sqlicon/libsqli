@@ -616,6 +616,7 @@ static bool sqli_result_server_refetch(sqli_result_t *result, uint16_t scroll_ty
     if (rc != SQLI_OK)
         return false;
 
+    set_error_context(result->owner_conn, "query/fetch_recv", SQLI_SQ_NFETCH);
     rc = sqli_receive_dispatch(result->owner_conn->socket_fd, result, result->owner_conn);
     if (rc != SQLI_OK || result->row_count <= 0)
         return false;

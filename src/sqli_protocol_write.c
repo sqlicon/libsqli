@@ -492,6 +492,7 @@ static sqli_status sqli_send_stmt_control(sqli_conn_t *conn, int stmt_id, uint8_
 {
     if (conn == NULL)
         return SQLI_INVALID_STATE;
+    set_error_context(conn, "stmt_control", opcode);
     uint8_t msg[8] = {
         0, SQLI_SQ_ID,
         (uint8_t)((stmt_id >> 8) & 0xFF),
