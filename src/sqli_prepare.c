@@ -132,8 +132,6 @@ sqli_status sqli_prepare(sqli_conn_t *conn, const char *sql,
     if (param_count != NULL)
         *param_count = nph;
 
-    sqli_result_cleanup(&prep_result);
-
     sqli_log(SQLI_LOG_DEBUG, "prepared statement %d with %d params (server=%d)",
              stmt_id, nph, pcount);
 
@@ -151,12 +149,22 @@ sqli_status sqli_prepare(sqli_conn_t *conn, const char *sql,
     s->param_server_type_count = server_param_type_count;
     s->executed    = false;
     s->result_valid = false;
-    memset(&s->result, 0, sizeof(s->result));
+    s->result = prep_result;
+    s->result.owner_conn = conn;
+    s->result.cursor_type = conn->cursor_type;
+    s->result.holdability = conn->holdability;
+    s->result.stmt_id = (int)stmt_id;
+    s->result.cursor = -1;
+    s->result.current_row = -1;
+    s->result.tuple_buffer = NULL;
+    s->result.tuple_len = 0;
+    s->result.cur_cache_row = -1;
 
     if (nph > 0) {
         s->param_cap = nph;
         s->params = calloc((size_t)nph, sizeof(sqli_bound_param));
         if (s->params == NULL) {
+            sqli_result_cleanup(&s->result);
             free(s->param_server_types);
             free(s);
             return SQLI_ALLOC_FAIL;
@@ -778,6 +786,120 @@ static size_t build_bind_msg(sqli_stmt_t *stmt, uint8_t *buf)
     return p;
 }
 
+static sqli_status sqli_stmt_send_bind_if_needed(sqli_stmt_t *stmt)
+{
+    if (stmt->param_count <= 0)
+        return SQLI_OK;
+
+    size_t bind_size = estimate_bind_msg_size(stmt);
+    uint8_t *bind_buf = malloc(bind_size);
+    if (bind_buf == NULL)
+        return SQLI_ALLOC_FAIL;
+    bind_size = build_bind_msg(stmt, bind_buf);
+
+    ssize_t sent = sqli_tcp_send(stmt->socket_fd, bind_buf, bind_size);
+    free(bind_buf);
+    if (sent < 0 || (size_t)sent != bind_size) {
+        set_error_context(stmt->conn, "execute/bind_send", SQLI_SQ_BIND);
+        set_error(stmt->conn, "failed to send BIND");
+        return SQLI_IO_ERROR;
+    }
+
+    return SQLI_OK;
+}
+
+static void sqli_stmt_prepare_result_for_execute(sqli_stmt_t *stmt)
+{
+    sqli_result_clear_rows(&stmt->result);
+    stmt->result.owner_conn = stmt->conn;
+    stmt->result.cursor_type = stmt->conn->cursor_type;
+    stmt->result.holdability = stmt->conn->holdability;
+    stmt->result.stmt_id = stmt->stmt_id;
+    stmt->result.eof = 0;
+    stmt->result.saw_done = false;
+    stmt->result.saw_error = false;
+    stmt->result.ret_type_sent = false;
+    stmt->result.last_was_null = false;
+    stmt->result_valid = false;
+    stmt->executed = true;
+}
+
+static sqli_status sqli_stmt_execute_select(sqli_stmt_t *stmt)
+{
+    sqli_status rc = sqli_stmt_send_bind_if_needed(stmt);
+    if (rc != SQLI_OK)
+        return rc;
+
+    sqli_stmt_prepare_result_for_execute(stmt);
+
+    rc = sqli_send_open(stmt->socket_fd, stmt->stmt_id,
+                        stmt->conn->cursor_type,
+                        stmt->conn->holdability);
+    if (rc != SQLI_OK) {
+        set_error_context(stmt->conn, "execute/open_send", SQLI_SQ_PREPARE);
+        set_error(stmt->conn, "failed to send open");
+        return rc;
+    }
+
+    set_error_context(stmt->conn, "execute/open_recv", SQLI_SQ_PREPARE);
+    rc = sqli_receive_dispatch(stmt->socket_fd, &stmt->result, stmt->conn);
+    if (rc != SQLI_OK) {
+        if (!stmt->conn->error_info.has_error)
+            set_error(stmt->conn, "error receiving open response");
+        return rc;
+    }
+
+    stmt->result.eof = 0;
+    if (stmt->conn->cursor_type == SQLI_CURSOR_SCROLL_INSENSITIVE) {
+        rc = sqli_send_scroll_fetch(stmt->socket_fd, stmt->stmt_id, &stmt->result, 1, 1);
+    } else {
+        rc = sqli_send_fetch(stmt->socket_fd, stmt->stmt_id, &stmt->result);
+    }
+    if (rc != SQLI_OK) {
+        set_error_context(stmt->conn, "execute/fetch_send", SQLI_SQ_NFETCH);
+        set_error(stmt->conn, "failed to send fetch");
+        return rc;
+    }
+
+    for (;;) {
+        int prev_rows = stmt->result.row_count;
+        set_error_context(stmt->conn, "execute/fetch_recv", SQLI_SQ_NFETCH);
+        stmt->result.saw_done = false;
+        stmt->result.saw_error = false;
+        rc = sqli_receive_dispatch(stmt->socket_fd, &stmt->result, stmt->conn);
+        if (rc != SQLI_OK) {
+            if (!stmt->conn->error_info.has_error)
+                set_error(stmt->conn, "error receiving fetch response");
+            return rc;
+        }
+
+        if (stmt->result.row_count <= prev_rows)
+            break;
+
+        stmt->result.eof = 0;
+        if (stmt->conn->cursor_type == SQLI_CURSOR_SCROLL_INSENSITIVE) {
+            rc = sqli_send_scroll_fetch(stmt->socket_fd, stmt->stmt_id, &stmt->result, 1,
+                                        (int32_t)(prev_rows + 1));
+        } else {
+            rc = sqli_send_fetch(stmt->socket_fd, stmt->stmt_id, &stmt->result);
+        }
+        if (rc != SQLI_OK) {
+            set_error_context(stmt->conn, "execute/fetch_send", SQLI_SQ_NFETCH);
+            set_error(stmt->conn, "failed to send fetch");
+            return rc;
+        }
+    }
+
+    if (stmt->conn->cursor_type != SQLI_CURSOR_SCROLL_INSENSITIVE) {
+        sqli_stmt_best_effort_control(stmt, SQLI_SQ_CLOSE);
+        sqli_stmt_best_effort_control(stmt, SQLI_SQ_RELEASE);
+        stmt->result.stmt_id = -1;
+    }
+
+    stmt->result_valid = true;
+    return SQLI_OK;
+}
+
 /* ----------------------------------------------------------------
  * sqli_execute — send SQ_ID + SQ_BIND + SQ_EXECUTE and receive result
  * ---------------------------------------------------------------- */
@@ -786,6 +908,9 @@ sqli_status sqli_execute(sqli_stmt_t *stmt)
 {
     if (stmt == NULL)
         return SQLI_INVALID_STATE;
+
+    if (stmt->read_only && stmt->result.statement_type == 2)
+        return sqli_stmt_execute_select(stmt);
 
     int fd = stmt->socket_fd;
     uint16_t sid = (uint16_t)stmt->stmt_id;
@@ -800,20 +925,9 @@ sqli_status sqli_execute(sqli_stmt_t *stmt)
     }
 
     if (stmt->param_count > 0) {
-        size_t bind_size = estimate_bind_msg_size(stmt);
-        uint8_t *bind_buf = malloc(bind_size);
-        if (bind_buf == NULL)
-            return SQLI_ALLOC_FAIL;
-        bind_size = build_bind_msg(stmt, bind_buf);
-
-        ssize_t sent = sqli_tcp_send(fd, bind_buf, bind_size);
-        free(bind_buf);
-        if (sent < 0 || (size_t)sent != bind_size) {
-            set_error_context(stmt->conn, "execute/bind_send", SQLI_SQ_BIND);
-            set_error(stmt->conn, "failed to send BIND");
-            return SQLI_IO_ERROR;
-        }
-
+        sqli_status bind_rc = sqli_stmt_send_bind_if_needed(stmt);
+        if (bind_rc != SQLI_OK)
+            return bind_rc;
     } else {
         /* No parameters: still need SQ_ID before SQ_EXECUTE. */
         uint8_t id_msg[4];
@@ -836,12 +950,8 @@ sqli_status sqli_execute(sqli_stmt_t *stmt)
         return SQLI_IO_ERROR;
     }
 
-    /* Clear and receive result */
-    sqli_result_cleanup(&stmt->result);
-    memset(&stmt->result, 0, sizeof(stmt->result));
-    stmt->result.owner_conn = stmt->conn;
-    stmt->result_valid = false;
-    stmt->executed = true;
+    /* Clear row state but keep DESCRIBE metadata from PREPARE. */
+    sqli_stmt_prepare_result_for_execute(stmt);
 
     set_error_context(stmt->conn, "execute/recv", SQLI_SQ_EXECUTE);
     sqli_status rc = SQLI_OK;
@@ -925,9 +1035,7 @@ bool sqli_stmt_next(sqli_stmt_t *stmt)
 {
     if (stmt == NULL || !stmt->result_valid)
         return false;
-    if (stmt->result.current_row >= 0 && stmt->result.tuple_len > 0)
-        return true;
-    return false;
+    return sqli_result_next(&stmt->result);
 }
 
 /* ----------------------------------------------------------------

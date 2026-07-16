@@ -472,6 +472,8 @@ static inline void sqli_result_cleanup(sqli_result_t *r)
     r->ret_type_sent = false;
 }
 
+void sqli_result_clear_rows(sqli_result_t *result);
+
 /* ----------------------------------------------------------------
  * Prepared statements (sqli_prepare.c)
  * ---------------------------------------------------------------- */
