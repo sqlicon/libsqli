@@ -745,6 +745,9 @@ static void *mock_server_query_test(void *arg)
             /* SQ_PREPARE — send DESCRIBE + DONE */
             rp += build_describe_response(resp + rp, ctx->nfields, ctx->stmt_type);
             rp += build_done_response(resp + rp, 0);
+        } else if (cmd == 5) {
+            /* SQ_BIND — server acknowledges completed bind group */
+            rp += build_done_response(resp + rp, 0);
         } else if (cmd == 7) {
             /* SQ_EXECUTE — send DONE */
             rp += build_done_response(resp + rp, 0);
@@ -1298,6 +1301,56 @@ void test_prepare_execute_select_returns_rows(void)
         sqli_prepare(conn, "SELECT 1, 2 FROM systables", &param_count, &stmt));
     TEST_ASSERT_NOT_NULL(stmt);
     TEST_ASSERT_EQUAL_INT(0, param_count);
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_execute(stmt));
+    TEST_ASSERT_EQUAL_INT(1, sqli_stmt_next(stmt));
+
+    sqli_result_t *result = sqli_stmt_result(stmt);
+    TEST_ASSERT_NOT_NULL(result);
+    TEST_ASSERT_EQUAL_INT(2, sqli_result_columns(result));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_get_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(2, sqli_result_get_int(result, 1));
+
+    sqli_stmt_destroy(stmt);
+    sqli_close(conn);
+    sqli_destroy(conn);
+
+    pthread_join(thread, NULL);
+    close(ctx->listener_fd);
+    mock_srv_ctx_destroy(ctx);
+    free(ctx);
+}
+
+void test_prepare_execute_select_with_bind_returns_rows(void)
+{
+    mock_srv_ctx *ctx = calloc(1, sizeof(*ctx));
+    TEST_ASSERT_NOT_NULL(ctx);
+    mock_srv_ctx_init(ctx);
+    require_test_listener_or_skip(ctx);
+    ctx->nfields = 2;
+    ctx->ntuple = 1;
+    ctx->stmt_type = 2;  /* SELECT */
+
+    pthread_t thread;
+    pthread_create(&thread, NULL, mock_server_query_test, ctx);
+
+    wait_for_server(ctx);
+
+    sqli_conn_t *conn = NULL;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_create(&conn));
+
+    sqli_connect_params params = {0};
+    fill_connect_params(ctx, &params);
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_connect(conn, &params));
+
+    int param_count = 0;
+    sqli_stmt_t *stmt = NULL;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK,
+        sqli_prepare(conn, "SELECT 1, 2 FROM systables WHERE tabid = ?", &param_count, &stmt));
+    TEST_ASSERT_NOT_NULL(stmt);
+    TEST_ASSERT_EQUAL_INT(1, param_count);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 1, 1));
 
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_execute(stmt));
     TEST_ASSERT_EQUAL_INT(1, sqli_stmt_next(stmt));

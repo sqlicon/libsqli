@@ -488,10 +488,10 @@ sqli_status sqli_bind_null_double(sqli_stmt_t *stmt, int param_index)
  * Build SQ_BIND message
  *
  * Layout:
- *   SQ_EOT(2) |
  *   SQ_ID(2) | stmtID(4-BE) |
- *   SQ_BIND(2) | stmtID_pad(2) | paramCount(2) |
+ *   SQ_BIND(2) | paramCount(2) |
  *   [per param: type(2) null_indicator(2) encoded_length(2) data] x N
+ *   [optional SQ_EOT(2)]
  *
  * Per-param value encodings:
  *   INT:    data = 4-byte BE int32
@@ -500,7 +500,7 @@ sqli_status sqli_bind_null_double(sqli_stmt_t *stmt, int param_index)
  *   NULL:   no data bytes (null_indicator = -1)
  * ---------------------------------------------------------------- */
 
-static size_t estimate_bind_msg_size(const sqli_stmt_t *stmt)
+static size_t estimate_bind_msg_size(const sqli_stmt_t *stmt, bool include_eot)
 {
     size_t n = 8; /* ID(4)+BIND(2)+paramCount(2) */
     for (int i = 0; i < stmt->param_count; i++) {
@@ -536,6 +536,8 @@ static size_t estimate_bind_msg_size(const sqli_stmt_t *stmt)
         default: break;
         }
     }
+    if (include_eot)
+        n += 2;
     return n;
 }
 
@@ -633,7 +635,7 @@ static int parse_decimal_ascii(const char *s, int *negative,
     return 1;
 }
 
-static size_t build_bind_msg(sqli_stmt_t *stmt, uint8_t *buf)
+static size_t build_bind_msg(sqli_stmt_t *stmt, uint8_t *buf, bool include_eot)
 {
     size_t p = 0;
 
@@ -783,19 +785,24 @@ static size_t build_bind_msg(sqli_stmt_t *stmt, uint8_t *buf)
         }
     }
 
+    if (include_eot) {
+        buf[p++] = 0;
+        buf[p++] = SQLI_SQ_EOT;
+    }
+
     return p;
 }
 
-static sqli_status sqli_stmt_send_bind_if_needed(sqli_stmt_t *stmt)
+static sqli_status sqli_stmt_send_bind_if_needed(sqli_stmt_t *stmt, bool terminate_group)
 {
     if (stmt->param_count <= 0)
         return SQLI_OK;
 
-    size_t bind_size = estimate_bind_msg_size(stmt);
+    size_t bind_size = estimate_bind_msg_size(stmt, terminate_group);
     uint8_t *bind_buf = malloc(bind_size);
     if (bind_buf == NULL)
         return SQLI_ALLOC_FAIL;
-    bind_size = build_bind_msg(stmt, bind_buf);
+    bind_size = build_bind_msg(stmt, bind_buf, terminate_group);
 
     ssize_t sent = sqli_tcp_send(stmt->socket_fd, bind_buf, bind_size);
     free(bind_buf);
@@ -826,9 +833,24 @@ static void sqli_stmt_prepare_result_for_execute(sqli_stmt_t *stmt)
 
 static sqli_status sqli_stmt_execute_select(sqli_stmt_t *stmt)
 {
-    sqli_status rc = sqli_stmt_send_bind_if_needed(stmt);
+    sqli_status rc = sqli_stmt_send_bind_if_needed(stmt, true);
     if (rc != SQLI_OK)
         return rc;
+
+    if (stmt->param_count > 0) {
+        sqli_result_t bind_result;
+        memset(&bind_result, 0, sizeof(bind_result));
+        bind_result.owner_conn = stmt->conn;
+
+        set_error_context(stmt->conn, "execute/bind_recv", SQLI_SQ_BIND);
+        rc = sqli_receive_dispatch(stmt->socket_fd, &bind_result, stmt->conn);
+        sqli_result_cleanup(&bind_result);
+        if (rc != SQLI_OK) {
+            if (!stmt->conn->error_info.has_error)
+                set_error(stmt->conn, "error receiving bind response");
+            return rc;
+        }
+    }
 
     sqli_stmt_prepare_result_for_execute(stmt);
 
@@ -925,7 +947,7 @@ sqli_status sqli_execute(sqli_stmt_t *stmt)
     }
 
     if (stmt->param_count > 0) {
-        sqli_status bind_rc = sqli_stmt_send_bind_if_needed(stmt);
+        sqli_status bind_rc = sqli_stmt_send_bind_if_needed(stmt, false);
         if (bind_rc != SQLI_OK)
             return bind_rc;
     } else {
