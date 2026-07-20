@@ -154,6 +154,10 @@ add_executable(sqli_prepared_probe ${SQLI_TOOLS_DIR}/sqli_prepared_probe.c)
 target_include_directories(sqli_prepared_probe PRIVATE ${SQLI_INC_DIR})
 target_link_libraries(sqli_prepared_probe PRIVATE sqli)
 
+add_executable(sqli_select_probe ${SQLI_TOOLS_DIR}/sqli_select_probe.c)
+target_include_directories(sqli_select_probe PRIVATE ${SQLI_INC_DIR})
+target_link_libraries(sqli_select_probe PRIVATE sqli)
+
 add_executable(sqlicon
     ${SQLI_TOOLS_DIR}/sqlicon_main.c
     ${SQLI_TOOLS_DIR}/sqlicon_cli.c

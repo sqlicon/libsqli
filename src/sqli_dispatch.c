@@ -1190,7 +1190,8 @@ sqli_status sqli_receive_dispatch(int fd, sqli_result_t *result, sqli_conn_t *co
                             can_end_group = 0;
                         }
                     } else if (strncmp(conn->error_context, "query/fetch_recv", 16) == 0 ||
-                               strncmp(conn->error_context, "query_stream/fetch_recv", 23) == 0) {
+                               strncmp(conn->error_context, "query_stream/fetch_recv", 23) == 0 ||
+                               strncmp(conn->error_context, "execute/fetch_recv", 18) == 0) {
                         int new_tuples = (result != NULL) ? (result->row_count - start_rows) : 0;
                         if (result != NULL && !result->saw_done && new_tuples == 0) {
                             can_end_group = 0;

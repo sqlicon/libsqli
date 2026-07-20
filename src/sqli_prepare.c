@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "sqli_internal.h"
+#include "sqli_protocol_internal.h"
 
 #include "sqli_tcp.h"
 #include "sqli_log.h"
@@ -13,6 +14,33 @@
 #include <endian.h>
 #include <stdint.h>
 #include <poll.h>
+
+static void sqli_prepare_drain_pending_tail(sqli_conn_t *conn)
+{
+    if (conn == NULL || conn->socket_fd < 0)
+        return;
+
+    for (int extra = 0; extra < 8; extra++) {
+        if (!sqli_protocol_has_buffered_data(conn, conn->socket_fd)) {
+            struct pollfd pfd;
+            pfd.fd = conn->socket_fd;
+            pfd.events = POLLIN;
+            pfd.revents = 0;
+            int prc = poll(&pfd, 1, 20);
+            if (prc <= 0 || !(pfd.revents & POLLIN))
+                break;
+        }
+
+        sqli_result_t tail;
+        memset(&tail, 0, sizeof(tail));
+        tail.owner_conn = conn;
+        set_error_context(conn, "prepare/drain", 0);
+        sqli_status rc = sqli_receive_dispatch(conn->socket_fd, &tail, conn);
+        sqli_result_cleanup(&tail);
+        if (rc != SQLI_OK)
+            break;
+    }
+}
 
 static void sqli_retry_sleep_ms(uint32_t delay_ms)
 {
@@ -89,6 +117,8 @@ sqli_status sqli_prepare(sqli_conn_t *conn, const char *sql,
         set_error(conn, "connection not ready");
         return SQLI_INVALID_STATE;
     }
+
+    sqli_prepare_drain_pending_tail(conn);
 
     /* Count ? placeholders */
     int nph = 0;
@@ -913,8 +943,8 @@ static sqli_status sqli_stmt_execute_select(sqli_stmt_t *stmt)
     }
 
     if (stmt->conn->cursor_type != SQLI_CURSOR_SCROLL_INSENSITIVE) {
-        sqli_stmt_best_effort_control(stmt, SQLI_SQ_CLOSE);
-        sqli_stmt_best_effort_control(stmt, SQLI_SQ_RELEASE);
+        sqli_stmt_close_release(stmt->conn, stmt->stmt_id);
+        stmt->stmt_id = -1;
         stmt->result.stmt_id = -1;
     }
 

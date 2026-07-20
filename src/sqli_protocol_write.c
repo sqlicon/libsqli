@@ -4,7 +4,35 @@
 #include "sqli_log.h"
 #include "sqli_tcp.h"
 
+#include <poll.h>
 #include <stdlib.h>
+
+static void sqli_drain_stmt_control_tail(sqli_conn_t *conn)
+{
+    if (conn == NULL || conn->socket_fd < 0)
+        return;
+
+    for (int extra = 0; extra < 8; extra++) {
+        if (!sqli_protocol_has_buffered_data(conn, conn->socket_fd)) {
+            struct pollfd pfd;
+            pfd.fd = conn->socket_fd;
+            pfd.events = POLLIN;
+            pfd.revents = 0;
+            int prc = poll(&pfd, 1, 20);
+            if (prc <= 0 || !(pfd.revents & POLLIN))
+                break;
+        }
+
+        sqli_result_t tail;
+        memset(&tail, 0, sizeof(tail));
+        tail.owner_conn = conn;
+        set_error_context(conn, "stmt_control/drain", 0);
+        sqli_status rc = sqli_receive_dispatch(conn->socket_fd, &tail, conn);
+        sqli_result_cleanup(&tail);
+        if (rc != SQLI_OK)
+            break;
+    }
+}
 
 sqli_status sqli_send_eot(int fd)
 {
@@ -508,6 +536,8 @@ static sqli_status sqli_send_stmt_control(sqli_conn_t *conn, int stmt_id, uint8_
     ctrl.owner_conn = conn;
     sqli_status rc = sqli_receive_dispatch(conn->socket_fd, &ctrl, conn);
     sqli_result_cleanup(&ctrl);
+    if (rc == SQLI_OK)
+        sqli_drain_stmt_control_tail(conn);
     return rc;
 }
 

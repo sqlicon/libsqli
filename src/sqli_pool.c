@@ -7,11 +7,32 @@
 #include <time.h>
 #include <errno.h>
 #include <unistd.h>
+#include <sys/socket.h>
 
 typedef struct {
     sqli_conn_t *conn;
     bool in_use;
 } sqli_pool_slot;
+
+static bool is_socket_alive(int fd)
+{
+    if (fd < 0)
+        return false;
+    char buf;
+    ssize_t r = recv(fd, &buf, 1, MSG_PEEK | MSG_DONTWAIT);
+    if (r == 0) {
+        /* Socket closed by peer (EOF) */
+        return false;
+    }
+    if (r < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+            /* Socket is healthy and open, no pending data */
+            return true;
+        }
+        return false;
+    }
+    return true;
+}
 
 struct sqli_pool {
     pthread_mutex_t mu;
@@ -221,9 +242,15 @@ sqli_status sqli_pool_acquire_timeout(sqli_pool_t *pool, sqli_conn_t **conn,
             if (slot->conn != NULL &&
                 slot->conn->state == SQLI_CONN_READY &&
                 slot->conn->socket_fd >= 0) {
-                *conn = slot->conn;
-                pthread_mutex_unlock(&pool->mu);
-                return SQLI_OK;
+                if (is_socket_alive(slot->conn->socket_fd)) {
+                    *conn = slot->conn;
+                    pthread_mutex_unlock(&pool->mu);
+                    return SQLI_OK;
+                } else {
+                    sqli_close(slot->conn);
+                    sqli_destroy(slot->conn);
+                    slot->conn = NULL;
+                }
             }
 
             pthread_mutex_unlock(&pool->mu);

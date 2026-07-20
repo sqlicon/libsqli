@@ -536,6 +536,55 @@ void test_dispatch_unknown_opcode_strict_mode_fails(void)
     close(write_fd);
 }
 
+void test_dispatch_execute_fetch_waits_past_empty_eot_groups(void)
+{
+    int read_fd = -1, write_fd = -1;
+    if (create_socket_pair(&read_fd, &write_fd) != 0)
+        TEST_IGNORE_MESSAGE("socketpair unavailable for dispatch test");
+
+    uint8_t resp[128];
+    size_t p = 0;
+    resp[p++] = 0; resp[p++] = SQLI_SQ_EOT;
+    resp[p++] = 0; resp[p++] = SQLI_SQ_EOT;
+    p += build_tuple_response_2int(resp + p, 7, 9);
+    p += build_done_response(resp + p, 1);
+    resp[p++] = 0; resp[p++] = SQLI_SQ_EOT;
+
+    TEST_ASSERT_EQUAL_INT((int)p, (int)write(write_fd, resp, p));
+    shutdown(write_fd, SHUT_WR);
+    set_nonblocking(read_fd);
+
+    sqli_result_t *result = calloc(1, sizeof(*result));
+    TEST_ASSERT_NOT_NULL(result);
+    result->column_count = 2;
+    result->columns = calloc(2, sizeof(*result->columns));
+    TEST_ASSERT_NOT_NULL(result->columns);
+    result->columns[0].type = SQLI_TYPE_INT;
+    result->columns[0].col_start_pos = 0;
+    result->columns[0].encoded_length = 4;
+    result->columns[1].type = SQLI_TYPE_INT;
+    result->columns[1].col_start_pos = 4;
+    result->columns[1].encoded_length = 4;
+    result->cursor = -1;
+    result->current_row = -1;
+
+    sqli_conn_t conn;
+    memset(&conn, 0, sizeof(conn));
+    set_error_context(&conn, "execute/fetch_recv", SQLI_SQ_NFETCH);
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_receive_dispatch(read_fd, result, &conn));
+    TEST_ASSERT_EQUAL_INT(1, result->row_count);
+    TEST_ASSERT_EQUAL_INT(1, result->rows_affected);
+    TEST_ASSERT_EQUAL_INT(1, result->eof);
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+    TEST_ASSERT_EQUAL_INT(7, sqli_result_get_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(9, sqli_result_get_int(result, 1));
+
+    sqli_result_destroy(result);
+    close(read_fd);
+    close(write_fd);
+}
+
 void test_error_classify_network_retryable_sqlcode(void)
 {
     sqli_conn_t conn;
