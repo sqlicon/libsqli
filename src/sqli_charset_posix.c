@@ -40,11 +40,17 @@ void sqli_charset_decoder_close(sqli_charset_decoder *decoder)
 bool sqli_charset_decoder_open(sqli_charset_decoder *decoder,
                                const char *to_cs, const char *from_cs)
 {
+    sqli_charset_spec to_spec;
+    sqli_charset_spec from_spec;
+
     if (decoder == NULL || to_cs == NULL || from_cs == NULL)
+        return false;
+    if (!sqli_charset_resolve_codeset(to_cs, &to_spec) ||
+        !sqli_charset_resolve_codeset(from_cs, &from_spec))
         return false;
 
     sqli_charset_decoder_close(decoder);
-    decoder->handle = iconv_open(to_cs, from_cs);
+    decoder->handle = iconv_open(to_spec.iconv_name, from_spec.iconv_name);
     if (decoder->handle == (iconv_t)-1)
         return false;
 

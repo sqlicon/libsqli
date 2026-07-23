@@ -57,8 +57,12 @@ static sqli_status hs_read_exact(int fd, uint8_t *buf, size_t count)
     ssize_t total = 0;
     while ((size_t)total < count) {
         ssize_t n = sqli_tcp_read(fd, buf + (size_t)total, count - (size_t)total);
-        if (n <= 0)
+        if (n <= 0) {
+            sqli_log(SQLI_LOG_DEBUG,
+                     "hs_read_exact(fd=%d,count=%zu,total=%zd) failed: n=%zd",
+                     fd, count, total, n);
             return SQLI_IO_ERROR;
+        }
         total += n;
     }
     return SQLI_OK;
@@ -89,20 +93,41 @@ static sqli_status hs_drain(int fd, size_t count)
 
 static sqli_status hs_wait_readable(int fd, int timeout_ms)
 {
-    struct pollfd pfd;
-    int prc;
-
     if (fd < 0 || timeout_ms < 0) {
         errno = EINVAL;
         return SQLI_INVALID_STATE;
     }
 
-    pfd.fd = fd;
 #ifdef _WIN32
-    pfd.events = POLLIN | POLLERR;
+    fd_set readfds;
+    SOCKET sock = (SOCKET)fd;
+    struct timeval tv;
+    int prc;
+
+    FD_ZERO(&readfds);
+    FD_SET(sock, &readfds);
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+    prc = select(0, &readfds, NULL, NULL, &tv);
+    if (prc == 0)
+        return SQLI_TIMEOUT;
+
+    if (prc == SOCKET_ERROR) {
+        int wsa_err = WSAGetLastError();
+        sqli_log(SQLI_LOG_WARN,
+                 "select failed while draining close response on fd=%d: wsa=%d",
+                 fd, wsa_err);
+        return SQLI_IO_ERROR;
+    }
+
+    return FD_ISSET(sock, &readfds) ? SQLI_OK : SQLI_IO_ERROR;
 #else
+    struct pollfd pfd;
+    int prc;
+
+    pfd.fd = fd;
     pfd.events = POLLIN | POLLERR | POLLHUP;
-#endif
     pfd.revents = 0;
 
     do {
@@ -113,16 +138,9 @@ static sqli_status hs_wait_readable(int fd, int timeout_ms)
         return SQLI_TIMEOUT;
 
     if (prc < 0) {
-#ifdef _WIN32
-        int wsa_err = WSAGetLastError();
-        sqli_log(SQLI_LOG_WARN,
-                 "poll failed while draining close response on fd=%d: wsa=%d",
-                 fd, wsa_err);
-#else
         sqli_log(SQLI_LOG_WARN,
                  "poll failed while draining close response on fd=%d: %s",
                  fd, strerror(errno));
-#endif
         return SQLI_IO_ERROR;
     }
 
@@ -130,6 +148,7 @@ static sqli_status hs_wait_readable(int fd, int timeout_ms)
         return SQLI_IO_ERROR;
 
     return SQLI_OK;
+#endif
 }
 
 static sqli_status hs_read_exact_timed(int fd, uint8_t *buf, size_t count)
@@ -205,20 +224,14 @@ static void setup_locale_decoder(sqli_conn_t *c)
         return;
     sqli_charset_decoder_close(&c->decode_cs);
     c->decode_cs_ready = false;
-    c->decode_cp1252_utf8 = false;
     c->decode_locale_checked = true;
 
     if (c->client_locale == NULL || c->db_locale == NULL)
         return;
 
-    bool client_utf8 = (strcasestr(c->client_locale, "utf8") != NULL) ||
-                       (strcasestr(c->client_locale, "utf-8") != NULL);
-    bool db_cp1252 = (strcasestr(c->db_locale, "cp1252") != NULL) ||
-                     (strcasestr(c->db_locale, "1252") != NULL);
-    if (!client_utf8 || !db_cp1252)
-        return;
-    c->decode_cp1252_utf8 = true;
-    if (sqli_charset_decoder_open(&c->decode_cs, "UTF-8", "WINDOWS-1252"))
+    if (sqli_charset_decoder_open_locales(&c->decode_cs,
+                                          c->client_locale,
+                                          c->db_locale))
         c->decode_cs_ready = true;
 }
 
@@ -905,7 +918,11 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
         info_buf[ip++] = 0; info_buf[ip++] = 0; /* end_val */
         info_buf[ip++] = 0; info_buf[ip++] = SQLI_SQ_EOT;
 
+        sqli_log(SQLI_LOG_DEBUG,
+                 "sending SQ_INFO: envs=%d totLen=%u packet=%zu",
+                 nenvs, (unsigned)totLen, ip);
         sent = sqli_tcp_send(c->socket_fd, info_buf, ip);
+        sqli_log(SQLI_LOG_DEBUG, "sent SQ_INFO: rc=%zd expected=%zu", sent, ip);
         if (sent < 0 || (size_t)sent != ip) {
             set_error(c, "failed to send SQ_INFO");
             rc = SQLI_IO_ERROR;
@@ -914,7 +931,10 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
 
         /* Server responds with SQ_EOT */
         uint16_t info_resp;
+        sqli_log(SQLI_LOG_DEBUG, "waiting for SQ_INFO response");
         rc = hs_read_be16(c->socket_fd, &info_resp);
+        sqli_log(SQLI_LOG_DEBUG, "SQ_INFO response read rc=%d opcode=%u",
+                 (int)rc, (unsigned)info_resp);
         if (rc != SQLI_OK) { set_error(c, "failed to read SQ_INFO response"); goto out; }
         if (info_resp != SQLI_SQ_EOT) {
             set_error_fmt(c, "SQ_INFO: expected EOT (%d), got %d", SQLI_SQ_EOT, info_resp);

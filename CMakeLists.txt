@@ -65,6 +65,7 @@ include(FetchContent)
 
 add_library(sqli STATIC
     ${SQLI_SRC_DIR}/sqli_charset.h
+    ${SQLI_SRC_DIR}/sqli_charset.c
     ${SQLI_SRC_DIR}/sqli_conn.c
     ${SQLI_SRC_DIR}/sqli_tls.c
     ${SQLI_SRC_DIR}/sqli_wire.c

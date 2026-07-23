@@ -232,47 +232,12 @@ sqli_status sqli_conn_write_str(sqli_conn_t *c, const char *s)
     return sqli_conn_write_buf(c, (const uint8_t *)s, slen);
 }
 
-static void locale_to_codeset(const char *locale, char *out, size_t out_sz)
-{
-    if (out == NULL || out_sz == 0)
-        return;
-    out[0] = '\0';
-    if (locale == NULL || *locale == '\0')
-        return;
-
-    const char *dot = strchr(locale, '.');
-    const char *src = (dot != NULL) ? dot + 1 : locale;
-    if (src == NULL || *src == '\0')
-        return;
-
-    size_t n = 0;
-    while (src[n] != '\0' && src[n] != '@' && src[n] != '/' && n + 1 < out_sz) {
-        out[n] = src[n];
-        n++;
-    }
-    out[n] = '\0';
-
-    if (out[0] == '\0')
-        return;
-    if (strcasecmp(out, "utf8") == 0 || strcasecmp(out, "utf-8") == 0) {
-        snprintf(out, out_sz, "UTF-8");
-        return;
-    }
-    if (strcasecmp(out, "cp1252") == 0 || strcmp(out, "1252") == 0 ||
-        strcasecmp(out, "windows-1252") == 0) {
-        snprintf(out, out_sz, "WINDOWS-1252");
-        return;
-    }
-    if (strcasecmp(out, "8859-1") == 0 || strcasecmp(out, "iso8859-1") == 0 ||
-        strcasecmp(out, "latin1") == 0 || strcasecmp(out, "iso-8859-1") == 0) {
-        snprintf(out, out_sz, "ISO-8859-1");
-        return;
-    }
-}
-
 sqli_status sqli_conn_encode_client_to_db(sqli_conn_t *c, const char *s,
                                           uint8_t **out, size_t *out_len)
 {
+    sqli_charset_spec from_spec;
+    sqli_charset_spec to_spec;
+
     if (out == NULL || out_len == NULL || s == NULL)
         return SQLI_INVALID_STATE;
     *out = NULL;
@@ -292,11 +257,9 @@ sqli_status sqli_conn_encode_client_to_db(sqli_conn_t *c, const char *s,
         return SQLI_OK;
     }
 
-    char from_cs[64];
-    char to_cs[64];
-    locale_to_codeset(c->client_locale, from_cs, sizeof(from_cs));
-    locale_to_codeset(c->db_locale, to_cs, sizeof(to_cs));
-    if (from_cs[0] == '\0' || to_cs[0] == '\0' || strcasecmp(from_cs, to_cs) == 0) {
+    if (!sqli_charset_resolve_locale(c->client_locale, &from_spec) ||
+        !sqli_charset_resolve_locale(c->db_locale, &to_spec) ||
+        strcasecmp(from_spec.canonical_name, to_spec.canonical_name) == 0) {
         *out = raw;
         *out_len = in_len;
         return SQLI_OK;
@@ -304,10 +267,12 @@ sqli_status sqli_conn_encode_client_to_db(sqli_conn_t *c, const char *s,
 
     uint8_t *buf = NULL;
     size_t used = 0;
-    if (!sqli_charset_convert_alloc(to_cs, from_cs, (const char *)raw, in_len,
+    if (!sqli_charset_convert_alloc(to_spec.canonical_name,
+                                    from_spec.canonical_name,
+                                    (const char *)raw, in_len,
                                     &buf, &used)) {
         sqli_log(SQLI_LOG_WARN, "locale encode failed (%s -> %s), using raw bytes",
-                 from_cs, to_cs);
+                 from_spec.canonical_name, to_spec.canonical_name);
         *out = raw;
         *out_len = in_len;
         return SQLI_OK;
@@ -350,7 +315,6 @@ sqli_status sqli_create(sqli_conn_t **conn)
     c->fetch_buf_size = 4194304u;
     sqli_charset_decoder_init(&c->decode_cs);
     c->decode_cs_ready = false;
-    c->decode_cp1252_utf8 = false;
     c->decode_locale_checked = false;
     c->read_buf_cap = 1048576u;
     c->read_buf = calloc(1, c->read_buf_cap);

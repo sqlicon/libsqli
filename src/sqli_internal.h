@@ -208,7 +208,6 @@ struct sqli_conn {
     uint32_t fetch_buf_size;
     sqli_charset_decoder decode_cs;
     bool decode_cs_ready;
-    bool decode_cp1252_utf8;
     bool decode_locale_checked;
 
     /* --- Environment variables --- */

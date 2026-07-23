@@ -1,4 +1,7 @@
 #include "unity.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #ifndef SQLI_HAVE_POSIX_TESTS
 #define SQLI_HAVE_POSIX_TESTS 1
@@ -87,6 +90,9 @@ void test_result_destroy_skips_close_when_stmt_invalid(void);
 void test_encode_decode_date_epoch(void);
 void test_encode_decode_date_positive(void);
 void test_encode_decode_date_negative(void);
+void test_charset_resolve_locale_gls_utf8(void);
+void test_charset_resolve_locale_gls_iso_8859_1(void);
+void test_charset_resolve_locale_numeric_cp1252(void);
 void test_encode_decode_datetime_full(void);
 void test_encode_decode_datetime_exact_year(void);
 void test_encode_decode_datetime_time_only(void);
@@ -345,12 +351,40 @@ void test_pool_reconnect_after_borrower_closed_connection(void);
 void setUp(void) {}
 void tearDown(void) {}
 
+static int section_enabled(const char *section)
+{
+    const char *filter = getenv("SQLI_TEST_SECTION");
+    return filter == NULL || *filter == '\0' || strcmp(filter, section) == 0;
+}
+
+static void section_checkpoint(const char *label)
+{
+    const char *path = getenv("SQLI_TEST_CHECKPOINT_FILE");
+    FILE *fp = NULL;
+
+    fprintf(stderr, "[sqli_test] %s\n", label);
+    fflush(stderr);
+
+    if (path == NULL || *path == '\0') {
+        path = "sqli_test.checkpoints.log";
+    }
+
+    fp = fopen(path, "a");
+    if (fp != NULL) {
+        fprintf(fp, "[sqli_test] %s\n", label);
+        fclose(fp);
+    }
+}
+
 int main(void)
 {
+    section_checkpoint("main:before_unity_begin");
     UNITY_BEGIN();
+    section_checkpoint("main:after_unity_begin");
 
 #if SQLI_HAVE_POSIX_TESTS
     /* Phase 1 */
+    if (section_enabled("phase1")) {
     RUN_TEST(test_sqli_create_destroy);
     RUN_TEST(test_sqli_create_null_out_ptr);
     RUN_TEST(test_sqli_destroy_null);
@@ -366,9 +400,12 @@ int main(void)
     RUN_TEST(test_sqli_pad_even_even);
     RUN_TEST(test_sqli_pad_even_odd);
     RUN_TEST(test_sqli_pad_even_large);
+    }
 #endif
 
     /* Phase 2 */
+    if (section_enabled("phase2")) {
+    section_checkpoint("phase2:start");
     RUN_TEST(test_sl_header_encode_conreq);
     RUN_TEST(test_sl_header_encode_conacc);
     RUN_TEST(test_sl_header_encode_redirect);
@@ -384,12 +421,16 @@ int main(void)
     RUN_TEST(test_asc_encode_padded_null);
     RUN_TEST(test_ipc_preamble_base64_is_padded);
     RUN_TEST(test_ipc_preamble_dynamic_magic);
+    section_checkpoint("phase2:mid");
     RUN_TEST(test_sl_encode_conreq);
     RUN_TEST(test_sl_encode_null_buf);
     RUN_TEST(test_sl_encode_too_small);
+    section_checkpoint("phase2:end");
+    }
 
 #if SQLI_HAVE_POSIX_TESTS
     /* Phase 3 */
+    if (section_enabled("phase3")) {
     RUN_TEST(test_dispatch_describe_zero_columns);
     RUN_TEST(test_dispatch_multi_row_result);
     RUN_TEST(test_dispatch_done_exposes_generated_serial);
@@ -426,9 +467,15 @@ int main(void)
     RUN_TEST(test_result_first_scroll_refetches_with_sfetch_absolute);
     RUN_TEST(test_result_get_string_cp1252_to_utf8_iconv);
     RUN_TEST(test_result_destroy_skips_close_when_stmt_invalid);
+    }
 #endif
 
     /* Phase 4 */
+    if (section_enabled("phase4")) {
+    section_checkpoint("phase4:start");
+    RUN_TEST(test_charset_resolve_locale_gls_utf8);
+    RUN_TEST(test_charset_resolve_locale_gls_iso_8859_1);
+    RUN_TEST(test_charset_resolve_locale_numeric_cp1252);
     RUN_TEST(test_encode_decode_date_epoch);
     RUN_TEST(test_encode_decode_date_positive);
     RUN_TEST(test_encode_decode_date_negative);
@@ -471,6 +518,7 @@ int main(void)
     RUN_TEST(test_result_get_int_from_mock_result);
     RUN_TEST(test_result_get_string_from_mock_result);
     RUN_TEST(test_result_next_recomputes_packed_offsets);
+    section_checkpoint("phase4:mid1");
     RUN_TEST(test_dt_001_varchar_roundtrip_ascii);
     RUN_TEST(test_dt_002_varchar_roundtrip_utf8);
     RUN_TEST(test_dt_003_char_padding_trim);
@@ -492,6 +540,7 @@ int main(void)
     RUN_TEST(test_dt_203_money_get_double_packed);
     RUN_TEST(test_dt_204_decimal_get_string_and_null);
     RUN_TEST(test_dt_206_result_is_null_and_was_null);
+    section_checkpoint("phase4:mid2");
     RUN_TEST(test_dt_301_float_double_roundtrip);
     RUN_TEST(test_dt_401_date_roundtrip);
     RUN_TEST(test_dt_402_date_string_epoch_mapping);
@@ -502,15 +551,22 @@ int main(void)
     RUN_TEST(test_dt_414_datetime_interval_two_column_layout);
     RUN_TEST(test_dt_timestamp_retrieval);
     RUN_TEST(test_sqli_epoch_helpers);
+    section_checkpoint("phase4:end");
+    }
 
 
+    if (section_enabled("stability")) {
+    section_checkpoint("stability:start");
     RUN_TEST(test_stability_decimal_codec_loop);
     RUN_TEST(test_stability_bind_api_reuse);
     RUN_TEST(test_call_prepare_null_params);
     RUN_TEST(test_call_prepare_not_ready_conn);
     RUN_TEST(test_call_api_null_safe);
+    section_checkpoint("stability:end");
+    }
 
     /* Phase 4b — prepared statement coverage */
+    if (section_enabled("phase4b")) {
     RUN_TEST(test_bind_int_success);
     RUN_TEST(test_bind_int64_success);
     RUN_TEST(test_bind_double_success);
@@ -581,9 +637,11 @@ int main(void)
     RUN_TEST(test_prepare_stmt_result_null_stmt);
     RUN_TEST(test_result_column_name_zero_count);
     RUN_TEST(test_result_column_type_zero_count);
+    }
 
 #if SQLI_HAVE_POSIX_TESTS
     /* Phase 5 — transactions */
+    if (section_enabled("phase5_txn")) {
     RUN_TEST(test_begin_null_conn);
     RUN_TEST(test_begin_not_ready_conn);
     RUN_TEST(test_begin_already_in_transaction);
@@ -614,10 +672,12 @@ int main(void)
     RUN_TEST(test_savepoint_set_writes_opcode_payload_and_flag);
     RUN_TEST(test_savepoint_release_and_rollback_write_expected_opcodes);
     RUN_TEST(test_savepoint_rejected_in_autocommit);
+    }
 #endif
 
 #if SQLI_HAVE_POSIX_TESTS
     /* Phase 5 — sqlhosts */
+    if (section_enabled("phase5_sqlhosts")) {
     RUN_TEST(test_parse_null_output);
     RUN_TEST(test_parse_nonexistent_file);
     RUN_TEST(test_parse_env_sqlhosts);
@@ -627,10 +687,12 @@ int main(void)
     RUN_TEST(test_find_nonexistent_server);
     RUN_TEST(test_find_null_server_name);
     RUN_TEST(test_find_count_zero);
+    }
 #endif
 
 #if SQLI_HAVE_POSIX_TESTS
     /* Phase 7 — URI connection */
+    if (section_enabled("phase7")) {
     RUN_TEST(test_uri_null_conn);
     RUN_TEST(test_uri_null_uri);
     RUN_TEST(test_uri_empty_uri);
@@ -654,10 +716,12 @@ int main(void)
     RUN_TEST(test_uri_explicit_user_only);
     RUN_TEST(test_uri_explicit_password_only);
     RUN_TEST(test_uri_onsoctcp_missing_port);
+    }
 #endif
 
 #if SQLI_HAVE_POSIX_TESTS
     /* Phase 6 — integration tests */
+    if (section_enabled("phase6")) {
     RUN_TEST(test_connect_success);
     RUN_TEST(test_connect_reject);
     RUN_TEST(test_connect_fragmented_conacc_body);
@@ -685,6 +749,7 @@ int main(void)
 #ifdef SQLI_ENABLE_LIVE_TESTS
     RUN_TEST(test_query_live_systables);
 #endif
+    }
 #endif
 
     return UNITY_END();

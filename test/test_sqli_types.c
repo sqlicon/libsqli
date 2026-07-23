@@ -25,6 +25,39 @@ int sqli_decode_decimal(const uint8_t *buf, size_t buf_size,
 
 static uint64_t tv_now_ms(void);
 
+void test_charset_resolve_locale_gls_utf8(void)
+{
+    sqli_charset_spec spec;
+
+    TEST_ASSERT_TRUE(sqli_charset_resolve_locale("en_US.57372", &spec));
+    TEST_ASSERT_EQUAL_STRING("UTF-8", spec.canonical_name);
+    TEST_ASSERT_EQUAL_STRING("UTF-8", spec.iconv_name);
+    TEST_ASSERT_EQUAL_UINT32(65001u, spec.windows_codepage);
+    TEST_ASSERT_EQUAL_INT(57372, spec.gls_csid);
+}
+
+void test_charset_resolve_locale_gls_iso_8859_1(void)
+{
+    sqli_charset_spec spec;
+
+    TEST_ASSERT_TRUE(sqli_charset_resolve_locale("en_US.819", &spec));
+    TEST_ASSERT_EQUAL_STRING("ISO-8859-1", spec.canonical_name);
+    TEST_ASSERT_EQUAL_STRING("ISO-8859-1", spec.iconv_name);
+    TEST_ASSERT_EQUAL_UINT32(28591u, spec.windows_codepage);
+    TEST_ASSERT_EQUAL_INT(819, spec.gls_csid);
+}
+
+void test_charset_resolve_locale_numeric_cp1252(void)
+{
+    sqli_charset_spec spec;
+
+    TEST_ASSERT_TRUE(sqli_charset_resolve_locale("de_DE.1252", &spec));
+    TEST_ASSERT_EQUAL_STRING("CP1252", spec.canonical_name);
+    TEST_ASSERT_EQUAL_STRING("CP1252", spec.iconv_name);
+    TEST_ASSERT_EQUAL_UINT32(1252u, spec.windows_codepage);
+    TEST_ASSERT_EQUAL_INT(1252, spec.gls_csid);
+}
+
 /* ----------------------------------------------------------------
  * DATE encoding/decoding tests
  * ---------------------------------------------------------------- */

@@ -280,31 +280,20 @@ const char *sqli_result_get_string(sqli_result_t *result, int col_index)
     str_buf[copy] = '\0';
 
     if (conn != NULL && !conn->decode_locale_checked) {
+        sqli_charset_decoder_close(&conn->decode_cs);
+        conn->decode_cs_ready = false;
         conn->decode_locale_checked = true;
         if (conn->client_locale != NULL && conn->db_locale != NULL &&
-            ((strcasestr(conn->client_locale, "utf8") != NULL) ||
-             (strcasestr(conn->client_locale, "utf-8") != NULL)) &&
-            ((strcasestr(conn->db_locale, "cp1252") != NULL) ||
-             (strcasestr(conn->db_locale, "1252") != NULL))) {
-            conn->decode_cp1252_utf8 = true;
-        }
+            sqli_charset_decoder_open_locales(&conn->decode_cs,
+                                              conn->client_locale,
+                                              conn->db_locale))
+            conn->decode_cs_ready = true;
     }
 
-    if (conn != NULL && conn->decode_cp1252_utf8) {
+    if (conn != NULL && conn->decode_cs_ready) {
         size_t utf8_len = sizeof(utf8_buf);
-        if (conn->decode_cs_ready &&
-            sqli_charset_decoder_convert(&conn->decode_cs, str_buf, copy,
+        if (sqli_charset_decoder_convert(&conn->decode_cs, str_buf, copy,
                                          utf8_buf, &utf8_len))
-            return utf8_buf;
-    }
-    if (conn != NULL && conn->client_locale != NULL && conn->db_locale != NULL &&
-        ((strcasestr(conn->client_locale, "utf8") != NULL) ||
-         (strcasestr(conn->client_locale, "utf-8") != NULL)) &&
-        ((strcasestr(conn->db_locale, "cp1252") != NULL) ||
-         (strcasestr(conn->db_locale, "1252") != NULL))) {
-        size_t utf8_len = sizeof(utf8_buf);
-        if (sqli_charset_convert_buffer("UTF-8", "WINDOWS-1252",
-                                        str_buf, copy, utf8_buf, &utf8_len))
             return utf8_buf;
     }
     return str_buf;

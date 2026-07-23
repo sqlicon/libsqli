@@ -5,6 +5,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
+typedef struct {
+    const char *canonical_name;
+    const char *iconv_name;
+    unsigned int windows_codepage;
+    int gls_csid;
+} sqli_charset_spec;
+
 #ifdef _WIN32
 #include <windows.h>
 typedef struct {
@@ -22,8 +29,13 @@ typedef struct {
 
 void sqli_charset_decoder_init(sqli_charset_decoder *decoder);
 void sqli_charset_decoder_close(sqli_charset_decoder *decoder);
+bool sqli_charset_resolve_codeset(const char *codeset, sqli_charset_spec *out);
+bool sqli_charset_resolve_locale(const char *locale, sqli_charset_spec *out);
 bool sqli_charset_decoder_open(sqli_charset_decoder *decoder,
                                const char *to_cs, const char *from_cs);
+bool sqli_charset_decoder_open_locales(sqli_charset_decoder *decoder,
+                                       const char *to_locale,
+                                       const char *from_locale);
 bool sqli_charset_decoder_convert(sqli_charset_decoder *decoder,
                                   const char *input, size_t input_len,
                                   char *output, size_t *output_len);

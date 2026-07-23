@@ -1,42 +1,19 @@
 #include "sqli_charset.h"
 
-#include <windows.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <string.h>
-
-static bool sqli_charset_is_name(const char *value, const char *expected)
-{
-    return value != NULL && expected != NULL && _stricmp(value, expected) == 0;
-}
-
-static bool sqli_charset_is_utf8(const char *value)
-{
-    return sqli_charset_is_name(value, "UTF-8") ||
-           sqli_charset_is_name(value, "UTF8");
-}
-
-static bool sqli_charset_is_cp1252(const char *value)
-{
-    return sqli_charset_is_name(value, "WINDOWS-1252") ||
-           sqli_charset_is_name(value, "CP1252") ||
-           sqli_charset_is_name(value, "1252");
-}
 
 static bool sqli_charset_resolve_codepage(const char *value, UINT *codepage)
 {
+    sqli_charset_spec spec;
+
     if (codepage == NULL)
         return false;
-    if (sqli_charset_is_utf8(value)) {
-        *codepage = CP_UTF8;
-        return true;
-    }
-    if (sqli_charset_is_cp1252(value)) {
-        *codepage = 1252;
-        return true;
-    }
-    return false;
+    if (!sqli_charset_resolve_codeset(value, &spec))
+        return false;
+    *codepage = (UINT)spec.windows_codepage;
+    return *codepage != 0;
 }
 
 void sqli_charset_decoder_init(sqli_charset_decoder *decoder)

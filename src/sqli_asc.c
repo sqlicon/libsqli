@@ -61,6 +61,33 @@ static size_t wstr(uint8_t *buf, size_t pos, const char *s)
     return pos + len;
 }
 
+static void sqli_get_ipc_app_path(char *buf, size_t buf_size)
+{
+    if (buf == NULL || buf_size == 0)
+        return;
+
+#ifdef _WIN32
+    if (GetModuleFileNameA(NULL, buf, (DWORD)buf_size) == 0 ||
+        buf[0] == '\0') {
+        snprintf(buf, buf_size, "sqlicon.exe");
+    }
+#else
+    snprintf(buf, buf_size, "%s", "/usr/lib/informix/current/bin/dbaccess");
+    if (access(buf, X_OK) != 0) {
+        ssize_t link_len = readlink("/proc/self/exe", buf, buf_size - 1);
+        if (link_len > 0) {
+            buf[link_len] = '\0';
+        }
+    } else {
+        char resolved[512];
+        if (realpath(buf, resolved) != NULL) {
+            strncpy(buf, resolved, buf_size - 1);
+            buf[buf_size - 1] = '\0';
+        }
+    }
+#endif
+}
+
 /* ----------------------------------------------------------------
  * sqli_asc_encode_conreq
  * ---------------------------------------------------------------- */
@@ -501,19 +528,9 @@ size_t sqli_asc_encode_ipc_preamble(sqli_conn_t *c, uint8_t *buf, size_t buf_siz
 
     /* App path: tag(2) + path + NUL */
     {
-        char app_path_buf[512] = "/usr/lib/informix/current/bin/dbaccess";
-        if (access(app_path_buf, X_OK) != 0) {
-            ssize_t link_len = readlink("/proc/self/exe", app_path_buf, sizeof(app_path_buf) - 1);
-            if (link_len > 0) {
-                app_path_buf[link_len] = '\0';
-            }
-        } else {
-            char resolved[512];
-            if (realpath(app_path_buf, resolved) != NULL) {
-                strncpy(app_path_buf, resolved, sizeof(app_path_buf) - 1);
-                app_path_buf[sizeof(app_path_buf) - 1] = '\0';
-            }
-        }
+        char app_path_buf[512];
+        app_path_buf[0] = '\0';
+        sqli_get_ipc_app_path(app_path_buf, sizeof(app_path_buf));
         size_t al = strlen(app_path_buf);
         wb16(0x002A);
         if (bp + al + 1 >= sizeof(body)) goto ipc_fail;

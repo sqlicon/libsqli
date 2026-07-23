@@ -258,7 +258,21 @@ ssize_t sqli_tcp_send(int fd, const unsigned char *buf, size_t count)
 
 ssize_t sqli_tcp_peek(int fd, unsigned char *buf, size_t count)
 {
+    struct pollfd pfd;
+    int prc;
+
     if (fd < 0 || buf == NULL || count == 0)
         return -1;
+
+    pfd.fd = (SOCKET)fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+
+    prc = poll(&pfd, 1, 0);
+    if (prc <= 0 || (pfd.revents & POLLIN) == 0) {
+        errno = EAGAIN;
+        return -1;
+    }
+
     return recv((SOCKET)fd, (char *)buf, (int)count, MSG_PEEK);
 }
