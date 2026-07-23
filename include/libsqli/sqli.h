@@ -463,6 +463,7 @@ void sqli_timestamp_from_epoch_days(sqli_timestamp_t *ts, int32_t days);
 
 /* Opaque prepared statement handle */
 typedef struct sqli_stmt sqli_stmt_t;
+typedef struct sqli_batch_result sqli_batch_result_t;
 
 
 /*
@@ -570,6 +571,29 @@ sqli_status sqli_bind_null_int64(sqli_stmt_t *stmt, int param_index);
  * Bind a NULL double value to a positional parameter (1-indexed).
  */
 sqli_status sqli_bind_null_double(sqli_stmt_t *stmt, int param_index);
+
+/*
+ * Snapshot the currently bound parameter set as one batch row.
+ */
+sqli_status sqli_stmt_batch_add(sqli_stmt_t *stmt);
+
+/*
+ * Remove all queued batch rows from a prepared statement.
+ */
+void sqli_stmt_batch_clear(sqli_stmt_t *stmt);
+
+/*
+ * Return the number of queued batch rows.
+ */
+size_t sqli_stmt_batch_size(const sqli_stmt_t *stmt);
+
+/*
+ * Execute queued batch rows for a prepared DML statement.
+ *
+ * The batch is cleared after a successful execution.
+ */
+sqli_status sqli_stmt_batch_execute(sqli_stmt_t *stmt,
+                                    sqli_batch_result_t **out_batch);
 
 /*
  * Execute a prepared statement.
@@ -1027,8 +1051,6 @@ typedef struct {
     uint16_t opcode;         /* related opcode if available */
     char message[256];       /* composed diagnostic message */
 } sqli_batch_item_result;
-
-typedef struct sqli_batch_result sqli_batch_result_t;
 
 /**
  * @brief Execute multiple SQL statements as one logical batch.

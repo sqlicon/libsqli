@@ -210,6 +210,10 @@ if (SQLI_BUILD_TOOLS)
     target_include_directories(sqli_select_probe PRIVATE ${SQLI_INC_DIR})
     target_link_libraries(sqli_select_probe PRIVATE sqli)
 
+    add_executable(sqli_batch_probe ${SQLI_TOOLS_DIR}/sqli_batch_probe.c)
+    target_include_directories(sqli_batch_probe PRIVATE ${SQLI_INC_DIR})
+    target_link_libraries(sqli_batch_probe PRIVATE sqli)
+
     add_executable(sqli_wire_capture ${SQLI_TEST_DIR}/test_wire_capture.c)
     target_include_directories(sqli_wire_capture PRIVATE ${SQLI_INC_DIR} ${SQLI_SRC_DIR})
     target_link_libraries(sqli_wire_capture PRIVATE sqli)

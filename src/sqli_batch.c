@@ -3,13 +3,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-struct sqli_batch_result {
-    size_t count;
-    size_t success_count;
-    size_t error_count;
-    sqli_batch_item_result *items;
-};
-
 static void sqli_batch_fill_error_item(sqli_conn_t *conn, sqli_batch_item_result *it,
                                        sqli_status rc)
 {

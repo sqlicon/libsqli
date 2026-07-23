@@ -52,6 +52,119 @@ static void sqli_retry_sleep_ms(uint32_t delay_ms)
     }
 }
 
+static void sqli_free_bound_param(sqli_bound_param *param)
+{
+    if (param == NULL)
+        return;
+    free(param->sval);
+    param->sval = NULL;
+    free(param->bval);
+    param->bval = NULL;
+    param->blen = 0;
+    param->is_null = false;
+}
+
+static void sqli_free_bound_param_array(sqli_bound_param *params, int param_count)
+{
+    if (params == NULL)
+        return;
+    for (int i = 0; i < param_count; i++)
+        sqli_free_bound_param(&params[(size_t)i]);
+    free(params);
+}
+
+static sqli_status sqli_clone_bound_param(sqli_bound_param *dst, const sqli_bound_param *src)
+{
+    memset(dst, 0, sizeof(*dst));
+    dst->type = src->type;
+    dst->value = src->value;
+    dst->blen = src->blen;
+    dst->is_null = src->is_null;
+
+    if (src->sval != NULL) {
+        size_t n = strlen(src->sval) + 1u;
+        dst->sval = malloc(n);
+        if (dst->sval == NULL)
+            return SQLI_ALLOC_FAIL;
+        memcpy(dst->sval, src->sval, n);
+    }
+
+    if (src->bval != NULL && src->blen > 0) {
+        dst->bval = malloc(src->blen);
+        if (dst->bval == NULL) {
+            sqli_free_bound_param(dst);
+            return SQLI_ALLOC_FAIL;
+        }
+        memcpy(dst->bval, src->bval, src->blen);
+    }
+
+    return SQLI_OK;
+}
+
+static sqli_status sqli_clone_bound_param_array(sqli_bound_param **out,
+                                                const sqli_bound_param *src,
+                                                int param_count)
+{
+    *out = NULL;
+    if (param_count <= 0)
+        return SQLI_OK;
+
+    sqli_bound_param *copy = calloc((size_t)param_count, sizeof(*copy));
+    if (copy == NULL)
+        return SQLI_ALLOC_FAIL;
+
+    for (int i = 0; i < param_count; i++) {
+        sqli_status rc = sqli_clone_bound_param(&copy[(size_t)i], &src[(size_t)i]);
+        if (rc != SQLI_OK) {
+            sqli_free_bound_param_array(copy, param_count);
+            return rc;
+        }
+    }
+
+    *out = copy;
+    return SQLI_OK;
+}
+
+static void sqli_stmt_batch_reset_rows(sqli_stmt_t *stmt)
+{
+    if (stmt == NULL)
+        return;
+    for (size_t i = 0; i < stmt->batch_count; i++) {
+        sqli_free_bound_param_array(stmt->batch_rows[i].params, stmt->param_count);
+        stmt->batch_rows[i].params = NULL;
+    }
+    free(stmt->batch_rows);
+    stmt->batch_rows = NULL;
+    stmt->batch_count = 0;
+    stmt->batch_cap = 0;
+}
+
+static void sqli_stmt_batch_fill_error_item(sqli_conn_t *conn, sqli_batch_item_result *it,
+                                            sqli_status rc)
+{
+    if (it == NULL)
+        return;
+    it->status = rc;
+    it->rows_affected = 0;
+    it->sqlcode = 0;
+    it->isamcode = 0;
+    it->opcode = 0;
+    it->message[0] = '\0';
+
+    if (conn == NULL)
+        return;
+
+    if (conn->error_info.has_error) {
+        it->sqlcode = conn->error_info.sqlcode;
+        it->isamcode = conn->error_info.isamcode;
+        it->opcode = conn->error_info.opcode;
+        if (conn->error_info.message[0] != '\0')
+            snprintf(it->message, sizeof(it->message), "%s", conn->error_info.message);
+    }
+    if (it->message[0] == '\0' && sqli_error(conn) != NULL)
+        snprintf(it->message, sizeof(it->message), "%s", sqli_error(conn));
+}
+
 static void sqli_stmt_best_effort_control(sqli_stmt_t *stmt, uint8_t opcode)
 {
     if (stmt == NULL || stmt->conn == NULL || stmt->socket_fd < 0 || stmt->stmt_id < 0)
@@ -249,14 +362,16 @@ static sqli_status validate_param_index(sqli_stmt_t *stmt, int param_index)
     return SQLI_OK;
 }
 
-static bool sqli_stmt_param_needs_lob_streaming(const sqli_stmt_t *stmt, int param_index)
+static bool sqli_stmt_param_needs_lob_streaming(const sqli_stmt_t *stmt,
+                                                const sqli_bound_param *params,
+                                                int param_index)
 {
     if (stmt == NULL || param_index < 1 || param_index > stmt->param_count)
         return false;
     if (stmt->param_server_types == NULL || stmt->param_server_type_count < param_index)
         return false;
 
-    const sqli_bound_param *par = &stmt->params[(size_t)(param_index - 1)];
+    const sqli_bound_param *par = &params[(size_t)(param_index - 1)];
     if (par->is_null)
         return false;
 
@@ -283,11 +398,8 @@ static sqli_status set_param_string(sqli_stmt_t *stmt, int param_index,
         return SQLI_ALLOC_FAIL;
     memcpy(dup, value, n + 1);
 
-    free(p->sval);
+    sqli_free_bound_param(p);
     p->sval = dup;
-    free(p->bval);
-    p->bval = NULL;
-    p->blen = 0;
     p->type = type;
     p->is_null = false;
     return SQLI_OK;
@@ -307,11 +419,9 @@ static sqli_status set_param_bytes(sqli_stmt_t *stmt, int param_index,
         return SQLI_ALLOC_FAIL;
     memcpy(dup, value, len);
 
-    free(p->bval);
+    sqli_free_bound_param(p);
     p->bval = dup;
     p->blen = len;
-    free(p->sval);
-    p->sval = NULL;
     p->type = SQLI_BIND_BYTES;
     p->is_null = false;
     return SQLI_OK;
@@ -323,14 +433,10 @@ sqli_status sqli_bind_int(sqli_stmt_t *stmt, int param_index, int32_t value)
     if (rc != SQLI_OK) return rc;
 
     sqli_bound_param *p = &stmt->params[(size_t)(param_index - 1)];
+    sqli_free_bound_param(p);
     p->type = SQLI_BIND_INT;
     p->value.ival = value;
     p->is_null = false;
-    free(p->sval);
-    p->sval = NULL;
-    free(p->bval);
-    p->bval = NULL;
-    p->blen = 0;
     return SQLI_OK;
 }
 
@@ -340,14 +446,10 @@ sqli_status sqli_bind_int64(sqli_stmt_t *stmt, int param_index, int64_t value)
     if (rc != SQLI_OK) return rc;
 
     sqli_bound_param *p = &stmt->params[(size_t)(param_index - 1)];
+    sqli_free_bound_param(p);
     p->type = SQLI_BIND_BIGINT;
     p->value.ival64 = value;
     p->is_null = false;
-    free(p->sval);
-    p->sval = NULL;
-    free(p->bval);
-    p->bval = NULL;
-    p->blen = 0;
     return SQLI_OK;
 }
 
@@ -357,14 +459,10 @@ sqli_status sqli_bind_double(sqli_stmt_t *stmt, int param_index, double value)
     if (rc != SQLI_OK) return rc;
 
     sqli_bound_param *p = &stmt->params[(size_t)(param_index - 1)];
+    sqli_free_bound_param(p);
     p->type = SQLI_BIND_FLOAT;
     p->value.dval = value;
     p->is_null = false;
-    free(p->sval);
-    p->sval = NULL;
-    free(p->bval);
-    p->bval = NULL;
-    p->blen = 0;
     return SQLI_OK;
 }
 
@@ -455,13 +553,9 @@ sqli_status sqli_bind_null(sqli_stmt_t *stmt, int param_index)
     if (rc != SQLI_OK) return rc;
 
     sqli_bound_param *p = &stmt->params[(size_t)(param_index - 1)];
+    sqli_free_bound_param(p);
     p->type = SQLI_BIND_STRING;
     p->is_null = true;
-    free(p->sval);
-    p->sval = NULL;
-    free(p->bval);
-    p->bval = NULL;
-    p->blen = 0;
     return SQLI_OK;
 }
 
@@ -471,13 +565,9 @@ sqli_status sqli_bind_null_int(sqli_stmt_t *stmt, int param_index)
     if (rc != SQLI_OK) return rc;
 
     sqli_bound_param *p = &stmt->params[(size_t)(param_index - 1)];
+    sqli_free_bound_param(p);
     p->type = SQLI_BIND_INT;
     p->is_null = true;
-    free(p->sval);
-    p->sval = NULL;
-    free(p->bval);
-    p->bval = NULL;
-    p->blen = 0;
     return SQLI_OK;
 }
 
@@ -487,13 +577,9 @@ sqli_status sqli_bind_null_int64(sqli_stmt_t *stmt, int param_index)
     if (rc != SQLI_OK) return rc;
 
     sqli_bound_param *p = &stmt->params[(size_t)(param_index - 1)];
+    sqli_free_bound_param(p);
     p->type = SQLI_BIND_BIGINT;
     p->is_null = true;
-    free(p->sval);
-    p->sval = NULL;
-    free(p->bval);
-    p->bval = NULL;
-    p->blen = 0;
     return SQLI_OK;
 }
 
@@ -503,13 +589,9 @@ sqli_status sqli_bind_null_double(sqli_stmt_t *stmt, int param_index)
     if (rc != SQLI_OK) return rc;
 
     sqli_bound_param *p = &stmt->params[(size_t)(param_index - 1)];
+    sqli_free_bound_param(p);
     p->type = SQLI_BIND_FLOAT;
     p->is_null = true;
-    free(p->sval);
-    p->sval = NULL;
-    free(p->bval);
-    p->bval = NULL;
-    p->blen = 0;
     return SQLI_OK;
 }
 
@@ -529,11 +611,12 @@ sqli_status sqli_bind_null_double(sqli_stmt_t *stmt, int param_index)
  *   NULL:   no data bytes (null_indicator = -1)
  * ---------------------------------------------------------------- */
 
-static size_t estimate_bind_msg_size(const sqli_stmt_t *stmt, bool include_eot)
+static size_t estimate_bind_msg_size(const sqli_stmt_t *stmt, const sqli_bound_param *params,
+                                     bool include_eot)
 {
     size_t n = 8; /* ID(4)+BIND(2)+paramCount(2) */
     for (int i = 0; i < stmt->param_count; i++) {
-        const sqli_bound_param *par = &stmt->params[(size_t)i];
+        const sqli_bound_param *par = &params[(size_t)i];
         n += 6; /* type + null + encoded_length */
         if (par->is_null)
             continue;
@@ -664,7 +747,8 @@ static int parse_decimal_ascii(const char *s, int *negative,
     return 1;
 }
 
-static size_t build_bind_msg(sqli_stmt_t *stmt, uint8_t *buf, bool include_eot)
+static size_t build_bind_msg(sqli_stmt_t *stmt, const sqli_bound_param *params,
+                             uint8_t *buf, bool include_eot)
 {
     size_t p = 0;
 
@@ -683,7 +767,7 @@ static size_t build_bind_msg(sqli_stmt_t *stmt, uint8_t *buf, bool include_eot)
 
     /* Per-parameter: type(2) + null_indicator(2) + encoded_length(2) + data */
     for (int i = 0; i < stmt->param_count; i++) {
-        sqli_bound_param *par = &stmt->params[(size_t)i];
+        const sqli_bound_param *par = &params[(size_t)i];
 
         /* Type code */
         buf[p++] = 0; buf[p++] = (uint8_t)par->type;
@@ -822,16 +906,18 @@ static size_t build_bind_msg(sqli_stmt_t *stmt, uint8_t *buf, bool include_eot)
     return p;
 }
 
-static sqli_status sqli_stmt_send_bind_if_needed(sqli_stmt_t *stmt, bool terminate_group)
+static sqli_status sqli_stmt_send_bind_if_needed(sqli_stmt_t *stmt,
+                                                 const sqli_bound_param *params,
+                                                 bool terminate_group)
 {
     if (stmt->param_count <= 0)
         return SQLI_OK;
 
-    size_t bind_size = estimate_bind_msg_size(stmt, terminate_group);
+    size_t bind_size = estimate_bind_msg_size(stmt, params, terminate_group);
     uint8_t *bind_buf = malloc(bind_size);
     if (bind_buf == NULL)
         return SQLI_ALLOC_FAIL;
-    bind_size = build_bind_msg(stmt, bind_buf, terminate_group);
+    bind_size = build_bind_msg(stmt, params, bind_buf, terminate_group);
 
     ssize_t sent = sqli_tcp_send(stmt->socket_fd, bind_buf, bind_size);
     free(bind_buf);
@@ -860,9 +946,91 @@ static void sqli_stmt_prepare_result_for_execute(sqli_stmt_t *stmt)
     stmt->executed = true;
 }
 
+static sqli_status sqli_stmt_receive_execute_result(sqli_stmt_t *stmt)
+{
+    int fd = stmt->socket_fd;
+
+    set_error_context(stmt->conn, "execute/recv", SQLI_SQ_EXECUTE);
+    sqli_status rc = SQLI_OK;
+    int guard = 0;
+    for (;;) {
+        stmt->result.eof = 0;
+        stmt->result.saw_done = false;
+        stmt->result.saw_error = false;
+
+        rc = sqli_receive_dispatch(fd, &stmt->result, stmt->conn);
+        if (rc != SQLI_OK)
+            break;
+
+        if (stmt->result.saw_done || stmt->result.saw_error || stmt->result.eof)
+            break;
+
+        struct pollfd pfd;
+        pfd.fd = fd;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        int prc = poll(&pfd, 1, 20);
+        if (prc <= 0 || !(pfd.revents & POLLIN))
+            break;
+
+        guard++;
+        if (guard > 64) {
+            set_error_context(stmt->conn, "execute/recv", SQLI_SQ_EXECUTE);
+            set_error(stmt->conn, "execute response did not converge to DONE");
+            rc = SQLI_PROTO_ERROR;
+            break;
+        }
+    }
+
+    if (rc == SQLI_OK) {
+        stmt->result_valid = true;
+    } else if (!stmt->conn->error_info.has_error) {
+        set_error(stmt->conn, "error receiving execute response");
+    }
+
+    return rc;
+}
+
+static sqli_status sqli_stmt_execute_bound_params(sqli_stmt_t *stmt,
+                                                  const sqli_bound_param *params)
+{
+    int fd = stmt->socket_fd;
+    uint16_t sid = (uint16_t)stmt->stmt_id;
+
+    if (stmt->param_count > 0) {
+        sqli_status bind_rc = sqli_stmt_send_bind_if_needed(stmt, params, false);
+        if (bind_rc != SQLI_OK)
+            return bind_rc;
+    } else {
+        uint8_t id_msg[4];
+        id_msg[0] = 0;
+        id_msg[1] = SQLI_SQ_ID;
+        id_msg[2] = (uint8_t)(sid >> 8);
+        id_msg[3] = (uint8_t)sid;
+        if (sqli_tcp_send(fd, id_msg, 4) != 4) {
+            set_error_context(stmt->conn, "execute/id_send", SQLI_SQ_ID);
+            set_error(stmt->conn, "failed to send SQ_ID");
+            return SQLI_IO_ERROR;
+        }
+    }
+
+    {
+        uint8_t exec_msg[4] = {0, SQLI_SQ_EXECUTE, 0, SQLI_SQ_EOT};
+        ssize_t sent = sqli_tcp_send(fd, exec_msg, 4);
+        if (sent != 4) {
+            set_error_context(stmt->conn, "execute/send", SQLI_SQ_EXECUTE);
+            set_error(stmt->conn, "failed to send EXECUTE");
+            return SQLI_IO_ERROR;
+        }
+    }
+
+    sqli_stmt_prepare_result_for_execute(stmt);
+    return sqli_stmt_receive_execute_result(stmt);
+}
+
 static sqli_status sqli_stmt_execute_select(sqli_stmt_t *stmt)
 {
-    sqli_status rc = sqli_stmt_send_bind_if_needed(stmt, true);
+    sqli_status rc = sqli_stmt_send_bind_if_needed(stmt, stmt->params, true);
     if (rc != SQLI_OK)
         return rc;
 
@@ -963,11 +1131,8 @@ sqli_status sqli_execute(sqli_stmt_t *stmt)
     if (stmt->read_only && stmt->result.statement_type == 2)
         return sqli_stmt_execute_select(stmt);
 
-    int fd = stmt->socket_fd;
-    uint16_t sid = (uint16_t)stmt->stmt_id;
-
     for (int i = 1; i <= stmt->param_count; i++) {
-        if (!sqli_stmt_param_needs_lob_streaming(stmt, i))
+        if (!sqli_stmt_param_needs_lob_streaming(stmt, stmt->params, i))
             continue;
         set_error_context(stmt->conn, "execute/precheck", SQLI_SQ_EXECUTE);
         set_error(stmt->conn,
@@ -975,74 +1140,7 @@ sqli_status sqli_execute(sqli_stmt_t *stmt)
         return SQLI_PROTO_ERROR;
     }
 
-    if (stmt->param_count > 0) {
-        sqli_status bind_rc = sqli_stmt_send_bind_if_needed(stmt, false);
-        if (bind_rc != SQLI_OK)
-            return bind_rc;
-    } else {
-        /* No parameters: still need SQ_ID before SQ_EXECUTE. */
-        uint8_t id_msg[4];
-        id_msg[0] = 0; id_msg[1] = SQLI_SQ_ID;
-        id_msg[2] = (uint8_t)(sid >> 8);
-        id_msg[3] = (uint8_t)sid;
-        if (sqli_tcp_send(fd, id_msg, 4) != 4) {
-            set_error_context(stmt->conn, "execute/id_send", SQLI_SQ_ID);
-            set_error(stmt->conn, "failed to send SQ_ID");
-            return SQLI_IO_ERROR;
-        }
-    }
-
-    /* SQ_EXECUTE (7) + SQ_EOT (12) */
-    uint8_t exec_msg[4] = {0, SQLI_SQ_EXECUTE, 0, SQLI_SQ_EOT};
-    ssize_t sent = sqli_tcp_send(fd, exec_msg, 4);
-    if (sent != 4) {
-        set_error_context(stmt->conn, "execute/send", SQLI_SQ_EXECUTE);
-        set_error(stmt->conn, "failed to send EXECUTE");
-        return SQLI_IO_ERROR;
-    }
-
-    /* Clear row state but keep DESCRIBE metadata from PREPARE. */
-    sqli_stmt_prepare_result_for_execute(stmt);
-
-    set_error_context(stmt->conn, "execute/recv", SQLI_SQ_EXECUTE);
-    sqli_status rc = SQLI_OK;
-    int guard = 0;
-    for (;;) {
-        stmt->result.eof = 0;
-        stmt->result.saw_done = false;
-        stmt->result.saw_error = false;
-
-        rc = sqli_receive_dispatch(fd, &stmt->result, stmt->conn);
-        if (rc != SQLI_OK)
-            break;
-
-        if (stmt->result.saw_done || stmt->result.saw_error || stmt->result.eof)
-            break;
-
-        struct pollfd pfd;
-        pfd.fd = fd;
-        pfd.events = POLLIN;
-        pfd.revents = 0;
-        int prc = poll(&pfd, 1, 20);
-        if (prc <= 0 || !(pfd.revents & POLLIN))
-            break;
-
-        guard++;
-        if (guard > 64) {
-            set_error_context(stmt->conn, "execute/recv", SQLI_SQ_EXECUTE);
-            set_error(stmt->conn, "execute response did not converge to DONE");
-            rc = SQLI_PROTO_ERROR;
-            break;
-        }
-    }
-
-    if (rc == SQLI_OK) {
-        stmt->result_valid = true;
-    } else if (!stmt->conn->error_info.has_error) {
-        set_error(stmt->conn, "error receiving execute response");
-    }
-
-    return rc;
+    return sqli_stmt_execute_bound_params(stmt, stmt->params);
 }
 
 sqli_status sqli_execute_with_retry(sqli_stmt_t *stmt, uint32_t max_retries)
@@ -1076,6 +1174,113 @@ sqli_status sqli_execute_with_retry(sqli_stmt_t *stmt, uint32_t max_retries)
                  sqli_error(stmt->conn) ? sqli_error(stmt->conn) : "-");
         sqli_retry_sleep_ms(delay_ms);
     }
+}
+
+sqli_status sqli_stmt_batch_add(sqli_stmt_t *stmt)
+{
+    if (stmt == NULL)
+        return SQLI_INVALID_STATE;
+
+    if (stmt->param_count > 0 && stmt->params == NULL)
+        return SQLI_INVALID_STATE;
+
+    if (stmt->batch_count == stmt->batch_cap) {
+        size_t new_cap = stmt->batch_cap == 0 ? 8u : stmt->batch_cap * 2u;
+        sqli_stmt_batch_row *rows = realloc(stmt->batch_rows, new_cap * sizeof(*rows));
+        if (rows == NULL)
+            return SQLI_ALLOC_FAIL;
+        memset(rows + stmt->batch_cap, 0, (new_cap - stmt->batch_cap) * sizeof(*rows));
+        stmt->batch_rows = rows;
+        stmt->batch_cap = new_cap;
+    }
+
+    sqli_bound_param *copy = NULL;
+    sqli_status rc = sqli_clone_bound_param_array(&copy, stmt->params, stmt->param_count);
+    if (rc != SQLI_OK)
+        return rc;
+
+    stmt->batch_rows[stmt->batch_count].params = copy;
+    stmt->batch_count++;
+    return SQLI_OK;
+}
+
+void sqli_stmt_batch_clear(sqli_stmt_t *stmt)
+{
+    sqli_stmt_batch_reset_rows(stmt);
+}
+
+size_t sqli_stmt_batch_size(const sqli_stmt_t *stmt)
+{
+    return stmt ? stmt->batch_count : 0u;
+}
+
+sqli_status sqli_stmt_batch_execute(sqli_stmt_t *stmt, sqli_batch_result_t **out_batch)
+{
+    if (stmt == NULL || out_batch == NULL)
+        return SQLI_INVALID_STATE;
+    *out_batch = NULL;
+
+    if (stmt->read_only) {
+        set_error_context(stmt->conn, "stmt_batch_execute/precheck", SQLI_SQ_EXECUTE);
+        set_error(stmt->conn, "prepared batch execute is only supported for DML statements");
+        return SQLI_INVALID_STATE;
+    }
+    if (stmt->conn == NULL || stmt->conn->state != SQLI_CONN_READY) {
+        set_error_context(stmt->conn, "stmt_batch_execute/precheck", SQLI_SQ_EXECUTE);
+        set_error(stmt->conn, "connection not ready");
+        return SQLI_INVALID_STATE;
+    }
+
+    sqli_batch_result_t *batch = calloc(1, sizeof(*batch));
+    if (batch == NULL)
+        return SQLI_ALLOC_FAIL;
+    batch->count = stmt->batch_count;
+    if (batch->count > 0) {
+        batch->items = calloc(batch->count, sizeof(*batch->items));
+        if (batch->items == NULL) {
+            free(batch);
+            return SQLI_ALLOC_FAIL;
+        }
+    }
+
+    if (stmt->batch_count == 0) {
+        *out_batch = batch;
+        return SQLI_OK;
+    }
+
+    for (size_t i = 0; i < stmt->batch_count; i++) {
+        for (int p = 1; p <= stmt->param_count; p++) {
+            if (!sqli_stmt_param_needs_lob_streaming(stmt, stmt->batch_rows[i].params, p))
+                continue;
+            set_error_context(stmt->conn, "stmt_batch_execute/precheck", SQLI_SQ_EXECUTE);
+            set_error(stmt->conn,
+                      "prepared BYTE/TEXT/BLOB/CLOB parameter streaming is not implemented");
+            sqli_batch_result_destroy(batch);
+            return SQLI_PROTO_ERROR;
+        }
+    }
+
+    sqli_status rc = SQLI_OK;
+
+    for (size_t i = 0; i < stmt->batch_count; i++) {
+        rc = sqli_stmt_execute_bound_params(stmt, stmt->batch_rows[i].params);
+        if (rc != SQLI_OK) {
+            if (stmt->conn->error_info.has_error && stmt->result.saw_error) {
+                sqli_stmt_batch_fill_error_item(stmt->conn, &batch->items[i], rc);
+                batch->error_count++;
+                continue;
+            }
+            sqli_batch_result_destroy(batch);
+            return rc;
+        }
+        batch->items[i].status = SQLI_OK;
+        batch->items[i].rows_affected = stmt->result.rows_affected;
+        batch->success_count++;
+    }
+
+    *out_batch = batch;
+    sqli_stmt_batch_reset_rows(stmt);
+    return SQLI_OK;
 }
 
 /* ----------------------------------------------------------------
@@ -1114,13 +1319,10 @@ void sqli_stmt_close(sqli_stmt_t *stmt)
     sqli_stmt_best_effort_control(stmt, SQLI_SQ_RELEASE); /* SQ_RELEASE */
 
     if (stmt->params != NULL) {
-        for (int i = 0; i < stmt->param_count; i++) {
-            free(stmt->params[i].sval);
-            free(stmt->params[i].bval);
-        }
-        free(stmt->params);
+        sqli_free_bound_param_array(stmt->params, stmt->param_count);
         stmt->params = NULL;
     }
+    sqli_stmt_batch_reset_rows(stmt);
     free(stmt->param_server_types);
     stmt->param_server_types = NULL;
     stmt->param_server_type_count = 0;

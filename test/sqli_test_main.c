@@ -201,6 +201,8 @@ void test_bind_bytes_null_value(void);
 void test_bind_bytes_zero_len(void);
 void test_bind_bytes_success(void);
 void test_bind_string_null_value(void);
+void test_stmt_batch_add_clones_bound_values(void);
+void test_stmt_batch_clear_drops_queued_rows(void);
 void test_bind_date_null_value(void);
 void test_bind_bool_true_false(void);
 void test_bind_string_rebind(void);
@@ -341,6 +343,8 @@ void test_close_twice_safe(void);
 void test_result_destroy_after_query(void);
 void test_query_after_close(void);
 void test_query_live_systables(void);
+void test_batch_live_reports_success_and_error(void);
+void test_stmt_batch_live_reports_success_and_error(void);
 void test_pool_create_acquire_release_destroy(void);
 void test_pool_acquire_timeout_when_busy(void);
 void test_pool_acquire_wakes_after_release(void);
@@ -595,6 +599,8 @@ int main(void)
     RUN_TEST(test_bind_bytes_zero_len);
     RUN_TEST(test_bind_bytes_success);
     RUN_TEST(test_bind_string_null_value);
+    RUN_TEST(test_stmt_batch_add_clones_bound_values);
+    RUN_TEST(test_stmt_batch_clear_drops_queued_rows);
     RUN_TEST(test_bind_date_null_value);
     RUN_TEST(test_bind_bool_true_false);
     RUN_TEST(test_bind_string_rebind);
@@ -748,6 +754,8 @@ int main(void)
     RUN_TEST(test_query_after_close);
 #ifdef SQLI_ENABLE_LIVE_TESTS
     RUN_TEST(test_query_live_systables);
+    RUN_TEST(test_batch_live_reports_success_and_error);
+    RUN_TEST(test_stmt_batch_live_reports_success_and_error);
 #endif
     }
 #endif

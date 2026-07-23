@@ -613,7 +613,8 @@ static ssize_t mock_drain_until_eot(int fd)
  * command opcodes at any 0x00-prefixed tag position before SQ_EOT. */
 static int mock_find_command_opcode(const uint8_t *buf, size_t len)
 {
-    /* Known command opcodes we care about */
+    /* Known command opcodes we care about.
+     * Do not treat helper tags like WANTDONE/RET_TYPE as the primary command. */
     int found = 0;
 
     for (size_t i = 0; i + 1 < len; i++) {
@@ -621,9 +622,9 @@ static int mock_find_command_opcode(const uint8_t *buf, size_t len)
         uint8_t tag = buf[i + 1];
         if (tag == 12) break; /* SQ_EOT — stop scanning */
         /* Check if this is a command opcode we recognize */
-        if (tag == 3 || tag == 6 || tag == 7 || tag == 9 ||
+        if (tag == 3 || tag == 5 || tag == 6 || tag == 7 || tag == 9 ||
             tag == 10 || tag == 11 || tag == 23 || tag == 24 ||
-            tag == 43 || tag == 49 || tag == 100) {
+            tag == 43) {
             found = tag; /* keep updating — last one wins */
         }
     }
@@ -1643,6 +1644,9 @@ void test_query_live_systables(void)
     const char *test_db   = getenv("SQLI_TEST_DB");
     const char *test_user = getenv("SQLI_TEST_USER");
     const char *test_pass = getenv("SQLI_TEST_PASS");
+    const char *test_server = getenv("SQLI_TEST_SERVER");
+    const char *test_client_locale = getenv("SQLI_TEST_CLIENT_LOCALE");
+    const char *test_db_locale = getenv("SQLI_TEST_DB_LOCALE");
 
     if (test_host == NULL || test_port == NULL || test_db == NULL ||
         test_user == NULL || test_pass == NULL) {
@@ -1654,12 +1658,14 @@ void test_query_live_systables(void)
     sqli_connect_params params = {0};
     params.hostname      = test_host;
     params.service       = test_port;
-    params.server        = NULL;
+    params.server        = test_server;
     params.database      = test_db;
     params.username      = test_user;
     params.password      = test_pass;
-    params.client_locale = "en_US.utf8";
-    params.db_locale     = "en_US.8859-1";
+    params.client_locale = (test_client_locale && test_client_locale[0] != '\0')
+                         ? test_client_locale : "en_US.utf8";
+    params.db_locale     = (test_db_locale && test_db_locale[0] != '\0')
+                         ? test_db_locale : "en_US.utf8";
 
     if (sqli_connect(conn, &params) != SQLI_OK) {
         sqli_destroy(conn);
@@ -1696,6 +1702,192 @@ void test_query_live_systables(void)
     TEST_ASSERT_EQUAL_INT(5, row);
 
     sqli_result_destroy(result);
+    sqli_close(conn);
+    sqli_destroy(conn);
+}
+
+void test_batch_live_reports_success_and_error(void)
+{
+    sqli_conn_t *conn = NULL;
+    sqli_batch_result_t *batch = NULL;
+    sqli_batch_item_result item;
+    const char *test_host = getenv("SQLI_TEST_HOST");
+    const char *test_port = getenv("SQLI_TEST_PORT");
+    const char *test_db   = getenv("SQLI_TEST_DB");
+    const char *test_user = getenv("SQLI_TEST_USER");
+    const char *test_pass = getenv("SQLI_TEST_PASS");
+    const char *test_server = getenv("SQLI_TEST_SERVER");
+    const char *test_client_locale = getenv("SQLI_TEST_CLIENT_LOCALE");
+    const char *test_db_locale = getenv("SQLI_TEST_DB_LOCALE");
+    const char *sqls[] = {
+        "SELECT FIRST 1 tabname FROM systables",
+        "SELECT * FROM definitely_missing_table_xyz",
+        "SELECT FIRST 1 owner FROM systables"
+    };
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_create(&conn));
+
+    if (test_host == NULL || test_port == NULL || test_db == NULL ||
+        test_user == NULL || test_pass == NULL) {
+        sqli_destroy(conn);
+        TEST_IGNORE_MESSAGE("SQLI_TEST_HOST/PORT/DB/USER/PASS environment variables not set — skipping live batch test");
+        return;
+    }
+
+    sqli_connect_params params = {0};
+    params.hostname = test_host;
+    params.service = test_port;
+    params.server = test_server;
+    params.database = test_db;
+    params.username = test_user;
+    params.password = test_pass;
+    params.client_locale = (test_client_locale && test_client_locale[0] != '\0')
+                         ? test_client_locale : "en_US.utf8";
+    params.db_locale = (test_db_locale && test_db_locale[0] != '\0')
+                     ? test_db_locale : "en_US.utf8";
+
+    if (sqli_connect(conn, &params) != SQLI_OK) {
+        sqli_destroy(conn);
+        TEST_IGNORE_MESSAGE("Informix server not reachable — skipping live batch test");
+        return;
+    }
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK,
+                          sqli_batch_execute(conn, sqls,
+                                             sizeof(sqls) / sizeof(sqls[0]),
+                                             &batch));
+    TEST_ASSERT_NOT_NULL(batch);
+    TEST_ASSERT_EQUAL_UINT32(3u, (uint32_t)sqli_batch_result_count(batch));
+    TEST_ASSERT_EQUAL_UINT32(2u, (uint32_t)sqli_batch_result_success_count(batch));
+    TEST_ASSERT_EQUAL_UINT32(1u, (uint32_t)sqli_batch_result_error_count(batch));
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_batch_result_item(batch, 0, &item));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, item.status);
+    TEST_ASSERT_GREATER_OR_EQUAL_INT64(1, item.rows_affected);
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_batch_result_item(batch, 1, &item));
+    TEST_ASSERT_NOT_EQUAL(SQLI_OK, item.status);
+    TEST_ASSERT_EQUAL_INT(-206, item.sqlcode);
+    TEST_ASSERT_EQUAL_INT(-111, item.isamcode);
+    TEST_ASSERT_TRUE(strstr(item.message, "definitely_missing_table_xyz") != NULL);
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_batch_result_item(batch, 2, &item));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, item.status);
+    TEST_ASSERT_GREATER_OR_EQUAL_INT64(1, item.rows_affected);
+
+    sqli_batch_result_destroy(batch);
+    sqli_close(conn);
+    sqli_destroy(conn);
+}
+
+void test_stmt_batch_live_reports_success_and_error(void)
+{
+    const char *test_host = getenv("SQLI_TEST_HOST");
+    const char *test_port = getenv("SQLI_TEST_PORT");
+    const char *test_db = getenv("SQLI_TEST_DB");
+    const char *test_user = getenv("SQLI_TEST_USER");
+    const char *test_pass = getenv("SQLI_TEST_PASS");
+    const char *test_server = getenv("SQLI_TEST_SERVER");
+    const char *test_client_locale = getenv("SQLI_TEST_CLIENT_LOCALE");
+    const char *test_db_locale = getenv("SQLI_TEST_DB_LOCALE");
+    sqli_conn_t *conn = NULL;
+    sqli_stmt_t *stmt = NULL;
+    sqli_result_t *res = NULL;
+    sqli_batch_result_t *batch = NULL;
+    sqli_batch_item_result item;
+    int param_count = 0;
+    int count_ok = 0;
+
+    if (sqli_create(&conn) != SQLI_OK || conn == NULL) {
+        TEST_IGNORE_MESSAGE("unable to allocate connection handle");
+        return;
+    }
+
+    if (test_host == NULL || test_port == NULL || test_db == NULL ||
+        test_user == NULL || test_pass == NULL) {
+        sqli_destroy(conn);
+        TEST_IGNORE_MESSAGE("SQLI_TEST_HOST/PORT/DB/USER/PASS environment variables not set — skipping live stmt batch test");
+        return;
+    }
+
+    sqli_connect_params params = {0};
+    params.hostname = test_host;
+    params.service = test_port;
+    params.server = test_server;
+    params.database = test_db;
+    params.username = test_user;
+    params.password = test_pass;
+    params.client_locale = (test_client_locale && test_client_locale[0] != '\0')
+                         ? test_client_locale : "en_US.utf8";
+    params.db_locale = (test_db_locale && test_db_locale[0] != '\0')
+                     ? test_db_locale : "en_US.utf8";
+
+    if (sqli_connect(conn, &params) != SQLI_OK) {
+        sqli_destroy(conn);
+        TEST_IGNORE_MESSAGE("Informix server not reachable — skipping live stmt batch test");
+        return;
+    }
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK,
+                          sqli_query(conn,
+                                     "CREATE TEMP TABLE sqli_stmt_batch_live "
+                                     "(id INT PRIMARY KEY, name VARCHAR(32)) WITH NO LOG",
+                                     &res));
+    sqli_result_destroy(res);
+    res = NULL;
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK,
+                          sqli_prepare(conn,
+                                       "INSERT INTO sqli_stmt_batch_live (id, name) "
+                                       "VALUES (?, ?)",
+                                       &param_count, &stmt));
+    TEST_ASSERT_NOT_NULL(stmt);
+    TEST_ASSERT_EQUAL_INT(2, param_count);
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 1, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(stmt, 2, "alpha"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_stmt_batch_add(stmt));
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 1, 2));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(stmt, 2, "beta"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_stmt_batch_add(stmt));
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 1, 3));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(stmt, 2, "gamma"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_stmt_batch_add(stmt));
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_stmt_batch_execute(stmt, &batch));
+    TEST_ASSERT_NOT_NULL(batch);
+    TEST_ASSERT_EQUAL_UINT32(3u, (uint32_t)sqli_batch_result_count(batch));
+    TEST_ASSERT_EQUAL_UINT32(3u, (uint32_t)sqli_batch_result_success_count(batch));
+    TEST_ASSERT_EQUAL_UINT32(0u, (uint32_t)sqli_batch_result_error_count(batch));
+    TEST_ASSERT_EQUAL_UINT32(0u, (uint32_t)sqli_stmt_batch_size(stmt));
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_batch_result_item(batch, 0, &item));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, item.status);
+    TEST_ASSERT_GREATER_OR_EQUAL_INT64(1, item.rows_affected);
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_batch_result_item(batch, 1, &item));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, item.status);
+    TEST_ASSERT_GREATER_OR_EQUAL_INT64(1, item.rows_affected);
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_batch_result_item(batch, 2, &item));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, item.status);
+    TEST_ASSERT_GREATER_OR_EQUAL_INT64(1, item.rows_affected);
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK,
+                          sqli_query(conn,
+                                     "SELECT CASE WHEN COUNT(*) = 3 THEN 1 ELSE 0 END "
+                                     "FROM sqli_stmt_batch_live",
+                                     &res));
+    TEST_ASSERT_NOT_NULL(res);
+    TEST_ASSERT_TRUE(sqli_result_next(res));
+    count_ok = sqli_result_get_int(res, 0);
+    TEST_ASSERT_EQUAL_INT(1, count_ok);
+
+    sqli_result_destroy(res);
+    sqli_batch_result_destroy(batch);
+    sqli_stmt_destroy(stmt);
     sqli_close(conn);
     sqli_destroy(conn);
 }

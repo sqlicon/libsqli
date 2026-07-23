@@ -216,6 +216,13 @@ struct sqli_conn {
     size_t env_var_cap;
 };
 
+struct sqli_batch_result {
+    size_t count;
+    size_t success_count;
+    size_t error_count;
+    sqli_batch_item_result *items;
+};
+
 /* ----------------------------------------------------------------
  * Buffer helpers (sqli_conn.c)
  * ---------------------------------------------------------------- */
@@ -503,6 +510,10 @@ typedef struct {
     bool is_null;
 } sqli_bound_param;
 
+typedef struct {
+    sqli_bound_param *params;
+} sqli_stmt_batch_row;
+
 /* Prepared statement */
 struct sqli_stmt {
     int socket_fd;            /* connected socket fd */
@@ -519,6 +530,10 @@ struct sqli_stmt {
     /* Result from execution */
     sqli_result_t result;     /* result from last execution */
     bool result_valid;        /* true if result has valid data */
+
+    sqli_stmt_batch_row *batch_rows;
+    size_t batch_count;
+    size_t batch_cap;
 };
 
 /* Extract a value from the current tuple buffer at the given column offset.

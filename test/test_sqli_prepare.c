@@ -249,6 +249,42 @@ void test_bind_string_null_value(void)
     sqli_stmt_destroy(s);
 }
 
+void test_stmt_batch_add_clones_bound_values(void)
+{
+    sqli_stmt_t *s = mock_stmt(2);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 1, 7));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 2, "alpha"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_stmt_batch_add(s));
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 1, 9));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 2, "beta"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_stmt_batch_add(s));
+
+    TEST_ASSERT_EQUAL_UINT32(2u, (uint32_t)sqli_stmt_batch_size(s));
+    TEST_ASSERT_EQUAL_INT(7, s->batch_rows[0].params[0].value.ival);
+    TEST_ASSERT_EQUAL_STRING("alpha", s->batch_rows[0].params[1].sval);
+    TEST_ASSERT_EQUAL_INT(9, s->batch_rows[1].params[0].value.ival);
+    TEST_ASSERT_EQUAL_STRING("beta", s->batch_rows[1].params[1].sval);
+
+    sqli_stmt_destroy(s);
+}
+
+void test_stmt_batch_clear_drops_queued_rows(void)
+{
+    sqli_stmt_t *s = mock_stmt(1);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 1, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_stmt_batch_add(s));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 1, 2));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_stmt_batch_add(s));
+
+    TEST_ASSERT_EQUAL_UINT32(2u, (uint32_t)sqli_stmt_batch_size(s));
+    sqli_stmt_batch_clear(s);
+    TEST_ASSERT_EQUAL_UINT32(0u, (uint32_t)sqli_stmt_batch_size(s));
+    TEST_ASSERT_NULL(s->batch_rows);
+
+    sqli_stmt_destroy(s);
+}
+
 void test_bind_date_null_value(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
