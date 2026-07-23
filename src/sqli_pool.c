@@ -1,13 +1,10 @@
 #define _POSIX_C_SOURCE 200809L
 #include "sqli_internal.h"
 
-#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <errno.h>
-#include <unistd.h>
-#include <sys/socket.h>
 
 typedef struct {
     sqli_conn_t *conn;

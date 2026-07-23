@@ -3,8 +3,6 @@
 
 #include <string.h>
 #include <stdio.h>
-#include <unistd.h>
-#include <pwd.h>
 
 /* ----------------------------------------------------------------
  * ASC-BINARY body encoding for CONREQ (connection request)
@@ -92,7 +90,7 @@ size_t sqli_asc_encode_conreq(sqli_conn_t *c, uint8_t *buf, size_t buf_size,
 
     /* Tag 108: Product type — 12 bytes: "sqlexec" + 5 NULs (matches Client/server format) */
     p = w16(buf, p, SQLI_TAG_PRODUCT_TYPE);
-    const char product_type[12] = "sqlexec\0\0\0\0\0";
+    const char product_type[12] = {'s','q','l','e','x','e','c',0,0,0,0,0};
     memcpy(buf + p, product_type, 12);
     p += 12;
 
@@ -377,9 +375,10 @@ size_t sqli_asc_encode_ipc_preamble(sqli_conn_t *c, uint8_t *buf, size_t buf_siz
     size_t bp = 0;
 
     #define wb16(v) do { \
+        uint16_t wb16_value__ = (uint16_t)(v); \
         if (bp + 2 >= sizeof(body)) goto ipc_fail; \
-        body[bp++] = (uint8_t)((v) >> 8); \
-        body[bp++] = (uint8_t)((v)); \
+        body[bp++] = (uint8_t)(wb16_value__ >> 8); \
+        body[bp++] = (uint8_t)(wb16_value__); \
     } while (0)
 
     const char *srv = c->server;
@@ -433,7 +432,7 @@ size_t sqli_asc_encode_ipc_preamble(sqli_conn_t *c, uint8_t *buf, size_t buf_siz
     wb16(0x006B);
     if (bp + 12 >= sizeof(body)) goto ipc_fail;
     memset(body + bp, 0, 4); bp += 4;
-    pid_t pid_val = getpid();
+    uint32_t pid_val = (uint32_t)getpid();
     body[bp++] = (uint8_t)(pid_val >> 24);
     body[bp++] = (uint8_t)(pid_val >> 16);
     body[bp++] = (uint8_t)(pid_val >> 8);
@@ -470,10 +469,10 @@ size_t sqli_asc_encode_ipc_preamble(sqli_conn_t *c, uint8_t *buf, size_t buf_siz
                 strcpy(cwd, ".");
             }
         }
-        size_t cl = strlen(cwd);
-        wb16((uint16_t)(cl + 1));
-        if (bp + cl >= sizeof(body)) goto ipc_fail;
-        memcpy(body + bp, cwd, cl); bp += cl;
+        size_t cwd_len = strlen(cwd);
+        wb16((uint16_t)(cwd_len + 1));
+        if (bp + cwd_len >= sizeof(body)) goto ipc_fail;
+        memcpy(body + bp, cwd, cwd_len); bp += cwd_len;
         body[bp++] = 0;
     }
 

@@ -81,9 +81,9 @@ void table_buffer_collect(sqlicon_table_buffer *tb, sqli_result_t *result,
         const char *name = sqli_result_column_name(result, c);
         if (name == NULL)
             name = "";
-        tb->col_names[c] = strdup(name);
+        tb->col_names[c] = sqlicon_strdup(name);
         if (tb->col_names[c] == NULL)
-            tb->col_names[c] = strdup("");
+            tb->col_names[c] = sqlicon_strdup("");
         if (tb->col_names[c] == NULL)
             return;
         tb->widths[c] = strlen(tb->col_names[c]);
@@ -102,7 +102,7 @@ void table_buffer_collect(sqlicon_table_buffer *tb, sqli_result_t *result,
         bool row_failed = false;
         for (int i = 0; i < tb->cols; i++) {
             if (sqli_result_is_null(result, i)) {
-                cells[i] = strdup(rt->null_repr);
+                cells[i] = sqlicon_strdup(rt->null_repr);
                 is_null[i] = true;
             } else {
                 int ctype = sqli_result_column_type(result, i);
@@ -114,23 +114,23 @@ void table_buffer_collect(sqlicon_table_buffer *tb, sqli_result_t *result,
                 case SQLI_TYPE_BOOL:
                 case SQLI_TYPE_DBOOLEAN:
                     snprintf(numbuf, sizeof(numbuf), "%d", (int)sqli_result_get_int(result, i));
-                    cells[i] = strdup(numbuf);
+                    cells[i] = sqlicon_strdup(numbuf);
                     break;
                 case SQLI_TYPE_BIGINT:
                 case SQLI_TYPE_BIGSERIAL:
                 case SQLI_TYPE_SERIAL8:
                 case SQLI_TYPE_INT8:
                     snprintf(numbuf, sizeof(numbuf), "%lld", (long long)sqli_result_get_int64(result, i));
-                    cells[i] = strdup(numbuf);
+                    cells[i] = sqlicon_strdup(numbuf);
                     break;
                 case SQLI_TYPE_FLOAT:
                 case SQLI_TYPE_SMFLOAT:
                     snprintf(numbuf, sizeof(numbuf), "%.17g", sqli_result_get_double(result, i));
-                    cells[i] = strdup(numbuf);
+                    cells[i] = sqlicon_strdup(numbuf);
                     break;
                 default: {
                     const char *val = result_text_by_type(result, i, ctype);
-                    cells[i] = strdup(val != NULL ? val : "");
+                    cells[i] = sqlicon_strdup(val != NULL ? val : "");
                     break;
                 }
                 }

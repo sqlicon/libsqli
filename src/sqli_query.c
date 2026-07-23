@@ -8,7 +8,6 @@
 
 #include <ctype.h>
 #include <errno.h>
-#include <poll.h>
 #include <stdlib.h>
 #include <time.h>
 

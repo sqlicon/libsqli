@@ -3,41 +3,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 #include <openssl/evp.h>
 #include <openssl/rand.h>
-
-/* ---------------------------------------------------------------- */
-/* Machine identifier (for key derivation)                          */
-/* ---------------------------------------------------------------- */
-
-static int read_machine_identifier(char *out, size_t out_cap)
-{
-    const char *paths[] = {
-        "/etc/machine-id",
-        "/var/lib/dbus/machine-id",
-        "/sys/class/dmi/id/product_uuid"
-    };
-    char line[256];
-    for (size_t i = 0; i < (sizeof(paths) / sizeof(paths[0])); i++) {
-        FILE *fp = fopen(paths[i], "r");
-        if (fp == NULL)
-            continue;
-        if (fgets(line, sizeof(line), fp) != NULL) {
-            fclose(fp);
-            strip_trailing_inplace(line);
-            if (line[0] != '\0') {
-                if (snprintf(out, out_cap, "%s", line) >= (int)out_cap)
-                    return -1;
-                return 0;
-            }
-        } else {
-            fclose(fp);
-        }
-    }
-    return -1;
-}
 
 /* ---------------------------------------------------------------- */
 /* Key derivation                                                   */
@@ -45,12 +13,8 @@ static int read_machine_identifier(char *out, size_t out_cap)
 
 int derive_profile_key_v1(unsigned char key_out[32])
 {
-    char machine_id[256];
-    if (read_machine_identifier(machine_id, sizeof(machine_id)) != 0)
-        return -1;
-
-    char uid_buf[64];
-    if (snprintf(uid_buf, sizeof(uid_buf), "%lu", (unsigned long)getuid()) >= (int)sizeof(uid_buf))
+    char material[512];
+    if (sqlicon_platform_profile_key_material(material, sizeof(material)) != 0)
         return -1;
 
     EVP_MD_CTX *md = EVP_MD_CTX_new();
@@ -63,11 +27,7 @@ int derive_profile_key_v1(unsigned char key_out[32])
             break;
         if (EVP_DigestUpdate(md, "sqlicon:kdf:uuid_uid_v1:", 24) != 1)
             break;
-        if (EVP_DigestUpdate(md, machine_id, strlen(machine_id)) != 1)
-            break;
-        if (EVP_DigestUpdate(md, ":", 1) != 1)
-            break;
-        if (EVP_DigestUpdate(md, uid_buf, strlen(uid_buf)) != 1)
+        if (EVP_DigestUpdate(md, material, strlen(material)) != 1)
             break;
         if (EVP_DigestFinal_ex(md, key_out, &out_len) != 1)
             break;
@@ -136,7 +96,7 @@ static int base64_decode_alloc(const char *b64, unsigned char **out, size_t *out
 int encrypt_profile_secret(const char *plain, char **out_b64)
 {
     if (plain == NULL || plain[0] == '\0') {
-        *out_b64 = strdup("");
+        *out_b64 = sqlicon_strdup("");
         return (*out_b64 != NULL) ? 0 : -1;
     }
 
@@ -203,7 +163,7 @@ int encrypt_profile_secret(const char *plain, char **out_b64)
 int decrypt_profile_secret(const char *b64, char **out_plain)
 {
     if (b64 == NULL || b64[0] == '\0') {
-        *out_plain = strdup("");
+        *out_plain = sqlicon_strdup("");
         return (*out_plain != NULL) ? 0 : -1;
     }
 

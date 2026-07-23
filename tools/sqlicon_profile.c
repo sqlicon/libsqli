@@ -42,7 +42,7 @@ static int set_dup_field(char **dst, const char *src)
 {
     char *copy = NULL;
     if (src != NULL) {
-        copy = strdup(src);
+        copy = sqlicon_strdup(src);
         if (copy == NULL)
             return -1;
     }
@@ -243,23 +243,20 @@ static void profile_free_fields(sqlicon_profile *p)
 
 static int ensure_profile_dir(char *path_out, size_t path_cap, char *file_out, size_t file_cap)
 {
-    const char *home = getenv("HOME");
-    if (home == NULL || home[0] == '\0')
+    if (sqlicon_platform_config_dir(path_out, path_cap) != 0)
         return -1;
+    if (sqlicon_platform_mkdir_p(path_out) != 0)
+        return -1;
+    (void)sqlicon_platform_restrict_dir(path_out);
 
-    char config_dir[768];
-    if (snprintf(config_dir, sizeof(config_dir), "%s/.config", home) >= (int)sizeof(config_dir))
-        return -1;
-    if (mkdir(config_dir, 0700) != 0 && errno != EEXIST)
-        return -1;
-
-    if (snprintf(path_out, path_cap, "%s/.config/sqlicon", home) >= (int)path_cap)
-        return -1;
-    if (mkdir(path_out, 0700) != 0 && errno != EEXIST)
-        return -1;
-    (void)chmod(path_out, 0700);
-
-    if (snprintf(file_out, file_cap, "%s/profiles.conf", path_out) >= (int)file_cap)
+    if (snprintf(file_out, file_cap, "%s%cprofiles.conf",
+                 path_out,
+#ifdef _WIN32
+                 '\\'
+#else
+                 '/'
+#endif
+                 ) >= (int)file_cap)
         return -1;
     return 0;
 }
@@ -389,7 +386,7 @@ sqlicon_profile *profile_store_add(sqlicon_profile_store *store, const char *nam
     }
     sqlicon_profile *p = &store->items[store->count++];
     memset(p, 0, sizeof(*p));
-    p->name = strdup(name);
+    p->name = sqlicon_strdup(name);
     if (p->name == NULL) {
         store->count--;
         return NULL;
@@ -488,7 +485,7 @@ static int load_profile_store(sqlicon_profile_store *store)
             return SQLICON_PROFILE_LOAD_ERROR;
         }
         char *field = dup_span(field_sep + 1, (size_t)(eq - (field_sep + 1)));
-        char *value = strdup(eq + 1);
+        char *value = sqlicon_strdup(eq + 1);
         if (field == NULL || value == NULL) {
             free(name);
             free(field);
@@ -617,9 +614,9 @@ static int save_profile_store(const sqlicon_profile_store *store)
 
     if (fflush(fp) != 0 || fclose(fp) != 0)
         return -1;
-    if (chmod(tmp_path, 0600) != 0)
+    if (sqlicon_platform_restrict_file(tmp_path) != 0)
         return -1;
-    if (rename(tmp_path, file_path) != 0)
+    if (sqlicon_platform_replace_file(tmp_path, file_path) != 0)
         return -1;
     return 0;
 }

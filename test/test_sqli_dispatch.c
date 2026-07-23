@@ -1155,9 +1155,7 @@ void test_result_get_string_cp1252_to_utf8_iconv(void)
     TEST_ASSERT_EQUAL_STRING("Z\xC3\xA4hllisten updaten", out);
 
     sqli_result_cleanup(&result);
-    if (conn.decode_cd_ready && conn.decode_cd != (iconv_t)-1) {
-        iconv_close(conn.decode_cd);
-    }
+    sqli_charset_decoder_close(&conn.decode_cs);
 }
 
 void test_result_destroy_skips_close_when_stmt_invalid(void)

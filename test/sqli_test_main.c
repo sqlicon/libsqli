@@ -1,5 +1,10 @@
 #include "unity.h"
 
+#ifndef SQLI_HAVE_POSIX_TESTS
+#define SQLI_HAVE_POSIX_TESTS 1
+#endif
+
+#if SQLI_HAVE_POSIX_TESTS
 /* Phase 1 tests */
 void test_sqli_create_destroy(void);
 void test_sqli_create_null_out_ptr(void);
@@ -16,6 +21,7 @@ void test_sqli_pad_even_zero(void);
 void test_sqli_pad_even_even(void);
 void test_sqli_pad_even_odd(void);
 void test_sqli_pad_even_large(void);
+#endif
 
 /* Phase 2 tests */
 void test_sl_header_encode_conreq(void);
@@ -37,6 +43,7 @@ void test_sl_encode_conreq(void);
 void test_sl_encode_null_buf(void);
 void test_sl_encode_too_small(void);
 
+#if SQLI_HAVE_POSIX_TESTS
 /* Phase 3 tests */
 void test_dispatch_describe_zero_columns(void);
 void test_dispatch_multi_row_result(void);
@@ -74,6 +81,7 @@ void test_result_scroll_navigation(void);
 void test_result_first_scroll_refetches_with_sfetch_absolute(void);
 void test_result_get_string_cp1252_to_utf8_iconv(void);
 void test_result_destroy_skips_close_when_stmt_invalid(void);
+#endif
 
 /* Phase 4 tests */
 void test_encode_decode_date_epoch(void);
@@ -230,6 +238,7 @@ void test_prepare_stmt_result_null_stmt(void);
 void test_result_column_name_zero_count(void);
 void test_result_column_type_zero_count(void);
 
+#if SQLI_HAVE_POSIX_TESTS
 /* Phase 5 tests — transactions */
 void test_begin_null_conn(void);
 void test_begin_not_ready_conn(void);
@@ -261,7 +270,9 @@ void test_batch_result_accessors_null_safe(void);
 void test_savepoint_set_writes_opcode_payload_and_flag(void);
 void test_savepoint_release_and_rollback_write_expected_opcodes(void);
 void test_savepoint_rejected_in_autocommit(void);
+#endif
 
+#if SQLI_HAVE_POSIX_TESTS
 /* Phase 5 tests — sqlhosts */
 void test_parse_null_output(void);
 void test_parse_nonexistent_file(void);
@@ -272,7 +283,9 @@ void test_find_null_entries(void);
 void test_find_nonexistent_server(void);
 void test_find_null_server_name(void);
 void test_find_count_zero(void);
+#endif
 
+#if SQLI_HAVE_POSIX_TESTS
 /* Phase 7 tests — URI connection */
 void test_uri_null_conn(void);
 void test_uri_null_uri(void);
@@ -297,7 +310,9 @@ void test_uri_user_only_no_password(void);
 void test_uri_explicit_user_only(void);
 void test_uri_explicit_password_only(void);
 void test_uri_onsoctcp_missing_port(void);
+#endif
 
+#if SQLI_HAVE_POSIX_TESTS
 /* Phase 6 tests — integration tests */
 void test_connect_success(void);
 void test_connect_reject(void);
@@ -324,6 +339,7 @@ void test_pool_create_acquire_release_destroy(void);
 void test_pool_acquire_timeout_when_busy(void);
 void test_pool_acquire_wakes_after_release(void);
 void test_pool_reconnect_after_borrower_closed_connection(void);
+#endif
 
 /* Unity hooks */
 void setUp(void) {}
@@ -333,6 +349,7 @@ int main(void)
 {
     UNITY_BEGIN();
 
+#if SQLI_HAVE_POSIX_TESTS
     /* Phase 1 */
     RUN_TEST(test_sqli_create_destroy);
     RUN_TEST(test_sqli_create_null_out_ptr);
@@ -349,6 +366,7 @@ int main(void)
     RUN_TEST(test_sqli_pad_even_even);
     RUN_TEST(test_sqli_pad_even_odd);
     RUN_TEST(test_sqli_pad_even_large);
+#endif
 
     /* Phase 2 */
     RUN_TEST(test_sl_header_encode_conreq);
@@ -370,6 +388,7 @@ int main(void)
     RUN_TEST(test_sl_encode_null_buf);
     RUN_TEST(test_sl_encode_too_small);
 
+#if SQLI_HAVE_POSIX_TESTS
     /* Phase 3 */
     RUN_TEST(test_dispatch_describe_zero_columns);
     RUN_TEST(test_dispatch_multi_row_result);
@@ -407,6 +426,7 @@ int main(void)
     RUN_TEST(test_result_first_scroll_refetches_with_sfetch_absolute);
     RUN_TEST(test_result_get_string_cp1252_to_utf8_iconv);
     RUN_TEST(test_result_destroy_skips_close_when_stmt_invalid);
+#endif
 
     /* Phase 4 */
     RUN_TEST(test_encode_decode_date_epoch);
@@ -562,6 +582,7 @@ int main(void)
     RUN_TEST(test_result_column_name_zero_count);
     RUN_TEST(test_result_column_type_zero_count);
 
+#if SQLI_HAVE_POSIX_TESTS
     /* Phase 5 — transactions */
     RUN_TEST(test_begin_null_conn);
     RUN_TEST(test_begin_not_ready_conn);
@@ -593,7 +614,9 @@ int main(void)
     RUN_TEST(test_savepoint_set_writes_opcode_payload_and_flag);
     RUN_TEST(test_savepoint_release_and_rollback_write_expected_opcodes);
     RUN_TEST(test_savepoint_rejected_in_autocommit);
+#endif
 
+#if SQLI_HAVE_POSIX_TESTS
     /* Phase 5 — sqlhosts */
     RUN_TEST(test_parse_null_output);
     RUN_TEST(test_parse_nonexistent_file);
@@ -604,7 +627,9 @@ int main(void)
     RUN_TEST(test_find_nonexistent_server);
     RUN_TEST(test_find_null_server_name);
     RUN_TEST(test_find_count_zero);
+#endif
 
+#if SQLI_HAVE_POSIX_TESTS
     /* Phase 7 — URI connection */
     RUN_TEST(test_uri_null_conn);
     RUN_TEST(test_uri_null_uri);
@@ -629,7 +654,9 @@ int main(void)
     RUN_TEST(test_uri_explicit_user_only);
     RUN_TEST(test_uri_explicit_password_only);
     RUN_TEST(test_uri_onsoctcp_missing_port);
+#endif
 
+#if SQLI_HAVE_POSIX_TESTS
     /* Phase 6 — integration tests */
     RUN_TEST(test_connect_success);
     RUN_TEST(test_connect_reject);
@@ -657,6 +684,7 @@ int main(void)
     RUN_TEST(test_query_after_close);
 #ifdef SQLI_ENABLE_LIVE_TESTS
     RUN_TEST(test_query_live_systables);
+#endif
 #endif
 
     return UNITY_END();

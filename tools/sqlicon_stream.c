@@ -1,14 +1,10 @@
 #include "sqlicon.h"
 
-#include <dirent.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 /* ---------------------------------------------------------------- */
 /* Helper: append text to a growable buffer                         */
@@ -36,49 +32,6 @@ static int append_text(char **buf, size_t *len, size_t *cap, const char *src, si
     *len += src_len;
     (*buf)[*len] = '\0';
     return 0;
-}
-
-/* ---------------------------------------------------------------- */
-/* Helper: ensure a directory exists (like mkdir -p)                */
-/* ---------------------------------------------------------------- */
-
-static int ensure_dir(const char *path)
-{
-    char tmp[512];
-    snprintf(tmp, sizeof(tmp), "%s", path);
-    for (char *p = tmp + 1; *p; p++) {
-        if (*p == '/') {
-            *p = '\0';
-            mkdir(tmp, 0700);
-            *p = '/';
-        }
-    }
-    return mkdir(tmp, 0700);
-}
-
-/* ---------------------------------------------------------------- */
-/* Helper: load/save history                                        */
-/* ---------------------------------------------------------------- */
-
-static void load_history(void)
-{
-    const char *home = getenv("HOME");
-    if (!home) return;
-    char path[512];
-    snprintf(path, sizeof(path), "%s/.config/sqlicon/history", home);
-    linenoiseHistoryLoad(path);
-}
-
-static void save_history(void)
-{
-    const char *home = getenv("HOME");
-    if (!home) return;
-    char path[512];
-    snprintf(path, sizeof(path), "%s/.config/sqlicon/history", home);
-    char dir[512];
-    snprintf(dir, sizeof(dir), "%s/.config/sqlicon", home);
-    ensure_dir(dir);
-    linenoiseHistorySave(path);
 }
 
 /* ---------------------------------------------------------------- */
@@ -136,7 +89,7 @@ static sqlicon_exit_code execute_pending_statements(sqli_conn_t *conn, char **pe
 static sqlicon_exit_code execute_inline_query(sqli_conn_t *conn, const char *sql,
                                               sqlicon_runtime *rt)
 {
-    char *buf = strdup(sql);
+    char *buf = sqlicon_strdup(sql);
     if (buf == NULL)
         return SQLICON_EXIT_SQL_ERROR;
     size_t len = strlen(buf);
@@ -202,9 +155,7 @@ sqlicon_exit_code execute_stream(sqli_conn_t *conn, FILE *in, bool interactive,
     sqlicon_exit_code rc = SQLICON_EXIT_OK;
 
     if (interactive) {
-        linenoiseSetMultiLine(1);
-        linenoiseSetCompletionCallback(NULL);
-        load_history();
+        sqlicon_platform_history_load();
     }
 
     for (;;) {
@@ -215,7 +166,7 @@ sqlicon_exit_code execute_stream(sqli_conn_t *conn, FILE *in, bool interactive,
 
         char *line = NULL;
         if (interactive) {
-            line = linenoise((pending_len == 0) ? "sqlicon> " : "...> ");
+            line = sqlicon_platform_readline((pending_len == 0) ? "sqlicon> " : "...> ");
             if (line == NULL) {
                 if (errno == EAGAIN) {
                     /* Ctrl+C */
@@ -240,7 +191,7 @@ sqlicon_exit_code execute_stream(sqli_conn_t *conn, FILE *in, bool interactive,
                 }
                 break;
             }
-            line = strdup(buf);
+            line = sqlicon_strdup(buf);
             if (line == NULL) {
                 rc = SQLICON_EXIT_SQL_ERROR;
                 break;
@@ -248,7 +199,7 @@ sqlicon_exit_code execute_stream(sqli_conn_t *conn, FILE *in, bool interactive,
         }
 
         if (interactive && strlen(line) > 0) {
-            linenoiseHistoryAdd(line);
+            sqlicon_platform_history_add(line);
         }
 
         if (pending != NULL && pending_len > 0)
@@ -309,7 +260,7 @@ sqlicon_exit_code execute_stream(sqli_conn_t *conn, FILE *in, bool interactive,
     free(pending);
 
     if (interactive)
-        save_history();
+        sqlicon_platform_history_save();
 
     return rc;
 }

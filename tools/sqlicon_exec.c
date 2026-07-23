@@ -15,17 +15,17 @@ sqlicon_exit_code execute_sql_statement(sqli_conn_t *conn, const char *sql,
                                         sqlicon_runtime *rt)
 {
     sqli_result_t *result = NULL;
-    struct timespec t0;
-    struct timespec t1;
+    struct timespec t0 = {0, 0};
+    struct timespec t1 = {0, 0};
     bool have_timing = false;
-    if (rt->timer_on && clock_gettime(CLOCK_MONOTONIC, &t0) == 0)
+    if (rt->timer_on && sqlicon_platform_clock_now(&t0) == 0)
         have_timing = true;
 
     g_query_active = 1;
     g_sigint_during_query = 0;
     sqli_status rc = sqli_query(conn, sql, &result);
     g_query_active = 0;
-    if (have_timing && clock_gettime(CLOCK_MONOTONIC, &t1) != 0)
+    if (have_timing && sqlicon_platform_clock_now(&t1) != 0)
         have_timing = false;
 
     if (rc != SQLI_OK) {

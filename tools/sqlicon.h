@@ -14,7 +14,7 @@
 #include <signal.h>
 
 #include "libsqli/sqli.h"
-#include "linenoise.h"
+#include "sqlicon_platform.h"
 
 /* ---------------------------------------------------------------- */
 /* Exit codes                                                       */
@@ -213,6 +213,13 @@ static inline char *dup_span(const char *s, size_t n)
     memcpy(p, s, n);
     p[n] = '\0';
     return p;
+}
+
+static inline char *sqlicon_strdup(const char *s)
+{
+    if (s == NULL)
+        return NULL;
+    return dup_span(s, strlen(s));
 }
 
 static inline const char *trim_span(const char *s, size_t len, size_t *out_len)

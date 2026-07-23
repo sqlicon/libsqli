@@ -11,9 +11,8 @@
 #include <ctype.h>
 #include <time.h>
 #include <errno.h>
-#include <endian.h>
+#include "sqli_endian.h"
 #include <stdint.h>
-#include <poll.h>
 
 static void sqli_prepare_drain_pending_tail(sqli_conn_t *conn)
 {

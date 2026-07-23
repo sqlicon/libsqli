@@ -5,10 +5,9 @@
 #include <stdint.h>
 
 #include "libsqli/sqli.h"
+#include "sqli_platform.h"
 
 /* TLS session registry (shared with sqli_tcp.c for I/O dispatch) */
-
-#include <pthread.h>
 
 typedef struct tls_entry {
     int fd;

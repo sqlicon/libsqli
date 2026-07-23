@@ -11,9 +11,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stddef.h>
-#include <endian.h>
-#include <poll.h>
-#include <sys/socket.h>
+#include "sqli_endian.h"
 #include <errno.h>
 
 #define SQLI_MAX_TUPLE_BYTES (64u * 1024u * 1024u)

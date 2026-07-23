@@ -8,8 +8,8 @@
  * The interface is designed to be mockable for unit testing.
  */
 
-#include <sys/types.h>
 #include <stddef.h>
+#include "sqli_platform.h"
 
 /*
  * Open a TCP connection to the given host:service.

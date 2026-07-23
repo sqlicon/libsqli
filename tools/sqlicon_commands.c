@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 
 /* ---------------------------------------------------------------- */
 /* Shared command helpers                                           */
@@ -1051,7 +1050,7 @@ sqlicon_exit_code command_import_csv(sqli_conn_t *conn, const char *arg)
 
     if (!tx_active) {
         snprintf(stage_table, sizeof(stage_table), "sqli_imp_%ld_%ld",
-                 (long)getpid(), (long)(time(NULL) % 1000000L));
+                 sqlicon_platform_process_id(), (long)(time(NULL) % 1000000L));
         char stage_sql[17408];
         if (snprintf(stage_sql, sizeof(stage_sql),
                      "SELECT %s FROM %s WHERE 1=0 INTO TEMP %s WITH NO LOG",

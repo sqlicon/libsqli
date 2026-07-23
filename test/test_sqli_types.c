@@ -17,7 +17,11 @@ int sqli_decode_decimal(const uint8_t *buf, size_t buf_size,
 #include <string.h>
 #include <math.h>
 #include <stdint.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <sys/time.h>
+#endif
 
 static uint64_t tv_now_ms(void);
 
@@ -469,10 +473,14 @@ void test_execute_with_retry_null_stmt(void)
 
 static uint64_t tv_now_ms(void)
 {
+#ifdef _WIN32
+    return (uint64_t)GetTickCount64();
+#else
     struct timeval tv;
     if (gettimeofday(&tv, NULL) != 0)
         return 0;
     return (uint64_t)tv.tv_sec * 1000ull + (uint64_t)tv.tv_usec / 1000ull;
+#endif
 }
 
 void test_execute_with_retry_retries_on_retryable_error(void)

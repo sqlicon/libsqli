@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "sqli_internal.h"
+#include "sqli_charset.h"
 
 #include "sqli_tcp.h"
 #include "sqli_tls.h"
@@ -11,13 +12,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <sys/time.h>
 #include <time.h>
 #include <fcntl.h>
-#include <pwd.h>
-#include <unistd.h>
 
 /* ----------------------------------------------------------------
  * Environment variables sent to the server (spec §4.3, Bug #32)
@@ -102,7 +98,11 @@ static sqli_status hs_wait_readable(int fd, int timeout_ms)
     }
 
     pfd.fd = fd;
+#ifdef _WIN32
+    pfd.events = POLLIN | POLLERR;
+#else
     pfd.events = POLLIN | POLLERR | POLLHUP;
+#endif
     pfd.revents = 0;
 
     do {
@@ -113,9 +113,16 @@ static sqli_status hs_wait_readable(int fd, int timeout_ms)
         return SQLI_TIMEOUT;
 
     if (prc < 0) {
+#ifdef _WIN32
+        int wsa_err = WSAGetLastError();
+        sqli_log(SQLI_LOG_WARN,
+                 "poll failed while draining close response on fd=%d: wsa=%d",
+                 fd, wsa_err);
+#else
         sqli_log(SQLI_LOG_WARN,
                  "poll failed while draining close response on fd=%d: %s",
                  fd, strerror(errno));
+#endif
         return SQLI_IO_ERROR;
     }
 
@@ -196,13 +203,10 @@ static void setup_locale_decoder(sqli_conn_t *c)
 {
     if (c == NULL)
         return;
+    sqli_charset_decoder_close(&c->decode_cs);
+    c->decode_cs_ready = false;
     c->decode_cp1252_utf8 = false;
     c->decode_locale_checked = true;
-    if (c->decode_cd_ready && c->decode_cd != (iconv_t)-1) {
-        iconv_close(c->decode_cd);
-        c->decode_cd = (iconv_t)-1;
-        c->decode_cd_ready = false;
-    }
 
     if (c->client_locale == NULL || c->db_locale == NULL)
         return;
@@ -214,10 +218,8 @@ static void setup_locale_decoder(sqli_conn_t *c)
     if (!client_utf8 || !db_cp1252)
         return;
     c->decode_cp1252_utf8 = true;
-
-    c->decode_cd = iconv_open("UTF-8", "WINDOWS-1252");
-    if (c->decode_cd != (iconv_t)-1)
-        c->decode_cd_ready = true;
+    if (sqli_charset_decoder_open(&c->decode_cs, "UTF-8", "WINDOWS-1252"))
+        c->decode_cs_ready = true;
 }
 
 /* ----------------------------------------------------------------
@@ -1092,11 +1094,6 @@ void sqli_close(sqli_conn_t *conn)
 
     conn->state = SQLI_CONN_CLOSED;
     conn->database_open = 0;
-    if (conn->decode_cd_ready && conn->decode_cd != (iconv_t)-1) {
-        iconv_close(conn->decode_cd);
-        conn->decode_cd = (iconv_t)-1;
-        conn->decode_cd_ready = false;
-    }
     clear_error(conn);
 
     sqli_log(SQLI_LOG_DEBUG, "connection closed");

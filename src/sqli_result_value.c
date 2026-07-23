@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "sqli_internal.h"
+#include "sqli_charset.h"
 #include "sqli_protocol_internal.h"
 #include "sqli_result_internal.h"
 
@@ -278,18 +279,6 @@ const char *sqli_result_get_string(sqli_result_t *result, int col_index)
     }
     str_buf[copy] = '\0';
 
-    if (conn != NULL && conn->decode_cd_ready && conn->decode_cd != (iconv_t)-1) {
-        (void)iconv(conn->decode_cd, NULL, NULL, NULL, NULL);
-        char *in_ptr = str_buf;
-        size_t in_left = copy;
-        char *out_ptr = utf8_buf;
-        size_t out_left = sizeof(utf8_buf) - 1;
-        size_t irc = iconv(conn->decode_cd, &in_ptr, &in_left, &out_ptr, &out_left);
-        if (irc != (size_t)-1) {
-            *out_ptr = '\0';
-            return utf8_buf;
-        }
-    }
     if (conn != NULL && !conn->decode_locale_checked) {
         conn->decode_locale_checked = true;
         if (conn->client_locale != NULL && conn->db_locale != NULL &&
@@ -302,44 +291,21 @@ const char *sqli_result_get_string(sqli_result_t *result, int col_index)
     }
 
     if (conn != NULL && conn->decode_cp1252_utf8) {
-        if (!conn->decode_cd_ready) {
-            conn->decode_cd = iconv_open("UTF-8", "WINDOWS-1252");
-            if (conn->decode_cd != (iconv_t)-1)
-                conn->decode_cd_ready = true;
-            else
-                conn->decode_cp1252_utf8 = false;
-        }
-        if (conn->decode_cd_ready && conn->decode_cd != (iconv_t)-1) {
-            (void)iconv(conn->decode_cd, NULL, NULL, NULL, NULL);
-            char *in_ptr = str_buf;
-            size_t in_left = copy;
-            char *out_ptr = utf8_buf;
-            size_t out_left = sizeof(utf8_buf) - 1;
-            size_t irc = iconv(conn->decode_cd, &in_ptr, &in_left, &out_ptr, &out_left);
-            if (irc != (size_t)-1) {
-                *out_ptr = '\0';
-                return utf8_buf;
-            }
-        }
+        size_t utf8_len = sizeof(utf8_buf);
+        if (conn->decode_cs_ready &&
+            sqli_charset_decoder_convert(&conn->decode_cs, str_buf, copy,
+                                         utf8_buf, &utf8_len))
+            return utf8_buf;
     }
     if (conn != NULL && conn->client_locale != NULL && conn->db_locale != NULL &&
         ((strcasestr(conn->client_locale, "utf8") != NULL) ||
          (strcasestr(conn->client_locale, "utf-8") != NULL)) &&
         ((strcasestr(conn->db_locale, "cp1252") != NULL) ||
          (strcasestr(conn->db_locale, "1252") != NULL))) {
-        iconv_t cd = iconv_open("UTF-8", "WINDOWS-1252");
-        if (cd != (iconv_t)-1) {
-            char *in_ptr = str_buf;
-            size_t in_left = copy;
-            char *out_ptr = utf8_buf;
-            size_t out_left = sizeof(utf8_buf) - 1;
-            size_t irc = iconv(cd, &in_ptr, &in_left, &out_ptr, &out_left);
-            iconv_close(cd);
-            if (irc != (size_t)-1) {
-                *out_ptr = '\0';
-                return utf8_buf;
-            }
-        }
+        size_t utf8_len = sizeof(utf8_buf);
+        if (sqli_charset_convert_buffer("UTF-8", "WINDOWS-1252",
+                                        str_buf, copy, utf8_buf, &utf8_len))
+            return utf8_buf;
     }
     return str_buf;
 }

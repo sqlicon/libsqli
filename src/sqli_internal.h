@@ -12,9 +12,9 @@
 #include <stdarg.h>
 #include <string.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <stdio.h>
-#include <iconv.h>
+#include "sqli_charset.h"
+#include "sqli_platform.h"
 
 /* Public API — must come before internal struct that references its types */
 #include "libsqli/sqli.h"
@@ -206,8 +206,8 @@ struct sqli_conn {
     char *client_locale;
     char *db_locale;
     uint32_t fetch_buf_size;
-    iconv_t decode_cd;
-    bool decode_cd_ready;
+    sqli_charset_decoder decode_cs;
+    bool decode_cs_ready;
     bool decode_cp1252_utf8;
     bool decode_locale_checked;
 

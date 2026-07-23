@@ -1,11 +1,11 @@
 #define _POSIX_C_SOURCE 200809L
+#include "sqli_charset.h"
 #include "sqli_internal.h"
 
 #include "sqli_log.h"
 
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
@@ -302,65 +302,17 @@ sqli_status sqli_conn_encode_client_to_db(sqli_conn_t *c, const char *s,
         return SQLI_OK;
     }
 
-    iconv_t cd = iconv_open(to_cs, from_cs);
-    if (cd == (iconv_t)-1) {
-        sqli_log(SQLI_LOG_WARN, "locale encode disabled (iconv_open %s<- %s failed: %s)",
-                 to_cs, from_cs, strerror(errno));
+    uint8_t *buf = NULL;
+    size_t used = 0;
+    if (!sqli_charset_convert_alloc(to_cs, from_cs, (const char *)raw, in_len,
+                                    &buf, &used)) {
+        sqli_log(SQLI_LOG_WARN, "locale encode failed (%s -> %s), using raw bytes",
+                 from_cs, to_cs);
         *out = raw;
         *out_len = in_len;
         return SQLI_OK;
     }
 
-    size_t out_cap = (in_len * 4u) + 32u;
-    uint8_t *buf = malloc(out_cap + 1u);
-    if (buf == NULL) {
-        iconv_close(cd);
-        free(raw);
-        return SQLI_ALLOC_FAIL;
-    }
-
-    char *in_ptr = (char *)raw;
-    size_t in_left = in_len;
-    char *out_ptr = (char *)buf;
-    size_t out_left = out_cap;
-
-    while (true) {
-        size_t rc = iconv(cd, &in_ptr, &in_left, &out_ptr, &out_left);
-        if (rc != (size_t)-1)
-            break;
-        if (errno == E2BIG) {
-            size_t used = (size_t)(out_ptr - (char *)buf);
-            size_t new_cap = 0;
-            if (!next_doubling_capacity(out_cap, out_cap + 1u, &new_cap)) {
-                iconv_close(cd);
-                free(buf);
-                free(raw);
-                return SQLI_ALLOC_FAIL;
-            }
-            uint8_t *grown = realloc(buf, new_cap + 1u);
-            if (grown == NULL) {
-                iconv_close(cd);
-                free(buf);
-                free(raw);
-                return SQLI_ALLOC_FAIL;
-            }
-            buf = grown;
-            out_cap = new_cap;
-            out_ptr = (char *)buf + used;
-            out_left = out_cap - used;
-            continue;
-        }
-        sqli_log(SQLI_LOG_WARN, "locale encode failed (%s -> %s), using raw bytes", from_cs, to_cs);
-        iconv_close(cd);
-        free(buf);
-        *out = raw;
-        *out_len = in_len;
-        return SQLI_OK;
-    }
-
-    size_t used = (size_t)(out_ptr - (char *)buf);
-    buf[used] = '\0';
-    iconv_close(cd);
     free(raw);
     *out = buf;
     *out_len = used;
@@ -396,8 +348,8 @@ sqli_status sqli_create(sqli_conn_t **conn)
     c->cursor_type = SQLI_CURSOR_FORWARD_ONLY;
     c->holdability = SQLI_CURSOR_CLOSE_AT_COMMIT;
     c->fetch_buf_size = 4194304u;
-    c->decode_cd = (iconv_t)-1;
-    c->decode_cd_ready = false;
+    sqli_charset_decoder_init(&c->decode_cs);
+    c->decode_cs_ready = false;
     c->decode_cp1252_utf8 = false;
     c->decode_locale_checked = false;
     c->read_buf_cap = 1048576u;
@@ -446,12 +398,7 @@ void sqli_destroy(sqli_conn_t *conn)
 
     /* Honor the public lifecycle contract and release transport resources too. */
     sqli_close(conn);
-
-    if (conn->decode_cd_ready && conn->decode_cd != (iconv_t)-1) {
-        iconv_close(conn->decode_cd);
-        conn->decode_cd = (iconv_t)-1;
-        conn->decode_cd_ready = false;
-    }
+    sqli_charset_decoder_close(&conn->decode_cs);
 
     /* Release all owned resources */
     free(conn->read_buf);

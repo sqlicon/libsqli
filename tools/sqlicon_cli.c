@@ -1,10 +1,8 @@
 #include "sqlicon.h"
 
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 /* ---------------------------------------------------------------- */
 /* Signal state                                                     */
@@ -15,35 +13,14 @@ volatile sig_atomic_t g_sigint_during_query = 0;
 volatile sig_atomic_t g_sigint_idle_count = 0;
 volatile sig_atomic_t g_exit_requested = 0;
 
-static void sqlicon_sigint_handler(int signo)
-{
-    (void)signo;
-    if (g_query_active) {
-        g_sigint_during_query = 1;
-        return;
-    }
-
-    g_sigint_idle_count++;
-    if (g_sigint_idle_count >= 2)
-        g_exit_requested = 1;
-}
-
 int sqlicon_install_signal_handlers(void)
 {
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = sqlicon_sigint_handler;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
-    if (sigaction(SIGINT, &sa, NULL) != 0)
-        return -1;
-    return 0;
+    return sqlicon_platform_install_signal_handlers();
 }
 
 void sqlicon_reset_interrupt_state(void)
 {
-    g_sigint_idle_count = 0;
-    g_sigint_during_query = 0;
+    sqlicon_platform_reset_interrupt_state();
 }
 
 /* ---------------------------------------------------------------- */
@@ -358,7 +335,7 @@ sqlicon_mode select_mode(const sqlicon_cli_options *opt)
         return SQLICON_MODE_INLINE_QUERY;
     if (opt->script_path != NULL)
         return SQLICON_MODE_SCRIPT;
-    if (!isatty(STDIN_FILENO))
+    if (!sqlicon_platform_is_stdin_tty())
         return SQLICON_MODE_STDIN_BATCH;
     return SQLICON_MODE_INTERACTIVE;
 }
