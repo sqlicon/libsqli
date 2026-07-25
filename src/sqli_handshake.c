@@ -808,49 +808,52 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
             goto out;
         }
         if (resp_type == SQLI_SLTYPE_CONREJ) {
+            /* handle_conrej_body() already reads and fully parses the
+             * ASC-BINARY body (same bytes Step 4 below would read) — do
+             * not fall through into Step 4, or the second hs_read_exact()
+             * hits EOF since nothing more is queued on the socket. */
             rc = handle_conrej_body(c, resp_type, resp_pdu);
             if (rc != SQLI_OK)
                 goto out;
             sqli_log(SQLI_LOG_WARN, "server returned CONREJ with svcError=0, continuing");
-            resp_type = SQLI_SLTYPE_CONACC;
-        }
-        if (resp_type != SQLI_SLTYPE_CONACC) {
+            sqli_log(SQLI_LOG_INFO, "CONACC parsed (via CONREJ body), cap_1=%d", c->caps.cap_1);
+        } else if (resp_type != SQLI_SLTYPE_CONACC) {
             set_error_context(c, "connect/sl_header", resp_type);
             set_error_fmt(c, "unexpected SL type: %d", resp_type);
             rc = SQLI_PROTO_ERROR;
             goto out;
-        }
+        } else {
+            /* Step 4: Read and parse ASC-BINARY body (Bug #8) */
+            uint16_t body_len_field = (uint16_t)(resp_pdu - SQLI_SL_HEADER_SIZE);
+            if (body_len_field == 0) {
+                set_error_context(c, "connect/conacc", resp_type);
+                set_error(c, "empty ASC-BINARY body from server");
+                rc = SQLI_PROTO_ERROR;
+                goto out;
+            }
 
-        /* Step 4: Read and parse ASC-BINARY body (Bug #8) */
-        uint16_t body_len_field = (uint16_t)(resp_pdu - SQLI_SL_HEADER_SIZE);
-        if (body_len_field == 0) {
-            set_error_context(c, "connect/conacc", resp_type);
-            set_error(c, "empty ASC-BINARY body from server");
-            rc = SQLI_PROTO_ERROR;
-            goto out;
-        }
+            uint8_t *resp_body = malloc(body_len_field);
+            if (resp_body == NULL) {
+                rc = SQLI_ALLOC_FAIL;
+                goto out;
+            }
 
-        uint8_t *resp_body = malloc(body_len_field);
-        if (resp_body == NULL) {
-            rc = SQLI_ALLOC_FAIL;
-            goto out;
-        }
+            rc = hs_read_exact(c->socket_fd, resp_body, body_len_field);
+            if (rc != SQLI_OK) {
+                free(resp_body);
+                set_error_context(c, "connect/conacc", resp_type);
+                set_error(c, "failed to read server response body");
+                goto out;
+            }
 
-        rc = hs_read_exact(c->socket_fd, resp_body, body_len_field);
-        if (rc != SQLI_OK) {
+            rc = parse_conacc_body(c, resp_body, body_len_field,
+                                   "connect/conacc", resp_type);
             free(resp_body);
-            set_error_context(c, "connect/conacc", resp_type);
-            set_error(c, "failed to read server response body");
-            goto out;
+            if (rc != SQLI_OK)
+                goto out;
+
+            sqli_log(SQLI_LOG_INFO, "CONACC parsed, cap_1=%d", c->caps.cap_1);
         }
-
-        rc = parse_conacc_body(c, resp_body, body_len_field,
-                               "connect/conacc", resp_type);
-        free(resp_body);
-        if (rc != SQLI_OK)
-            goto out;
-
-        sqli_log(SQLI_LOG_INFO, "CONACC parsed, cap_1=%d", c->caps.cap_1);
     }
 
     /* Step 5: SQ_PROTOCOLS capability exchange

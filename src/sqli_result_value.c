@@ -240,6 +240,53 @@ double sqli_result_get_double(sqli_result_t *result, int col_index)
     return val;
 }
 
+/* String/UTF-8 decode buffer sizes per column, matching the previous
+ * shared-buffer capacities (see sqli_result_get_string() below). */
+#define SQLI_STR_BUF_SIZE  4096
+#define SQLI_UTF8_BUF_SIZE 12288
+
+/* Ensure per-column string decode buffers exist for the current
+ * column_count. Returns false on allocation failure (caller falls back
+ * to returning ""). Buffers are lazily allocated on first use and freed
+ * in sqli_result_cleanup(). */
+static bool sqli_result_ensure_col_bufs(sqli_result_t *result)
+{
+    if (result->col_str_bufs != NULL && result->col_bufs_count == result->column_count)
+        return true;
+
+    /* column_count changed (or first use) since bufs were sized: reset. */
+    if (result->col_str_bufs != NULL) {
+        for (int i = 0; i < result->col_bufs_count; i++)
+            free(result->col_str_bufs[i]);
+        free(result->col_str_bufs);
+        result->col_str_bufs = NULL;
+    }
+    if (result->col_utf8_bufs != NULL) {
+        for (int i = 0; i < result->col_bufs_count; i++)
+            free(result->col_utf8_bufs[i]);
+        free(result->col_utf8_bufs);
+        result->col_utf8_bufs = NULL;
+    }
+    result->col_bufs_count = 0;
+
+    if (result->column_count <= 0)
+        return false;
+
+    result->col_str_bufs = calloc((size_t)result->column_count, sizeof(char *));
+    result->col_utf8_bufs = calloc((size_t)result->column_count, sizeof(char *));
+    if (result->col_str_bufs == NULL || result->col_utf8_bufs == NULL)
+        return false;
+
+    for (int i = 0; i < result->column_count; i++) {
+        result->col_str_bufs[i] = malloc(SQLI_STR_BUF_SIZE);
+        result->col_utf8_bufs[i] = malloc(SQLI_UTF8_BUF_SIZE);
+        if (result->col_str_bufs[i] == NULL || result->col_utf8_bufs[i] == NULL)
+            return false;
+    }
+    result->col_bufs_count = result->column_count;
+    return true;
+}
+
 const char *sqli_result_get_string(sqli_result_t *result, int col_index)
 {
     if (result == NULL || col_index < 0 || col_index >= result->column_count)
@@ -266,9 +313,12 @@ const char *sqli_result_get_string(sqli_result_t *result, int col_index)
     if (data_len == 0 || data_start > result->tuple_len || data_start + data_len > result->tuple_len)
         return "";
 
-    static _Thread_local char str_buf[4096];
-    static _Thread_local char utf8_buf[12288];
-    size_t copy = data_len < sizeof(str_buf) - 1 ? data_len : sizeof(str_buf) - 1;
+    if (!sqli_result_ensure_col_bufs(result))
+        return "";
+    char *str_buf = result->col_str_bufs[col_index];
+    char *utf8_buf = result->col_utf8_bufs[col_index];
+
+    size_t copy = data_len < SQLI_STR_BUF_SIZE - 1 ? data_len : SQLI_STR_BUF_SIZE - 1;
     memcpy(str_buf, result->tuple_buffer + data_start, copy);
 
     sqli_conn_t *conn = result->owner_conn;
@@ -291,7 +341,7 @@ const char *sqli_result_get_string(sqli_result_t *result, int col_index)
     }
 
     if (conn != NULL && conn->decode_cs_ready) {
-        size_t utf8_len = sizeof(utf8_buf);
+        size_t utf8_len = SQLI_UTF8_BUF_SIZE;
         if (sqli_charset_decoder_convert(&conn->decode_cs, str_buf, copy,
                                          utf8_buf, &utf8_len))
             return utf8_buf;

@@ -416,6 +416,15 @@ struct sqli_result {
     size_t *cur_col_data_len;   /* per-column data len for current row */
     uint8_t *cur_col_is_null;   /* per-column null markers for current row */
     int cur_cache_row;          /* row index cached in arrays, -1 if invalid */
+
+    /* Per-column string decode buffers for sqli_result_get_string().
+     * One buffer per column (not shared across columns) so that reading
+     * multiple columns of the same row in any order doesn't overwrite
+     * an earlier column's returned pointer — matches the documented
+     * "valid until next sqli_result_next()" contract in sqli.h. */
+    char **col_str_bufs;     /* [column_count] raw/decoded copies, STR_BUF_SIZE each */
+    char **col_utf8_bufs;    /* [column_count] locale-converted copies, UTF8_BUF_SIZE each */
+    int col_bufs_count;      /* number of columns the above were allocated for */
 };
 
 /* ----------------------------------------------------------------
@@ -476,6 +485,19 @@ static inline void sqli_result_cleanup(sqli_result_t *r)
     r->cur_col_is_null = NULL;
     r->cur_cache_row = -1;
     r->ret_type_sent = false;
+    if (r->col_str_bufs != NULL) {
+        for (int i = 0; i < r->col_bufs_count; i++)
+            free(r->col_str_bufs[i]);
+        free(r->col_str_bufs);
+        r->col_str_bufs = NULL;
+    }
+    if (r->col_utf8_bufs != NULL) {
+        for (int i = 0; i < r->col_bufs_count; i++)
+            free(r->col_utf8_bufs[i]);
+        free(r->col_utf8_bufs);
+        r->col_utf8_bufs = NULL;
+    }
+    r->col_bufs_count = 0;
 }
 
 void sqli_result_clear_rows(sqli_result_t *result);
