@@ -525,6 +525,7 @@ sqlicon_exit_code command_views_table(sqli_conn_t *conn, sqlicon_runtime *rt, co
 
     char current_view[256] = {0};
     char view_text[65536] = {0};
+    size_t view_text_len = 0;
 
     while (sqli_result_next(result)) {
         char tabname_buf[256];
@@ -539,15 +540,20 @@ sqlicon_exit_code command_views_table(sqli_conn_t *conn, sqlicon_runtime *rt, co
             }
             snprintf(current_view, sizeof(current_view), "%s", tabname_buf);
             view_text[0] = '\0';
+            view_text_len = 0;
             fprintf(out, "CREATE VIEW %s AS\n", tabname_buf);
         }
 
-        if (seqno == 1) {
-            strcat(view_text, viewtext);
-        } else {
-            strcat(view_text, " ");
-            strcat(view_text, viewtext);
+        if (seqno != 1 && view_text_len + 1 < sizeof(view_text)) {
+            view_text[view_text_len++] = ' ';
+            view_text[view_text_len] = '\0';
         }
+        size_t piece_len = strlen(viewtext);
+        if (piece_len >= sizeof(view_text) - view_text_len)
+            piece_len = sizeof(view_text) - view_text_len - 1;
+        memcpy(view_text + view_text_len, viewtext, piece_len);
+        view_text_len += piece_len;
+        view_text[view_text_len] = '\0';
     }
 
     if (current_view[0] != '\0') {
@@ -994,10 +1000,28 @@ sqlicon_exit_code command_import_csv(sqli_conn_t *conn, const char *arg)
     char *file_path = dup_span(p, (size_t)(sp - p));
     if (file_path == NULL)
         return SQLICON_EXIT_MISUSE;
-    const char *table = skip_spaces_str(sp);
-    if (*table == '\0') {
+    const char *table_start = skip_spaces_str(sp);
+    if (*table_start == '\0') {
         free(file_path);
         fprintf(stderr, "error: .import requires TABLE\n");
+        return SQLICON_EXIT_MISUSE;
+    }
+    char table[256];
+    {
+        size_t len = 0;
+        while (table_start[len] != '\0' && !is_space_char(table_start[len]))
+            len++;
+        if (len == 0 || len >= sizeof(table)) {
+            free(file_path);
+            fprintf(stderr, "error: .import invalid table name\n");
+            return SQLICON_EXIT_MISUSE;
+        }
+        memcpy(table, table_start, len);
+        table[len] = '\0';
+    }
+    if (!is_simple_sql_identifier(table)) {
+        free(file_path);
+        fprintf(stderr, "error: .import expects simple identifier [A-Za-z_][A-Za-z0-9_]* for TABLE\n");
         return SQLICON_EXIT_MISUSE;
     }
 

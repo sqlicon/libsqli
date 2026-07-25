@@ -118,6 +118,8 @@ static bool context_indicates_network(const char *context)
         return false;
     if (strcmp(context, "connect/tcp") == 0)
         return true;
+    if (strcmp(context, "connect/unix") == 0)
+        return true;
     return false;
 }
 
@@ -126,6 +128,7 @@ static bool message_indicates_network(const char *msg)
     if (msg == NULL || msg[0] == '\0')
         return false;
     return strstr(msg, "TCP connection failed") != NULL ||
+           strstr(msg, "Unix socket connection failed") != NULL ||
            strstr(msg, "failed to connect") != NULL ||
            strstr(msg, "failed to read") != NULL ||
            strstr(msg, "failed to send") != NULL ||

@@ -56,11 +56,14 @@ sqlicon_exit_code handle_dot_command(sqli_conn_t *conn, sqlicon_runtime *rt,
         p++;
     size_t cmd_len = (size_t)(p - cmd_start);
 
+    /* arg is the remainder of the line after the command word, trimmed of
+     * surrounding whitespace. Multi-token arguments (e.g. ".width 1 20" or
+     * ".import file.csv table") must stay intact for callers that split
+     * them further themselves. */
     const char *arg_start = skip_spaces_str(p);
-    const char *arg_end = arg_start;
-    while (*arg_end != '\0' && !is_space_char(*arg_end))
-        arg_end++;
-    size_t arg_len = (size_t)(arg_end - arg_start);
+    size_t arg_len = strlen(arg_start);
+    while (arg_len > 0 && is_space_char(arg_start[arg_len - 1]))
+        arg_len--;
 
     char *cmd = dup_span(cmd_start, cmd_len);
     char *arg = dup_span(arg_start, arg_len);
