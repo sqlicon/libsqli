@@ -303,8 +303,13 @@ size_t sqli_asc_encode_conreq(sqli_conn_t *c, uint8_t *buf, size_t buf_size,
  * Base64 encoding (for onipcstr IPC preamble)
  * ---------------------------------------------------------------- */
 
+/* Informix's onipcstr preamble uses a non-standard Base64 alphabet:
+ * '.' in place of '+' and '_' in place of '/'. Verified against a real
+ * dbaccess client trace (strace -e trace=network on the sendto() call
+ * building this preamble) — the server rejects the connection outright
+ * if the standard '+'/'/' characters appear in the encoded body. */
 static const char sqli_b64_alpha[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._";
 
 static size_t sqli_b64_encode(const uint8_t *src, size_t src_len,
                               char *dst, size_t dst_size)
@@ -354,8 +359,6 @@ size_t sqli_asc_encode_ipc_preamble(sqli_conn_t *c, uint8_t *buf, size_t buf_siz
     if (buf == NULL || buf_size < 512)
         return 0;
 
-    const char *cl = c->client_locale && c->client_locale[0]
-                     ? c->client_locale : "en_US.utf8";
     const char *dl = c->db_locale && c->db_locale[0]
                      ? c->db_locale : "en_US.utf8";
     size_t p = 10; /* Leave 10 bytes for the dynamically generated magic header */
@@ -376,18 +379,31 @@ size_t sqli_asc_encode_ipc_preamble(sqli_conn_t *c, uint8_t *buf, size_t buf_siz
         p += (size_t)n;
     }
 
-    /* Environment variables with trailing space before colon */
+    /* Environment variables with trailing space before colon.
+     * Verified against two real dbaccess traces (14.10.12.5 and
+     * 14.10.13.10, both with username "informix", i.e. legacy_style
+     * false): neither sends DBDATE=/DBMONEY=/INFORMIXCONTIME=/DB_LOCALE=
+     * here, and CLIENT_LOCALE is set to the effective locale (matching
+     * db_locale when client_locale wasn't explicitly configured), not a
+     * hardcoded "en_US.utf8" default. */
     {
         const char *srv = c->server;
         if (srv == NULL) srv = "";
+        const char *client_locale_out = (c->client_locale && c->client_locale[0])
+                                        ? c->client_locale : dl;
 
-        int n = (int)snprintf((char *)buf + p, buf_size - p,
-                              legacy_style
-                                  ? "DBPATH=//%s CLIENT_LOCALE=%s NODEFDAC=no "
-                                    "CLNT_PAM_CAPABLE=1 DB_LOCALE=%s "
-                                  : "DBPATH=//%s DBDATE=DMY4. DBMONEY=. CLIENT_LOCALE=%s NODEFDAC=no "
-                                    "CLNT_PAM_CAPABLE=1 INFORMIXCONTIME=1 DB_LOCALE=%s ",
-                              srv, cl, dl);
+        int n;
+        if (legacy_style) {
+            n = (int)snprintf((char *)buf + p, buf_size - p,
+                              "DBPATH=//%s CLIENT_LOCALE=%s NODEFDAC=no "
+                              "CLNT_PAM_CAPABLE=1 DB_LOCALE=%s ",
+                              srv, client_locale_out, dl);
+        } else {
+            n = (int)snprintf((char *)buf + p, buf_size - p,
+                              "DBPATH=//%s CLIENT_LOCALE=%s NODEFDAC=no "
+                              "CLNT_PAM_CAPABLE=1 ",
+                              srv, client_locale_out);
+        }
         if (n < 0 || (size_t)n >= buf_size - p) return 0;
         p += (size_t)n;
     }
@@ -466,35 +482,36 @@ size_t sqli_asc_encode_ipc_preamble(sqli_conn_t *c, uint8_t *buf, size_t buf_siz
     body[bp++] = (uint8_t)pid_val;
     memset(body + bp, 0, 4); bp += 4;
 
-    /* Hostname: len(2) + name + NUL + two trailing NUL bytes observed in dbaccess */
+    /* Hostname: len(2) + name + NUL + two trailing NUL bytes observed in dbaccess.
+     * len includes the NUL terminator (matches the server-name field convention
+     * below). Must reflect the actual hostname length, not a fixed reference
+     * value — a stale hardcoded length desyncs every field the server reads
+     * after it, causing the server to silently drop the connection. */
     {
         char hostname[256];
         hostname[0] = '\0';
         gethostname(hostname, sizeof(hostname) - 1);
-        wb16(0x0011);
-        if (bp + strlen(hostname) + 2 >= sizeof(body)) goto ipc_fail;
-        memcpy(body + bp, hostname, strlen(hostname)); bp += strlen(hostname);
+        size_t hlen = strlen(hostname);
+        wb16((uint16_t)(hlen + 1));
+        if (bp + hlen + 3 >= sizeof(body)) goto ipc_fail;
+        memcpy(body + bp, hostname, hlen); bp += hlen;
         body[bp++] = 0;
         body[bp++] = 0;
         body[bp++] = 0;
     }
 
-    /* CWD: len(2) + path + NUL (len includes NUL) */
+    /* CWD: len(2) + path + NUL (len includes NUL).
+     * Verified against two real dbaccess traces (14.10.12.5 and
+     * 14.10.13.10, both run as the "informix" user, i.e. legacy_style
+     * false): both encoded the process's actual getcwd() output (e.g.
+     * "/home/admin", "/"), not pw_dir ("/var/lib/informix" in both
+     * cases) — the legacy/modern split here was not observed in either
+     * real trace, so getcwd() is used unconditionally. */
     {
         char cwd[512];
         cwd[0] = '\0';
-        if (legacy_style) {
-            if (getcwd(cwd, sizeof(cwd) - 1) == NULL) {
-                strcpy(cwd, ".");
-            }
-        } else {
-            struct passwd *pw = getpwuid(getuid());
-            if (pw != NULL && pw->pw_dir != NULL && pw->pw_dir[0] != '\0') {
-                strncpy(cwd, pw->pw_dir, sizeof(cwd) - 1);
-                cwd[sizeof(cwd) - 1] = '\0';
-            } else if (getcwd(cwd, sizeof(cwd) - 1) == NULL) {
-                strcpy(cwd, ".");
-            }
+        if (getcwd(cwd, sizeof(cwd) - 1) == NULL) {
+            strcpy(cwd, ".");
         }
         size_t cwd_len = strlen(cwd);
         wb16((uint16_t)(cwd_len + 1));

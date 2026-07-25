@@ -217,6 +217,10 @@ if (SQLI_BUILD_TOOLS)
     add_executable(sqli_wire_capture ${SQLI_TEST_DIR}/test_wire_capture.c)
     target_include_directories(sqli_wire_capture PRIVATE ${SQLI_INC_DIR} ${SQLI_SRC_DIR})
     target_link_libraries(sqli_wire_capture PRIVATE sqli)
+
+    add_executable(sysdbslocale_dump ${SQLI_TOOLS_DIR}/sysdbslocale_dump.c)
+    target_include_directories(sysdbslocale_dump PRIVATE ${SQLI_INC_DIR})
+    target_link_libraries(sysdbslocale_dump PRIVATE sqli)
 endif()
 
 if (SQLI_BUILD_CLI)
