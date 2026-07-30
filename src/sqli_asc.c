@@ -81,8 +81,7 @@ static void sqli_get_ipc_app_path(char *buf, size_t buf_size)
     } else {
         char resolved[512];
         if (realpath(buf, resolved) != NULL) {
-            strncpy(buf, resolved, buf_size - 1);
-            buf[buf_size - 1] = '\0';
+            snprintf(buf, buf_size, "%s", resolved);
         }
     }
 #endif
