@@ -154,6 +154,7 @@ void test_dt_201_decimal_get_double_packed(void);
 void test_dt_202_numeric_get_double_packed(void);
 void test_dt_203_money_get_double_packed(void);
 void test_dt_204_decimal_get_string_and_null(void);
+void test_dt_205_decimal_get_string_floating_scale(void);
 void test_dt_206_result_is_null_and_was_null(void);
 void test_dt_301_float_double_roundtrip(void);
 void test_dt_401_date_roundtrip(void);
@@ -546,6 +547,7 @@ int main(void)
     RUN_TEST(test_dt_202_numeric_get_double_packed);
     RUN_TEST(test_dt_203_money_get_double_packed);
     RUN_TEST(test_dt_204_decimal_get_string_and_null);
+    RUN_TEST(test_dt_205_decimal_get_string_floating_scale);
     RUN_TEST(test_dt_206_result_is_null_and_was_null);
     section_checkpoint("phase4:mid2");
     RUN_TEST(test_dt_301_float_double_roundtrip);

@@ -1222,6 +1222,26 @@ void test_dt_204_decimal_get_string_and_null(void)
     sqli_result_destroy(result);
 }
 
+void test_dt_205_decimal_get_string_floating_scale(void)
+{
+    /* encoded_length's low byte 0xFF marks an Informix "floating
+     * decimal" column (DECIMAL(p) declared with no fixed scale). The
+     * packed value below decodes to 2000.00 (base-100 digits 20 00 00,
+     * exponent implying 2 fractional digits), but those fractional
+     * digits are zero and should be stripped from the rendered string
+     * — there is no declared scale telling us to keep them. Verified
+     * against a live server: a floating-decimal column holding whole
+     * numbers like 10 or 15000 rendered as "10.000000" / "15000.000000"
+     * before this fix (a hardcoded 6-digit fallback scale), instead of
+     * the correct "10" / "15000". */
+    const uint8_t tuple[] = {0xC6, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00};
+    sqli_result_t *result = make_single_row_result(SQLI_TYPE_DECIMAL, 0x00000BFFu,
+                                                    tuple, sizeof(tuple));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+    TEST_ASSERT_EQUAL_STRING("2000", sqli_result_get_decimal_string(result, 0));
+    sqli_result_destroy(result);
+}
+
 void test_dt_206_result_is_null_and_was_null(void)
 {
     const uint8_t tuple[] = {0, 0, 0, 0};

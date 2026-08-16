@@ -600,9 +600,31 @@ const char *sqli_result_get_decimal_string(sqli_result_t *result, int col_index)
     int negative = 0;
     if (!sqli_base100_decode_parts(raw, len, b100, &ndgts, &frac_digits, &negative))
         return out;
-    int scale = (int)(col->encoded_length & 0xFF);
-    if (scale < 0 || scale > 30)
+    int raw_scale = (int)(col->encoded_length & 0xFF);
+    int scale;
+    bool floating_scale = (raw_scale == 0xFF);
+    if (floating_scale) {
+        /* 0xFF marks an Informix "floating decimal" column (DECIMAL(p)
+         * with no fixed scale) — there is no declared scale to render
+         * with. Start from the fractional digit count implied by this
+         * value's packed encoding, then strip trailing zero digits
+         * below (the packed encoding can carry trailing zero digit
+         * bytes for round values, e.g. 10 or 15000, which isn't
+         * meaningful precision to display). Without this, such values
+         * were rendered with a hardcoded 6 fractional digits
+         * ("10.000000") even though the value itself is a whole
+         * number; the underlying value was already decoded correctly,
+         * only the display formatting was wrong. */
+        scale = frac_digits;
+        if (scale < 0)
+            scale = 0;
+        else if (scale > 30)
+            scale = 30;
+    } else if (raw_scale < 0 || raw_scale > 30) {
         scale = 6;
+    } else {
+        scale = raw_scale;
+    }
 
     char digits[192];
     size_t digits_len = 0;
@@ -626,6 +648,20 @@ const char *sqli_result_get_decimal_string(sqli_result_t *result, int col_index)
     if (frac_digits < 0)
         frac_digits = 0;
     ptrdiff_t dec_pos = (ptrdiff_t)digits_len - (ptrdiff_t)frac_digits;
+
+    if (floating_scale) {
+        /* Strip trailing zero fractional digits: the packed encoding
+         * can carry trailing zero digit bytes for round values (e.g.
+         * 10 or 15000 stored with extra zero digit pairs), which
+         * inflates "scale" above without adding real precision. */
+        while (scale > 0) {
+            ptrdiff_t src = dec_pos + (ptrdiff_t)(scale - 1);
+            char c = (src >= 0 && (size_t)src < digits_len) ? digits[src] : '0';
+            if (c != '0')
+                break;
+            scale--;
+        }
+    }
 
     size_t pos = 0;
     if (negative && !is_zero && pos + 1 < sizeof(out))
