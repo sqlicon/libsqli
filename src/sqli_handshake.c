@@ -865,7 +865,27 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
     if (rc != SQLI_OK)
         goto out;
 
-    /* Step 6: Send SQ_INFO (env vars) + SQ_EOT, receive SQ_EOT
+    /* Step 6: PAM handshake if required.
+     *
+     * Servers with PAM authentication enabled reject SQ_INFO sent before
+     * authentication completes: they respond to it with SQ_EXIT (56)
+     * instead of the expected SQ_EOT (12), immediately tearing down the
+     * connection. Confirmed via raw wire capture against a live
+     * PAM-enabled server — the server sends
+     * SQ_EXIT as the very next message after our SQ_INFO, with no PAM
+     * challenge in between. PAM must therefore run before SQ_INFO, not
+     * after it.
+     */
+    if (c->caps.has_pam) {
+        c->state = SQLI_CONN_AUTH;
+        sqli_log(SQLI_LOG_INFO, "starting PAM handshake");
+        rc = do_pam_handshake(c);
+        if (rc != SQLI_OK)
+            goto out;
+        sqli_log(SQLI_LOG_INFO, "PAM handshake complete");
+    }
+
+    /* Step 7: Send SQ_INFO (env vars) + SQ_EOT, receive SQ_EOT
      *
      * Format: opcode(2)=81, item_type(2)=6, total_len(2),
      *         max_name_len(2), max_val_len(2),
@@ -965,17 +985,7 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
     }
     sqli_log(SQLI_LOG_INFO, "SQ_INFO exchange complete");
 
-    /* Step 7: PAM handshake if required (Bug #23) */
-    if (c->caps.has_pam) {
-        c->state = SQLI_CONN_AUTH;
-        sqli_log(SQLI_LOG_INFO, "starting PAM handshake");
-        rc = do_pam_handshake(c);
-        if (rc != SQLI_OK)
-            goto out;
-        sqli_log(SQLI_LOG_INFO, "PAM handshake complete");
-    }
-
-    /* Step 9: Send SQ_DBOPEN (Bug #9) */
+    /* Step 8: Send SQ_DBOPEN (Bug #9) */
     c->state = SQLI_CONN_DBOPEN;
     set_error_context(c, "connect/dbopen", SQLI_SQ_DBOPEN);
     sqli_log(SQLI_LOG_INFO, "opening database: %s",
@@ -1023,7 +1033,7 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
         goto out;
     }
 
-    /* Step 10: Read DBOPEN response via dispatch loop.
+    /* Step 9: Read DBOPEN response via dispatch loop.
      *
      * The first dispatch processes messages until DONE (eof=1).
      * The server may send additional messages (SET commands, etc.)
