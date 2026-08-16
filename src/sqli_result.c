@@ -72,10 +72,21 @@ static size_t sqli_decimal_packed_width_from_encoded(uint32_t encoded_length)
     uint8_t precision = sqli_decimal_precision_from_encoded(encoded_length);
     if (precision == 0)
         return 0;
-    /* Observed SQLI fetch format for DECIMAL/NUMERIC:
-     * [exponent/sign byte][BCD digits][padding]
-     * width = ceil((precision + 3) / 2). */
-    return (size_t)((precision + 3u) / 2u);
+    uint8_t scale = (uint8_t)(encoded_length & 0xFFu);
+    if (scale > precision)
+        scale = 0;
+    /* SQLI fetch format for DECIMAL/NUMERIC packs the integer and
+     * fractional digit groups into separate base-100 byte runs (each
+     * rounded up independently), not the whole precision as one run:
+     * [exponent/sign byte][ceil(int_digits/2) bytes][ceil(scale/2) bytes].
+     * Verified via wire capture against a live server on a wide table:
+     * precision=12,scale=3 needs 1 + 5 + 2 = 8 bytes, while the naive
+     * ceil((precision+3)/2) formula silently returns 7, dropping one
+     * byte and desynchronizing every subsequent column in the row. */
+    uint8_t int_digits = (uint8_t)(precision - scale);
+    size_t int_bytes = (size_t)((int_digits + 1u) / 2u);
+    size_t frac_bytes = (size_t)((scale + 1u) / 2u);
+    return 1u + int_bytes + frac_bytes;
 }
 
 static size_t sqli_temporal_packed_width_from_encoded(uint8_t type, uint32_t encoded_length)
