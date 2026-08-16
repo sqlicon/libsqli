@@ -197,13 +197,27 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
 
     if (type == SQLI_TYPE_BOOL) {
         /* Informix BOOLEAN (type 41) can be encoded as:
-         *   [4-byte zero prefix][1-byte len][payload] */
+         *   [4-byte zero marker][1-byte len][payload]  (non-NULL)
+         *   [4-byte nonzero marker][1-byte len=0]       (NULL, 5 bytes, no payload)
+         * Same marker/len scheme as LVARCHAR NULL below. Verified via wire
+         * capture against a live server: a NULL BOOLEAN column is 5 bytes
+         * (e.g. 01 00 00 00 00), not a bare 1-byte sentinel — an earlier
+         * version of this fix assumed a 1-byte NULL encoding based on
+         * reading only the first byte, which corrupted the offset of
+         * every following column whenever BOOLEAN NULL was followed by
+         * another marker-based type (e.g. LVARCHAR). */
         if (base + 5 <= tuple_len) {
             uint32_t marker = ((uint32_t)tuple_buf[base] << 24) |
                               ((uint32_t)tuple_buf[base + 1] << 16) |
                               ((uint32_t)tuple_buf[base + 2] << 8) |
                               (uint32_t)tuple_buf[base + 3];
             uint8_t len8 = tuple_buf[base + 4];
+            if (marker != 0 && len8 == 0) {
+                *data_start = base + 5;
+                *data_len = 0;
+                *span = 5;
+                return SQLI_OK;
+            }
             size_t start = base + 5;
             size_t payload = (size_t)len8;
             if (marker == 0 && start + payload <= tuple_len) {
@@ -220,8 +234,32 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
          *   1. [4-byte marker][2-byte len][payload] (6-byte header)
          *   2. [4-byte marker][1-byte len][payload] (5-byte header)
          *   3. [2-byte len][payload] (2-byte header, no marker)
-         * We try them in decreasing header-size order. Mathematical verification
-         * shows that a 6-byte check cannot false-positive on a valid 5-byte tuple. */
+         * NULL is signaled by a nonzero 4-byte marker followed by a
+         * zero 1-byte length (5-byte header, no payload) — this must be
+         * checked before the 6-byte-header attempt below, because a
+         * NULL's trailing bytes can spuriously parse as a valid (empty)
+         * 6-byte-header value: e.g. marker=0x01000000, len8=0x00 has
+         * bytes [base+4]=0x00,[base+5]=<next column's first byte>, which
+         * can decode as a 2-byte length whose low byte happens to be 0,
+         * silently accepting a 6-byte span instead of the correct 5. */
+        if (base + 5 <= tuple_len) {
+            uint32_t marker = ((uint32_t)tuple_buf[base] << 24) |
+                              ((uint32_t)tuple_buf[base + 1] << 16) |
+                              ((uint32_t)tuple_buf[base + 2] << 8) |
+                              (uint32_t)tuple_buf[base + 3];
+            /* Require len8 == 0 too, not just marker != 0: the no-marker
+             * 2-byte-header variant's first 4 payload bytes can look like
+             * a nonzero "marker" by coincidence (e.g. length-prefixed
+             * text), but its 5th byte is payload data, essentially never
+             * exactly 0x00 for a real string. The real NULL encoding
+             * always has len8 == 0 (no payload). */
+            if (marker != 0 && tuple_buf[base + 4] == 0) {
+                *data_start = base + 5;
+                *data_len = 0;
+                *span = 5;
+                return SQLI_OK;
+            }
+        }
         // Try 6-byte header first
         if (base + 6 <= tuple_len) {
             uint16_t len16 = (uint16_t)((tuple_buf[base + 4] << 8) | tuple_buf[base + 5]);
@@ -465,7 +503,9 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
                 is_null = 1;
         }
         if (data_len == 0) {
-            if (!sqli_is_stringy_type(type) &&
+            if (type == SQLI_TYPE_BOOL) {
+                is_null = 1;
+            } else if (!sqli_is_stringy_type(type) &&
                 (sqli_type_is_two_byte_prefixed(type) ||
                  sqli_type_all_zero_is_null_sentinel(type))) {
                 is_null = 1;

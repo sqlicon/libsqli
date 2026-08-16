@@ -767,6 +767,37 @@ static sqli_result_t *make_single_row_result(uint8_t type, uint32_t encoded_len,
     return result;
 }
 
+static sqli_result_t *make_two_column_result(uint8_t type0, uint32_t encoded_len0,
+                                             uint8_t type1, uint32_t encoded_len1,
+                                             const uint8_t *tuple, size_t tuple_len)
+{
+    sqli_result_t *result = NULL;
+    uint8_t types[] = {type0, type1};
+    uint32_t offsets[] = {0, 0};
+    setup_mock_result_heap(&result, 2, types, offsets);
+    TEST_ASSERT_NOT_NULL(result);
+
+    result->columns[0].encoded_length = encoded_len0;
+    result->columns[1].encoded_length = encoded_len1;
+
+    result->rows = malloc(sizeof(uint8_t *));
+    result->row_lens = malloc(sizeof(size_t));
+    TEST_ASSERT_NOT_NULL(result->rows);
+    TEST_ASSERT_NOT_NULL(result->row_lens);
+
+    result->rows[0] = malloc(tuple_len);
+    TEST_ASSERT_NOT_NULL(result->rows[0]);
+    memcpy(result->rows[0], tuple, tuple_len);
+    result->row_lens[0] = tuple_len;
+    result->row_count = 1;
+    result->row_capacity = 1;
+    result->cursor = -1;
+    result->current_row = -1;
+    result->tuple_buffer = NULL;
+    result->tuple_len = 0;
+    return result;
+}
+
 void test_dt_001_varchar_roundtrip_ascii(void)
 {
     /* [len=5]hello */
@@ -851,6 +882,30 @@ void test_dt_011_lvarchar_marker_len16_roundtrip(void)
     sqli_result_t *result = make_single_row_result(SQLI_TYPE_LVARCHAR, 8000, tuple, sizeof(tuple));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
     TEST_ASSERT_EQUAL_STRING("hello", sqli_result_get_string(result, 0));
+    sqli_result_destroy(result);
+}
+
+void test_dt_012_lvarchar_null_roundtrip(void)
+{
+    /* NULL LVARCHAR is signaled by a nonzero 4-byte marker followed by
+     * a zero 1-byte length (5-byte header, no payload) — distinct from
+     * the 6-byte marker/2-byte-length header used for non-NULL values.
+     * A naive check-6-byte-header-first parser can misread the NULL
+     * encoding's trailing zero length byte plus the next column's first
+     * byte as a valid (empty) 6-byte-header value, silently consuming
+     * one extra byte and desynchronizing every following column.
+     * Verified via wire capture against a live server: a NULL LVARCHAR
+     * column followed by a nonzero BIGINT column. */
+    const uint8_t tuple[] = {
+        0x01, 0x00, 0x00, 0x00, 0x00,             /* c_lvarchar: NULL (5-byte header) */
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6f /* c_bigint: 111 */
+    };
+    sqli_result_t *result = make_two_column_result(
+        SQLI_TYPE_LVARCHAR, 200, SQLI_TYPE_BIGINT, 8, tuple, sizeof(tuple));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(result, 0));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(result, 1));
+    TEST_ASSERT_EQUAL_INT64(111, sqli_result_get_int64(result, 1));
     sqli_result_destroy(result);
 }
 
@@ -1036,25 +1091,16 @@ void test_dt_402_date_string_epoch_mapping(void)
 
 void test_dt_501_boolean_roundtrip(void)
 {
-    const uint8_t tuple_true[] = {1};
-    sqli_result_t *true_result = make_single_row_result(SQLI_TYPE_BOOL, 1, tuple_true, sizeof(tuple_true));
-    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(true_result));
-    TEST_ASSERT_EQUAL_INT(1, sqli_result_get_int(true_result, 0));
-    sqli_result_destroy(true_result);
-
-    const uint8_t tuple_false[] = {0};
-    sqli_result_t *false_result = make_single_row_result(SQLI_TYPE_BOOL, 1, tuple_false, sizeof(tuple_false));
-    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(false_result));
-    TEST_ASSERT_EQUAL_INT(0, sqli_result_get_int(false_result, 0));
-    sqli_result_destroy(false_result);
-
-    /* Informix BOOLEAN may arrive as [00000000][len][ascii 't'/'f'] */
+    /* Informix BOOLEAN arrives as [00000000][len][ascii 't'/'f'] for
+     * non-NULL values (verified via wire capture against a live
+     * server, table sqli_typetest). */
     const uint8_t tuple_true_ascii[] = {0, 0, 0, 0, 1, 't'};
     sqli_result_t *true_ascii = make_single_row_result(SQLI_TYPE_BOOL, 1,
                                                        tuple_true_ascii,
                                                        sizeof(tuple_true_ascii));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(true_ascii));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_get_int(true_ascii, 0));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(true_ascii));
     sqli_result_destroy(true_ascii);
 
     const uint8_t tuple_false_ascii[] = {0, 0, 0, 0, 1, 'f'};
@@ -1063,7 +1109,28 @@ void test_dt_501_boolean_roundtrip(void)
                                                         sizeof(tuple_false_ascii));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(false_ascii));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_get_int(false_ascii, 0));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(false_ascii));
     sqli_result_destroy(false_ascii);
+}
+
+void test_dt_502_boolean_null_roundtrip(void)
+{
+    /* NULL BOOLEAN uses the same nonzero-marker/zero-length encoding as
+     * NULL LVARCHAR: a 5-byte [4-byte nonzero marker][1-byte len=0], no
+     * payload — not a bare 1-byte sentinel. Verified via wire capture
+     * against a live server (table sqli_typetest): a NULL c_bool
+     * column followed by a non-NULL c_lvarchar column showed the
+     * marker/len pattern spans exactly 5
+     * bytes before the next column's data begins. */
+    const uint8_t tuple_null[] = {0x01, 0x00, 0x00, 0x00, 0x00};
+    sqli_result_t *null_result = make_single_row_result(SQLI_TYPE_BOOL, 1,
+                                                        tuple_null,
+                                                        sizeof(tuple_null));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(null_result));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(null_result, 0));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_get_int(null_result, 0));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_was_null(null_result));
+    sqli_result_destroy(null_result);
 }
 
 void test_dt_204_decimal_get_string_and_null(void)
