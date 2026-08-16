@@ -141,7 +141,7 @@ void test_dt_005_empty_string_vs_no_row(void);
 void test_dt_009_lvarchar_roundtrip(void);
 void test_dt_012_lvarchar_null_roundtrip(void);
 void test_dt_010_lvarchar_marker_len8_roundtrip(void);
-void test_dt_011_lvarchar_marker_len16_roundtrip(void);
+void test_dt_011_lvarchar_long_value_roundtrip(void);
 void test_dt_101_smallint_bounds(void);
 void test_dt_101_smallint_null(void);
 void test_dt_102_integer_bounds(void);
@@ -533,7 +533,7 @@ int main(void)
     RUN_TEST(test_dt_009_lvarchar_roundtrip);
     RUN_TEST(test_dt_012_lvarchar_null_roundtrip);
     RUN_TEST(test_dt_010_lvarchar_marker_len8_roundtrip);
-    RUN_TEST(test_dt_011_lvarchar_marker_len16_roundtrip);
+    RUN_TEST(test_dt_011_lvarchar_long_value_roundtrip);
     RUN_TEST(test_dt_101_smallint_bounds);
     RUN_TEST(test_dt_101_smallint_null);
     RUN_TEST(test_dt_102_integer_bounds);

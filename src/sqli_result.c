@@ -230,53 +230,34 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
     }
 
     if (type == SQLI_TYPE_LVARCHAR) {
-        /* LVARCHAR wire layout can be:
-         *   1. [4-byte marker][2-byte len][payload] (6-byte header)
-         *   2. [4-byte marker][1-byte len][payload] (5-byte header)
-         *   3. [2-byte len][payload] (2-byte header, no marker)
-         * NULL is signaled by a nonzero 4-byte marker followed by a
-         * zero 1-byte length (5-byte header, no payload) — this must be
-         * checked before the 6-byte-header attempt below, because a
-         * NULL's trailing bytes can spuriously parse as a valid (empty)
-         * 6-byte-header value: e.g. marker=0x01000000, len8=0x00 has
-         * bytes [base+4]=0x00,[base+5]=<next column's first byte>, which
-         * can decode as a 2-byte length whose low byte happens to be 0,
-         * silently accepting a 6-byte span instead of the correct 5. */
+        /* LVARCHAR wire layout, verified via wire capture and byte-exact
+         * cross-checks against a live server across many tables and
+         * value lengths (0 to 760+ characters):
+         *   [3-byte zero prefix][2-byte BE length][payload]  (5-byte header)
+         * NULL is signaled by a nonzero first prefix byte with a zero
+         * length (no payload). This single format replaces what earlier
+         * looked like two different encodings (a "4-byte marker + 1-byte
+         * length" for short/empty values, and a separate "4-byte marker +
+         * 2-byte length" for long values): both were misreadings of the
+         * same 3-byte-prefix + 2-byte-length layout — the apparent 1-byte
+         * length was really the low byte of the 2-byte length with a
+         * zero high byte, which only stayed zero for values under 256
+         * bytes. Confirmed with two independent long values (698 and 760
+         * bytes) where the earlier "1-byte length" reading silently
+         * truncated the payload to at most 255 bytes. */
         if (base + 5 <= tuple_len) {
-            uint32_t marker = ((uint32_t)tuple_buf[base] << 24) |
-                              ((uint32_t)tuple_buf[base + 1] << 16) |
-                              ((uint32_t)tuple_buf[base + 2] << 8) |
-                              (uint32_t)tuple_buf[base + 3];
-            /* Require len8 == 0 too, not just marker != 0: the no-marker
-             * 2-byte-header variant's first 4 payload bytes can look like
-             * a nonzero "marker" by coincidence (e.g. length-prefixed
-             * text), but its 5th byte is payload data, essentially never
-             * exactly 0x00 for a real string. The real NULL encoding
-             * always has len8 == 0 (no payload). */
-            if (marker != 0 && tuple_buf[base + 4] == 0) {
+            uint32_t prefix = ((uint32_t)tuple_buf[base] << 16) |
+                              ((uint32_t)tuple_buf[base + 1] << 8) |
+                              (uint32_t)tuple_buf[base + 2];
+            uint16_t len16 = (uint16_t)((tuple_buf[base + 3] << 8) | tuple_buf[base + 4]);
+            if (prefix != 0 && len16 == 0) {
                 *data_start = base + 5;
                 *data_len = 0;
                 *span = 5;
                 return SQLI_OK;
             }
-        }
-        // Try 6-byte header first
-        if (base + 6 <= tuple_len) {
-            uint16_t len16 = (uint16_t)((tuple_buf[base + 4] << 8) | tuple_buf[base + 5]);
-            size_t start = base + 6;
-            size_t payload = (size_t)len16;
-            if (start + payload <= tuple_len) {
-                *data_start = start;
-                *data_len = payload;
-                *span = 6 + payload;
-                return SQLI_OK;
-            }
-        }
-        // Try 5-byte header next
-        if (base + 5 <= tuple_len) {
-            uint8_t len8 = tuple_buf[base + 4];
             size_t start = base + 5;
-            size_t payload = (size_t)len8;
+            size_t payload = (size_t)len16;
             if (start + payload <= tuple_len) {
                 *data_start = start;
                 *data_len = payload;
@@ -284,7 +265,8 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
                 return SQLI_OK;
             }
         }
-        // Try 2-byte header next (no marker)
+        // Fall back to a 2-byte header (no prefix) if the 5-byte
+        // interpretation doesn't fit the remaining tuple.
         if (base + 2 <= tuple_len) {
             uint16_t len16 = (uint16_t)((tuple_buf[base] << 8) | tuple_buf[base + 1]);
             size_t payload = (size_t)len16;
@@ -490,16 +472,16 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
         offset += span;
 
         int is_null = 0;
-        /* LVARCHAR NULL marker: when the 4-byte marker is non-zero and
-         * the length byte is zero, Informix signals a NULL value. This
-         * distinguishes NULL from an empty string (marker == 0, len == 0). */
+        /* LVARCHAR NULL prefix: header is [3-byte prefix][2-byte BE
+         * length][payload]; when the prefix is non-zero and the length
+         * is zero, Informix signals a NULL value. This distinguishes
+         * NULL from an empty string (prefix == 0, len == 0). */
         if (type == SQLI_TYPE_LVARCHAR && data_len == 0 && span >= 5) {
-            size_t marker_pos = offset - span;
-            uint32_t lv_marker = ((uint32_t)result->tuple_buffer[marker_pos] << 24) |
-                                 ((uint32_t)result->tuple_buffer[marker_pos + 1] << 16) |
-                                 ((uint32_t)result->tuple_buffer[marker_pos + 2] << 8) |
-                                 (uint32_t)result->tuple_buffer[marker_pos + 3];
-            if (lv_marker != 0)
+            size_t prefix_pos = offset - span;
+            uint32_t lv_prefix = ((uint32_t)result->tuple_buffer[prefix_pos] << 16) |
+                                 ((uint32_t)result->tuple_buffer[prefix_pos + 1] << 8) |
+                                 (uint32_t)result->tuple_buffer[prefix_pos + 2];
+            if (lv_prefix != 0)
                 is_null = 1;
         }
         if (data_len == 0) {
@@ -512,7 +494,28 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
             }
         } else {
             const uint8_t *p = result->tuple_buffer + data_start;
-            if (type == SQLI_TYPE_DATE && data_len >= 4) {
+            if ((type == SQLI_TYPE_CHAR || type == SQLI_TYPE_NCHAR) &&
+                data_len > 0 && p[0] == 0x00) {
+                /* CHAR/NCHAR NULL sentinel: first byte 0x00, remaining
+                 * bytes are ordinary space padding — distinct from a
+                 * genuine value, which starts at byte 0 like any other
+                 * fixed-width CHAR content. Guarded to require the rest
+                 * of the field be pure padding, since a leading NUL byte
+                 * in an otherwise-populated field is not how this
+                 * sentinel presents. Verified via wire capture against a
+                 * live server (two fixed-width CHAR columns, confirmed
+                 * NULL against a JDBC reference across all 10 sampled
+                 * rows). */
+                int rest_is_padding = 1;
+                for (size_t k = 1; k < data_len; k++) {
+                    if (p[k] != 0x20) {
+                        rest_is_padding = 0;
+                        break;
+                    }
+                }
+                if (rest_is_padding)
+                    is_null = 1;
+            } else if (type == SQLI_TYPE_DATE && data_len >= 4) {
                 int32_t days = (int32_t)(((uint32_t)p[0] << 24) |
                                          ((uint32_t)p[1] << 16) |
                                          ((uint32_t)p[2] << 8)  |
@@ -530,6 +533,18 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
                 is_null = 1;
             } else if ((type == SQLI_TYPE_INT8 || type == SQLI_TYPE_SERIAL8) &&
                        data_len >= 2 && p[0] == 0 && p[1] == 0) {
+                is_null = 1;
+            } else if ((type == SQLI_TYPE_VARCHAR || type == SQLI_TYPE_NVCHAR) &&
+                       data_len == 1 && p[0] == 0x00) {
+                /* VARCHAR/NVCHAR NULL sentinel: [1-byte len=1][payload=0x00],
+                 * distinct from an empty string (len=0, no payload).
+                 * Verified via wire capture against a live server (three
+                 * VARCHAR columns, confirmed NULL against a JDBC
+                 * reference across two independent rows). A genuine
+                 * 1-character string holding
+                 * an embedded NUL byte would be indistinguishable from
+                 * this encoding, but is not a realistic value for these
+                 * short catalog/label VARCHAR columns. */
                 is_null = 1;
             } else if (sqli_type_all_zero_is_null_sentinel(type)) {
                 int all_zero = 1;

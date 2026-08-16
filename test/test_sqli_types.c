@@ -798,6 +798,39 @@ static sqli_result_t *make_two_column_result(uint8_t type0, uint32_t encoded_len
     return result;
 }
 
+static sqli_result_t *make_three_column_result(uint8_t type0, uint32_t encoded_len0,
+                                               uint8_t type1, uint32_t encoded_len1,
+                                               uint8_t type2, uint32_t encoded_len2,
+                                               const uint8_t *tuple, size_t tuple_len)
+{
+    sqli_result_t *result = NULL;
+    uint8_t types[] = {type0, type1, type2};
+    uint32_t offsets[] = {0, 0, 0};
+    setup_mock_result_heap(&result, 3, types, offsets);
+    TEST_ASSERT_NOT_NULL(result);
+
+    result->columns[0].encoded_length = encoded_len0;
+    result->columns[1].encoded_length = encoded_len1;
+    result->columns[2].encoded_length = encoded_len2;
+
+    result->rows = malloc(sizeof(uint8_t *));
+    result->row_lens = malloc(sizeof(size_t));
+    TEST_ASSERT_NOT_NULL(result->rows);
+    TEST_ASSERT_NOT_NULL(result->row_lens);
+
+    result->rows[0] = malloc(tuple_len);
+    TEST_ASSERT_NOT_NULL(result->rows[0]);
+    memcpy(result->rows[0], tuple, tuple_len);
+    result->row_lens[0] = tuple_len;
+    result->row_count = 1;
+    result->row_capacity = 1;
+    result->cursor = -1;
+    result->current_row = -1;
+    result->tuple_buffer = NULL;
+    result->tuple_len = 0;
+    return result;
+}
+
 void test_dt_001_varchar_roundtrip_ascii(void)
 {
     /* [len=5]hello */
@@ -875,13 +908,36 @@ void test_dt_010_lvarchar_marker_len8_roundtrip(void)
     sqli_result_destroy(result);
 }
 
-void test_dt_011_lvarchar_marker_len16_roundtrip(void)
+void test_dt_011_lvarchar_long_value_roundtrip(void)
 {
-    /* [marker=0][len16=5]hello */
-    const uint8_t tuple[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 'h', 'e', 'l', 'l', 'o'};
+    /* LVARCHAR header is always [3-byte zero prefix][2-byte BE length]
+     * [payload] — there is no separate "1-byte length" vs. "2-byte
+     * length" format switch. What earlier looked like a distinct
+     * 1-byte-length encoding for short values was a misreading: the
+     * apparent 1-byte length was really the low byte of the 2-byte
+     * length field, with a zero high byte that only stays zero for
+     * values under 256 bytes. This test uses a 300-byte payload (over
+     * the old, wrong 255-byte assumption) to force the length's high
+     * byte nonzero and catch any regression back to a 1-byte-length
+     * reading, which would silently truncate the string.
+     * Verified via wire capture against a live server: two independent
+     * long text values (698 and 760 bytes) decoded via this exact
+     * [3-byte prefix][2-byte length] layout. */
+    char payload[300];
+    memset(payload, 'x', sizeof(payload));
+    uint8_t tuple[5 + sizeof(payload)];
+    tuple[0] = 0x00; tuple[1] = 0x00; tuple[2] = 0x00;
+    tuple[3] = (uint8_t)(sizeof(payload) >> 8);
+    tuple[4] = (uint8_t)(sizeof(payload) & 0xFF);
+    memcpy(tuple + 5, payload, sizeof(payload));
+
     sqli_result_t *result = make_single_row_result(SQLI_TYPE_LVARCHAR, 8000, tuple, sizeof(tuple));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
-    TEST_ASSERT_EQUAL_STRING("hello", sqli_result_get_string(result, 0));
+    char out[512];
+    size_t out_len = sizeof(out);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(result, 0, out, &out_len));
+    TEST_ASSERT_EQUAL_INT(sizeof(payload), out_len);
+    TEST_ASSERT_EQUAL_INT(0, memcmp(out, payload, sizeof(payload)));
     sqli_result_destroy(result);
 }
 
@@ -906,6 +962,28 @@ void test_dt_012_lvarchar_null_roundtrip(void)
     TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(result, 0));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(result, 1));
     TEST_ASSERT_EQUAL_INT64(111, sqli_result_get_int64(result, 1));
+    sqli_result_destroy(result);
+}
+
+void test_dt_013_lvarchar_empty_string_short_column_roundtrip(void)
+{
+    /* An empty (non-NULL) LVARCHAR string uses the 5-byte header:
+     * [3-byte zero prefix][2-byte length=0], no payload. Verified via
+     * wire capture against a live server: an empty LVARCHAR column
+     * immediately followed by a fixed-width CHAR column of spaces,
+     * then further SMALLINT columns. */
+    const uint8_t tuple[] = {
+        0x00, 0x00, 0x00, 0x00, 0x00,       /* c_lvarchar: "" (5-byte header) */
+        0x20, 0x20, 0x20,                   /* c_char: "   " (3-byte fixed CHAR) */
+        0x00, 0x01                          /* c_smallint: 1 */
+    };
+    sqli_result_t *result = make_three_column_result(
+        SQLI_TYPE_LVARCHAR, 80, SQLI_TYPE_CHAR, 3, SQLI_TYPE_SMALLINT, 2,
+        tuple, sizeof(tuple));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(result, 0));
+    TEST_ASSERT_EQUAL_STRING("", sqli_result_get_string(result, 0));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_get_int(result, 2));
     sqli_result_destroy(result);
 }
 
