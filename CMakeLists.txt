@@ -14,6 +14,21 @@ set(CMAKE_C_EXTENSIONS OFF)
 if (MSVC)
     # Match the existing "warnings are errors" intent with MSVC-compatible flags.
     add_compile_options(/W4 /WX)
+    # Minimize Release executable size: optimize for size instead of speed,
+    # let the linker discard unreferenced functions/data (important for the
+    # statically linked OpenSSL/uriparser libs, which pull in far more than
+    # this project actually calls), and fold identical COMDATs. Whole-program
+    # optimization (/GL + LTCG) is required for /OPT:REF and /OPT:ICF to see
+    # across translation units, including into the static "sqli" library.
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+    add_compile_options(
+        $<$<CONFIG:Release>:/O1>
+        $<$<CONFIG:Release>:/Gw>
+    )
+    add_link_options(
+        $<$<CONFIG:Release>:/OPT:REF>
+        $<$<CONFIG:Release>:/OPT:ICF>
+    )
 else()
     # Warnings: treat the codebase as if compiled with -Wall -Wextra -Werror -pedantic
     add_compile_options(-Wall -Wextra -Werror -pedantic)

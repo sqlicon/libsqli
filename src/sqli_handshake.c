@@ -422,9 +422,15 @@ static sqli_status do_sq_protocols(sqli_conn_t *c)
     /* Read server response */
     uint16_t proto_opcode, proto_len;
     sqli_status rc = hs_read_be16(fd, &proto_opcode);
-    if (rc != SQLI_OK) return rc;
+    if (rc != SQLI_OK) {
+        set_error(c, "SQ_PROTOCOLS: failed to read opcode");
+        return rc;
+    }
     rc = hs_read_be16(fd, &proto_len);
-    if (rc != SQLI_OK) return rc;
+    if (rc != SQLI_OK) {
+        set_error(c, "SQ_PROTOCOLS: failed to read length");
+        return rc;
+    }
 
     if (proto_opcode != SQLI_SQ_PROTOCOLS) {
         set_error_fmt(c, "SQ_PROTOCOLS: unexpected opcode %d", proto_opcode);
@@ -435,14 +441,20 @@ static sqli_status do_sq_protocols(sqli_conn_t *c)
     uint8_t server_protocols[16] = {0};
     size_t to_read = proto_len > 16 ? 16 : proto_len;
     rc = hs_read_exact(fd, server_protocols, to_read);
-    if (rc != SQLI_OK) return rc;
+    if (rc != SQLI_OK) {
+        set_error(c, "SQ_PROTOCOLS: failed to read capability bytes");
+        return rc;
+    }
 
     /* Drain any extra bytes + padding */
     size_t extra = proto_len > to_read ? proto_len - to_read : 0;
     size_t pad   = proto_len % 2 != 0 ? 1 : 0;
     if (extra + pad > 0) {
         rc = hs_drain(fd, extra + pad);
-        if (rc != SQLI_OK) return rc;
+        if (rc != SQLI_OK) {
+            set_error(c, "SQ_PROTOCOLS: failed to drain trailing bytes");
+            return rc;
+        }
     }
 
     /* Parse capability bits */
@@ -461,7 +473,10 @@ static sqli_status do_sq_protocols(sqli_conn_t *c)
     {
         uint16_t trailing;
         rc = hs_read_be16(fd, &trailing);
-        if (rc != SQLI_OK) return rc;
+        if (rc != SQLI_OK) {
+            set_error(c, "SQ_PROTOCOLS: failed to read trailing EOT");
+            return rc;
+        }
         if (trailing != SQLI_SQ_EOT) {
             set_error_fmt(c, "SQ_PROTOCOLS: expected trailing EOT, got %d", trailing);
             return SQLI_PROTO_ERROR;
@@ -577,6 +592,7 @@ sqli_status sqli_connect(sqli_conn_t *c, const sqli_connect_params *params)
 
     sqli_status rc = SQLI_OK;
     ssize_t sent;
+    bool conrej_soft_accept = false;
     rc = str_copy(c->hostname, 256, params->hostname);
     if (rc != SQLI_OK) goto out;
     rc = str_copy(c->service, 64, params->service);
@@ -815,6 +831,7 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
             rc = handle_conrej_body(c, resp_type, resp_pdu);
             if (rc != SQLI_OK)
                 goto out;
+            conrej_soft_accept = true;
             sqli_log(SQLI_LOG_WARN, "server returned CONREJ with svcError=0, continuing");
             sqli_log(SQLI_LOG_INFO, "CONACC parsed (via CONREJ body), cap_1=%d", c->caps.cap_1);
         } else if (resp_type != SQLI_SLTYPE_CONACC) {
@@ -1078,6 +1095,21 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
     rc = SQLI_OK;
 
 out:
+    if (rc != SQLI_OK && conrej_soft_accept) {
+        /* The server sent CONREJ with svcError=0 — a quirk the client
+         * deliberately tolerates and continues past (see the comment
+         * above handle_conrej_body()'s call site) — but then failed
+         * before the handshake actually completed. Whatever broke
+         * afterwards (e.g. the server closing the socket instead of
+         * answering SQ_PROTOCOLS) is real, but on its own looks like an
+         * unrelated network hiccup. Prefix it with the CONREJ context so
+         * the message points at the actual rejection instead. */
+        char prev_msg[256];
+        snprintf(prev_msg, sizeof(prev_msg), "%s", c->errmsg);
+        set_error_fmt(c,
+                      "server rejected connection (CONREJ, svcError=0) and did not "
+                      "complete the handshake: %s", prev_msg);
+    }
     if (rc != SQLI_OK && c->socket_fd >= 0) {
         sqli_tcp_close(c->socket_fd);
         c->socket_fd = -1;

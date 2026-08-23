@@ -327,6 +327,7 @@ void test_uri_onsoctcp_missing_port(void);
 /* Phase 6 tests — integration tests */
 void test_connect_success(void);
 void test_connect_reject(void);
+void test_connect_soft_reject_then_closed(void);
 void test_connect_fragmented_conacc_body(void);
 void test_connect_redirect(void);
 void test_connect_bad_done(void);
@@ -736,6 +737,7 @@ int main(void)
     if (section_enabled("phase6")) {
     RUN_TEST(test_connect_success);
     RUN_TEST(test_connect_reject);
+    RUN_TEST(test_connect_soft_reject_then_closed);
     RUN_TEST(test_connect_fragmented_conacc_body);
     RUN_TEST(test_connect_redirect);
     RUN_TEST(test_connect_bad_done);

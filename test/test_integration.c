@@ -530,6 +530,49 @@ done:
     return NULL;
 }
 
+/*
+ * Reproduces a real-world Informix server response observed when the
+ * server rejects the requested DB_LOCALE: it sends CONREJ with
+ * svcError=0 (the "soft reject" the client deliberately tolerates and
+ * continues past, see handle_conrej_body()), but then closes the
+ * connection immediately instead of answering the client's next
+ * message (SQ_PROTOCOLS). Unlike mock_server_handshake_reject (which
+ * uses a nonzero svcError and is treated as a hard SQLI_AUTH_FAIL),
+ * this path continues the handshake and must fail later, when the
+ * closed socket is hit.
+ */
+static void *mock_server_handshake_soft_reject_then_close(void *arg)
+{
+    mock_srv_ctx *ctx = (mock_srv_ctx *)arg;
+    uint8_t buf[512];
+    size_t len;
+
+    uint8_t ready = 1;
+    write(ctx->ready_pipe[1], &ready, 1);
+
+    struct sockaddr_in addr;
+    socklen_t addr_len = sizeof(addr);
+    int conn_fd = accept(ctx->listener_fd, (struct sockaddr *)&addr, &addr_len);
+    if (conn_fd < 0)
+        return NULL;
+    ctx->conn_fd = conn_fd;
+
+    set_server_socket_timeout(conn_fd);
+
+    if (mock_read_conreq(conn_fd) < 0)
+        goto done;
+
+    len = build_conrej_response(buf, sizeof(buf), 0);
+    if (len == 0)
+        goto done;
+    send(conn_fd, buf, len, MSG_NOSIGNAL);
+
+done:
+    shutdown(conn_fd, SHUT_RDWR);
+    close(conn_fd);
+    return NULL;
+}
+
 static void *mock_server_handshake_fragmented_conacc(void *arg)
 {
     mock_srv_ctx *ctx = (mock_srv_ctx *)arg;
@@ -1005,6 +1048,41 @@ void test_connect_reject(void)
     errmsg = sqli_error(conn);
     TEST_ASSERT_NOT_NULL(errmsg);
     TEST_ASSERT_NOT_NULL(strstr(errmsg, "svcError=255"));
+
+    sqli_destroy(conn);
+    pthread_join(thread, NULL);
+    close(ctx->listener_fd);
+    mock_srv_ctx_destroy(ctx);
+    free(ctx);
+}
+
+void test_connect_soft_reject_then_closed(void)
+{
+    mock_srv_ctx *ctx = calloc(1, sizeof(*ctx));
+    TEST_ASSERT_NOT_NULL(ctx);
+    mock_srv_ctx_init(ctx);
+
+    require_test_listener_or_skip(ctx);
+
+    pthread_t thread;
+    pthread_create(&thread, NULL, mock_server_handshake_soft_reject_then_close, ctx);
+
+    wait_for_server(ctx);
+
+    sqli_conn_t *conn = NULL;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_create(&conn));
+
+    sqli_connect_params params = {0};
+    fill_connect_params(ctx, &params);
+
+    sqli_status rc = sqli_connect(conn, &params);
+    const char *errmsg;
+
+    TEST_ASSERT_NOT_EQUAL_INT(SQLI_OK, rc);
+    errmsg = sqli_error(conn);
+    TEST_ASSERT_NOT_NULL(errmsg);
+    TEST_ASSERT_NOT_NULL(strstr(errmsg, "CONREJ"));
+    TEST_ASSERT_NOT_NULL(strstr(errmsg, "svcError=0"));
 
     sqli_destroy(conn);
     pthread_join(thread, NULL);
