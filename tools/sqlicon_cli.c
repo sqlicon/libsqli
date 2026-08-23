@@ -64,6 +64,8 @@ void print_help(FILE *out)
             "                           Alias: --dblocale\n"
             "      --connect-uri <uri>  Connection URI (onsoctcp/onsocssl/onipcstr)\n"
             "                           Alias: --connect-url\n"
+            "      --log-level <lvl>    Diagnostic log verbosity: none/error/warn/info/debug\n"
+            "                           (default: error; written to stderr, or SQLI_LOG_FILE)\n"
             "\n"
             "URI formats:\n"
             "  informix+onsoctcp://user:pass@host:port/db?INFORMIXSERVER=srv\n"
@@ -245,6 +247,13 @@ sqlicon_exit_code parse_args(int argc, char **argv, sqlicon_cli_options *opt)
             }
             continue;
         }
+        if (strcmp(arg, "--log-level") == 0) {
+            if (!parse_option_value(argc, argv, &i, &opt->log_level)) {
+                fprintf(stderr, "error: %s requires a value\n", arg);
+                return SQLICON_EXIT_MISUSE;
+            }
+            continue;
+        }
 
         fprintf(stderr, "error: unknown argument '%s'\n", arg);
         return SQLICON_EXIT_MISUSE;
@@ -312,6 +321,34 @@ void apply_environment(sqlicon_cli_options *opt)
     opt->db_locale = first_nonempty(opt->db_locale, getenv("SQLI_DB_LOCALE"));
     if (opt->db_locale == NULL)
         opt->db_locale = getenv("DB_LOCALE");
+    opt->log_level = first_nonempty(opt->log_level, getenv("SQLI_LOG_LEVEL"));
+}
+
+sqlicon_exit_code apply_log_level(const sqlicon_cli_options *opt)
+{
+    if (opt->log_level == NULL || opt->log_level[0] == '\0')
+        return SQLICON_EXIT_OK;
+
+    sqli_log_level level;
+    if (strcmp(opt->log_level, "none") == 0) {
+        level = SQLI_LOG_NONE;
+    } else if (strcmp(opt->log_level, "error") == 0) {
+        level = SQLI_LOG_ERROR;
+    } else if (strcmp(opt->log_level, "warn") == 0) {
+        level = SQLI_LOG_WARN;
+    } else if (strcmp(opt->log_level, "info") == 0) {
+        level = SQLI_LOG_INFO;
+    } else if (strcmp(opt->log_level, "debug") == 0) {
+        level = SQLI_LOG_DEBUG;
+    } else {
+        fprintf(stderr,
+                "error: invalid --log-level '%s' (expected none/error/warn/info/debug)\n",
+                opt->log_level);
+        return SQLICON_EXIT_MISUSE;
+    }
+
+    sqli_log_set_level(level);
+    return SQLICON_EXIT_OK;
 }
 
 sqlicon_exit_code validate_connection_options(const sqlicon_cli_options *opt)

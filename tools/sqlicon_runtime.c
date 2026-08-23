@@ -190,6 +190,16 @@ sqlicon_exit_code open_connection(const sqlicon_cli_options *opt, sqli_conn_t **
         return SQLICON_EXIT_CONNECTION_ERROR;
     }
 
+    /* sqli_create() re-derives the log level from SQLI_LOG_LEVEL on every
+     * call (defaulting to ERROR), which would silently undo --log-level.
+     * Apply it here, after creation but before connect, so the handshake
+     * itself is covered. */
+    sqlicon_exit_code log_rc = apply_log_level(opt);
+    if (log_rc != SQLICON_EXIT_OK) {
+        sqli_destroy(conn);
+        return log_rc;
+    }
+
     if (opt->conn_uri != NULL && opt->conn_uri[0] != '\0') {
         effective_uri = build_effective_conn_uri(opt);
         rc = sqli_connect_uri(conn,

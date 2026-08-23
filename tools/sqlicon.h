@@ -76,6 +76,7 @@ typedef struct {
     const char *client_locale;
     const char *db_locale;
     const char *conn_uri;
+    const char *log_level;
 } sqlicon_cli_options;
 
 /* ---------------------------------------------------------------- */
@@ -311,6 +312,7 @@ void print_help(FILE *out);
 sqlicon_exit_code parse_args(int argc, char **argv, sqlicon_cli_options *opt);
 void apply_environment(sqlicon_cli_options *opt);
 sqlicon_exit_code validate_connection_options(const sqlicon_cli_options *opt);
+sqlicon_exit_code apply_log_level(const sqlicon_cli_options *opt);
 sqlicon_mode select_mode(const sqlicon_cli_options *opt);
 int sqlicon_install_signal_handlers(void);
 void sqlicon_reset_interrupt_state(void);

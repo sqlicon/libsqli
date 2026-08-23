@@ -9,6 +9,12 @@
 #include <limits.h>
 
 static const int IO_TIMEOUT_SEC = 60;
+
+/* See sqli_tcp_posix.c: bound the per-address connect timeout for
+ * non-final getaddrinfo(AF_UNSPEC) candidates so a stale/unreachable
+ * address doesn't make an eventually-successful connect look hung. */
+static const int MULTI_ADDR_TIMEOUT_SEC = 5;
+
 static INIT_ONCE g_winsock_once = INIT_ONCE_STATIC_INIT;
 
 static BOOL CALLBACK sqli_winsock_init_once(PINIT_ONCE once, PVOID param, PVOID *ctx)
@@ -140,6 +146,8 @@ int sqli_tcp_connect(const char *hostname, const char *service)
     }
 
     const int io_timeout = read_timeout_from_env("SQLI_IO_TIMEOUT_SEC", IO_TIMEOUT_SEC);
+    const int multi_addr_timeout = read_timeout_from_env("SQLI_MULTI_ADDR_TIMEOUT_SEC",
+                                                          MULTI_ADDR_TIMEOUT_SEC);
 
     for (struct addrinfo *ai = result; ai != NULL; ai = ai->ai_next) {
         fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
@@ -153,7 +161,9 @@ int sqli_tcp_connect(const char *hostname, const char *service)
         int flag = 1;
         (void)setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const char *)&flag, sizeof(flag));
 
-        if (connect_with_timeout(fd, ai->ai_addr, (socklen_t)ai->ai_addrlen, io_timeout) == 0)
+        int connect_timeout = (ai->ai_next != NULL && multi_addr_timeout < io_timeout)
+                                   ? multi_addr_timeout : io_timeout;
+        if (connect_with_timeout(fd, ai->ai_addr, (socklen_t)ai->ai_addrlen, connect_timeout) == 0)
             break;
 
         closesocket(fd);

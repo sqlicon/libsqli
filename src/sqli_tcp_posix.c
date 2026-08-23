@@ -65,6 +65,15 @@ static void dump_hex_full(const char *label, const unsigned char *buf, size_t le
 
 static const int IO_TIMEOUT_SEC = 60;
 
+/* When getaddrinfo(AF_UNSPEC) returns more than one candidate address
+ * (e.g. a stale/unreachable AAAA record alongside a working A record),
+ * trying each one serially with the full IO_TIMEOUT_SEC budget can make
+ * a connect that eventually succeeds feel like it hung for a minute.
+ * Non-final candidates get this much shorter budget instead; the last
+ * candidate still gets the full timeout so a legitimately slow single
+ * path is not cut short. */
+static const int MULTI_ADDR_TIMEOUT_SEC = 5;
+
 static int read_timeout_from_env(const char *name, int fallback)
 {
     const char *v = getenv(name);
@@ -154,6 +163,8 @@ int sqli_tcp_connect(const char *hostname, const char *service)
     }
 
     const int io_timeout = read_timeout_from_env("SQLI_IO_TIMEOUT_SEC", IO_TIMEOUT_SEC);
+    const int multi_addr_timeout = read_timeout_from_env("SQLI_MULTI_ADDR_TIMEOUT_SEC",
+                                                          MULTI_ADDR_TIMEOUT_SEC);
 
     /* Try each address until we get a working socket */
     for (struct addrinfo *ai = result; ai != NULL; ai = ai->ai_next) {
@@ -172,7 +183,9 @@ int sqli_tcp_connect(const char *hostname, const char *service)
         int flag = 1;
         setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
 
-        if (connect_with_timeout(fd, ai->ai_addr, (socklen_t)ai->ai_addrlen, io_timeout) == 0)
+        int connect_timeout = (ai->ai_next != NULL && multi_addr_timeout < io_timeout)
+                                   ? multi_addr_timeout : io_timeout;
+        if (connect_with_timeout(fd, ai->ai_addr, (socklen_t)ai->ai_addrlen, connect_timeout) == 0)
             break;
 
         close(fd);
