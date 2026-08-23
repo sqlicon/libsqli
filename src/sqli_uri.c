@@ -332,9 +332,14 @@ sqli_status sqli_connect_uri(sqli_conn_t *conn, const char *uri,
 
     uriFreeUriMembersA(&parsed_uri);
 
+    sqli_status connect_rc = sqli_connect(conn, &params);
+
+    /* Wipe decoded credentials from these local stack buffers now that
+     * sqli_connect() has copied whatever it needs into the connection
+     * object — params.username/password may point into them. */
     memset(userinfo, 0, sizeof(userinfo));
     memset(decoded_uri_user, 0, sizeof(decoded_uri_user));
     memset(decoded_uri_pass, 0, sizeof(decoded_uri_pass));
 
-    return sqli_connect(conn, &params);
+    return connect_rc;
 }
