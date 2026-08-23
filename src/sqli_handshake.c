@@ -972,7 +972,7 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
         }
 
         /* Server responds with SQ_EOT */
-        uint16_t info_resp;
+        uint16_t info_resp = 0;
         sqli_log(SQLI_LOG_DEBUG, "waiting for SQ_INFO response");
         rc = hs_read_be16(c->socket_fd, &info_resp);
         sqli_log(SQLI_LOG_DEBUG, "SQ_INFO response read rc=%d opcode=%u",
