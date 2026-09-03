@@ -461,10 +461,9 @@ void test_dispatch_error_response_drains_truncated_string(void)
     TEST_ASSERT_NOT_NULL(result);
     TEST_ASSERT_EQUAL_INT(SQLI_PROTO_ERROR, sqli_receive_dispatch(read_fd, result, NULL));
 
+    /* Trailing SQ_EOT is drained by receive_error(), so socket should be at EOF */
     uint8_t next[2] = {0};
-    TEST_ASSERT_EQUAL_INT(2, (int)read(read_fd, next, sizeof(next)));
-    TEST_ASSERT_EQUAL_UINT8(0, next[0]);
-    TEST_ASSERT_EQUAL_UINT8(SQLI_SQ_EOT, next[1]);
+    TEST_ASSERT_EQUAL_INT(0, (int)read(read_fd, next, sizeof(next)));
 
     sqli_result_destroy(result);
     close(read_fd);

@@ -534,6 +534,15 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
             } else if ((type == SQLI_TYPE_INT8 || type == SQLI_TYPE_SERIAL8) &&
                        data_len >= 2 && p[0] == 0 && p[1] == 0) {
                 is_null = 1;
+            } else if (type == SQLI_TYPE_SMFLOAT && data_len == 4 &&
+                       p[0] == 0xFF && p[1] == 0xFF && p[2] == 0xFF && p[3] == 0xFF) {
+                /* SMALLFLOAT/REAL IEEE-754 null sentinel: all 4 bytes 0xFF (spec §5.2) */
+                is_null = 1;
+            } else if (type == SQLI_TYPE_FLOAT && data_len == 8 &&
+                       p[0] == 0xFF && p[1] == 0xFF && p[2] == 0xFF && p[3] == 0xFF &&
+                       p[4] == 0xFF && p[5] == 0xFF && p[6] == 0xFF && p[7] == 0xFF) {
+                /* FLOAT/DOUBLE IEEE-754 null sentinel: all 8 bytes 0xFF (spec §5.2) */
+                is_null = 1;
             } else if ((type == SQLI_TYPE_VARCHAR || type == SQLI_TYPE_NVCHAR) &&
                        data_len == 1 && p[0] == 0x00) {
                 /* VARCHAR/NVCHAR NULL sentinel: [1-byte len=1][payload=0x00],
@@ -611,6 +620,13 @@ bool sqli_result_is_null_internal(sqli_result_t *result, int col_index)
         return 1;
     if ((type == SQLI_TYPE_INT8 || type == SQLI_TYPE_SERIAL8) &&
         data_len >= 2 && p[0] == 0 && p[1] == 0)
+        return 1;
+    if (type == SQLI_TYPE_SMFLOAT && data_len == 4 &&
+        p[0] == 0xFF && p[1] == 0xFF && p[2] == 0xFF && p[3] == 0xFF)
+        return 1;
+    if (type == SQLI_TYPE_FLOAT && data_len == 8 &&
+        p[0] == 0xFF && p[1] == 0xFF && p[2] == 0xFF && p[3] == 0xFF &&
+        p[4] == 0xFF && p[5] == 0xFF && p[6] == 0xFF && p[7] == 0xFF)
         return 1;
 
     int all_zero = 1;

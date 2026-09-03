@@ -126,6 +126,13 @@ static sqli_status savepoint_send_core(sqli_conn_t *conn, uint8_t opcode,
         }
     }
 
+    uint8_t eot[2] = {0, SQLI_SQ_EOT};
+    if (sqli_tcp_send(conn->socket_fd, eot, sizeof(eot)) != (ssize_t)sizeof(eot)) {
+        set_error_context(conn, "savepoint", opcode);
+        set_error(conn, "failed to send savepoint EOT");
+        return SQLI_IO_ERROR;
+    }
+
     drain_txn_response(conn);
     return SQLI_OK;
 }

@@ -1253,6 +1253,36 @@ void test_dt_206_result_is_null_and_was_null(void)
     sqli_result_destroy(result);
 }
 
+void test_dt_207_float_smfloat_null_detection(void)
+{
+    /* SMALLFLOAT NULL sentinel: all 4 bytes 0xFF (spec §5.2) */
+    const uint8_t smfloat_null[] = {0xFF, 0xFF, 0xFF, 0xFF};
+    sqli_result_t *res1 = make_single_row_result(SQLI_TYPE_SMFLOAT, 4, smfloat_null, sizeof(smfloat_null));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(res1));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(res1, 0));
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, (float)sqli_result_get_double(res1, 0));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_was_null(res1));
+    sqli_result_destroy(res1);
+
+    /* FLOAT NULL sentinel: all 8 bytes 0xFF (spec §5.2) */
+    const uint8_t float_null[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    sqli_result_t *res2 = make_single_row_result(SQLI_TYPE_FLOAT, 8, float_null, sizeof(float_null));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(res2));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(res2, 0));
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, (float)sqli_result_get_double(res2, 0));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_was_null(res2));
+    sqli_result_destroy(res2);
+
+    /* Non-null float: 1.0 in IEEE 754 double big endian: 0x3FF0000000000000 */
+    const uint8_t float_val[] = {0x3F, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    sqli_result_t *res3 = make_single_row_result(SQLI_TYPE_FLOAT, 8, float_val, sizeof(float_val));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(res3));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res3, 0));
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 1.0f, (float)sqli_result_get_double(res3, 0));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(res3));
+    sqli_result_destroy(res3);
+}
+
 typedef struct {
     size_t seen;
 } stream_ctx_t;

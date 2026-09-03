@@ -1056,6 +1056,25 @@ static sqli_status receive_error(sqli_conn_t *conn, int fd, sqli_result_t *r)
         set_error_info_from_sqerr(conn, SQLI_PROTO_ERROR, SQLI_SQ_ERR,
                                   (int)sqlcode, (int)isamcode, sqlstate, msg);
 
+    /* A server error turn terminates with SQ_EOT (opcode 12).
+     * Drain trailing SQ_EOT if present so the socket remains clean
+     * and synchronized for subsequent queries on this connection. */
+    uint8_t peek_bytes[2] = {0};
+    ssize_t peek_n = 0;
+    if (conn != NULL && conn->read_buf != NULL && conn->read_buf_len >= conn->read_buf_pos + 2) {
+        peek_bytes[0] = conn->read_buf[conn->read_buf_pos];
+        peek_bytes[1] = conn->read_buf[conn->read_buf_pos + 1];
+        peek_n = 2;
+    } else {
+        struct pollfd pfd = { .fd = fd, .events = POLLIN, .revents = 0 };
+        (void)poll(&pfd, 1, 50);
+        peek_n = sqli_tcp_peek(fd, peek_bytes, 2);
+    }
+    if (peek_n >= 2 && peek_bytes[0] == 0 && peek_bytes[1] == SQLI_SQ_EOT) {
+        uint16_t eot_op = 0;
+        (void)read_be16(conn, fd, &eot_op);
+    }
+
     r->eof = 1;
     r->saw_error = true;
     return SQLI_PROTO_ERROR;
@@ -1229,20 +1248,21 @@ sqli_status sqli_receive_dispatch(int fd, sqli_result_t *result, sqli_conn_t *co
         case SQLI_SQ_DBCLOSE: /* 37 — close-database ack/echo */
             sqli_log(SQLI_LOG_DEBUG, "dispatch: SQ_DBCLOSE ack");
             continue;
-        case SQLI_SQ_XACTSTAT: /* 99 — server transaction status */
+        case SQLI_SQ_XACTSTAT: /* 99 — server transaction status: event(int16), newLevel(int16), oldLevel(int16) */
         {
-            uint16_t xact_len;
-            rc = read_be16(conn, fd, &xact_len);
+            uint16_t xc_event = 0;
+            uint16_t xc_new_level = 0;
+            uint16_t xc_old_level = 0;
+            rc = read_be16(conn, fd, &xc_event);
             if (rc != SQLI_OK) goto out;
-            drain_bytes(conn, fd, (size_t)xact_len);
-            /* Drain trailing SQ_EOT if present */
-            uint16_t eot_op;
-            rc = read_be16(conn, fd, &eot_op);
+            rc = read_be16(conn, fd, &xc_new_level);
             if (rc != SQLI_OK) goto out;
-            if (eot_op == SQLI_SQ_EOT) continue;
-            /* Not EOT — push back? No, just continue and let loop re-read */
+            rc = read_be16(conn, fd, &xc_old_level);
+            if (rc != SQLI_OK) goto out;
+            sqli_log(SQLI_LOG_DEBUG, "dispatch: SQ_XACTSTAT event=%u newLevel=%u oldLevel=%u",
+                     xc_event, xc_new_level, xc_old_level);
+            continue;
         }
-        continue;
         case SQLI_SQ_INFO: /* 81 — informational items, drain */
             rc = drain_sq_info(conn, fd);
             if (rc != SQLI_OK) goto out;

@@ -133,16 +133,15 @@ sqli_status sqli_send_prepare(sqli_conn_t *conn, const char *sql)
 
 sqli_status sqli_send_execute(int fd, int stmt_id)
 {
-    /* SQ_ID(4) + SQ_EXECUTE(2) + SQ_WANTDONE(2) + SQ_EOT(2) */
-    uint8_t msg[10] = {
+    /* SQ_ID(4) + SQ_EXECUTE(2) + SQ_EOT(2) — Spec §4.2.1 (no SQ_WANTDONE) */
+    uint8_t msg[8] = {
         0, SQLI_SQ_ID,
         (uint8_t)((stmt_id >> 8) & 0xFF),
         (uint8_t)( stmt_id       & 0xFF),
         0, SQLI_SQ_EXECUTE,
-        0, SQLI_SQ_WANTDONE,
         0, SQLI_SQ_EOT
     };
-    if (sqli_tcp_send(fd, msg, 10) != 10)
+    if (sqli_tcp_send(fd, msg, 8) != 8)
         return SQLI_IO_ERROR;
     return SQLI_OK;
 }

@@ -1970,6 +1970,110 @@ void test_stmt_batch_live_reports_success_and_error(void)
     sqli_destroy(conn);
 }
 
+void test_savepoint_live_flow(void)
+{
+    const char *test_host = getenv("SQLI_TEST_HOST");
+    const char *test_port = getenv("SQLI_TEST_PORT");
+    const char *test_db = getenv("SQLI_TEST_DB");
+    const char *test_user = getenv("SQLI_TEST_USER");
+    const char *test_pass = getenv("SQLI_TEST_PASS");
+    const char *test_server = getenv("SQLI_TEST_SERVER");
+    const char *test_client_locale = getenv("SQLI_TEST_CLIENT_LOCALE");
+    const char *test_db_locale = getenv("SQLI_TEST_DB_LOCALE");
+    sqli_conn_t *conn = NULL;
+    sqli_result_t *res = NULL;
+
+    if (test_host == NULL || test_port == NULL || test_db == NULL ||
+        test_user == NULL || test_pass == NULL) {
+        TEST_IGNORE_MESSAGE("SQLI_TEST_* environment variables not set — skipping live savepoint test");
+        return;
+    }
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_create(&conn));
+
+    const char *target_db = getenv("SQLI_TEST_LOGGING_DB");
+    if (target_db == NULL || target_db[0] == '\0')
+        target_db = "sqli_log_test";
+
+    sqli_connect_params params = {0};
+    params.hostname = test_host;
+    params.service = test_port;
+    params.server = test_server;
+    params.database = target_db;
+    params.username = test_user;
+    params.password = test_pass;
+    params.client_locale = (test_client_locale && test_client_locale[0] != '\0')
+                         ? test_client_locale : "de_DE.1252";
+    params.db_locale = (test_db_locale && test_db_locale[0] != '\0')
+                     ? test_db_locale : "de_DE.1252";
+
+    if (sqli_connect(conn, &params) != SQLI_OK) {
+        sqli_destroy(conn);
+        TEST_IGNORE_MESSAGE("Informix logging database not reachable — skipping live savepoint test");
+        return;
+    }
+
+    char tbl[32];
+    snprintf(tbl, sizeof(tbl), "sp_%ld", (long)(time(NULL) % 100000));
+
+    char sql[256];
+    snprintf(sql, sizeof(sql), "CREATE TABLE %s (id INT, val VARCHAR(32))", tbl);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_query(conn, sql, &res));
+    if (res) { sqli_result_destroy(res); res = NULL; }
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_query(conn, "BEGIN WORK", &res));
+    if (res) { sqli_result_destroy(res); res = NULL; }
+    conn->in_transaction = true;
+
+    snprintf(sql, sizeof(sql), "INSERT INTO %s VALUES (1, 'initial')", tbl);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_query(conn, sql, &res));
+    if (res) { sqli_result_destroy(res); res = NULL; }
+
+    /* Set savepoint sp1 */
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_savepoint_set(conn, "sp1", true));
+
+    /* Insert second row */
+    snprintf(sql, sizeof(sql), "INSERT INTO %s VALUES (2, 'after_sp1')", tbl);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_query(conn, sql, &res));
+    if (res) { sqli_result_destroy(res); res = NULL; }
+
+    /* Check count is 2 */
+    snprintf(sql, sizeof(sql), "SELECT CAST(COUNT(*) AS INT) FROM %s", tbl);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_query(conn, sql, &res));
+    TEST_ASSERT_NOT_NULL(res);
+    TEST_ASSERT_TRUE(sqli_result_next(res));
+    TEST_ASSERT_EQUAL_INT(2, sqli_result_get_int(res, 0));
+    sqli_result_destroy(res);
+    res = NULL;
+
+    /* Rollback to savepoint sp1 */
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_savepoint_rollback(conn, "sp1"));
+
+    /* Check count is now 1 */
+    snprintf(sql, sizeof(sql), "SELECT CAST(COUNT(*) AS INT) FROM %s", tbl);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_query(conn, sql, &res));
+    TEST_ASSERT_NOT_NULL(res);
+    TEST_ASSERT_TRUE(sqli_result_next(res));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_get_int(res, 0));
+    sqli_result_destroy(res);
+    res = NULL;
+
+    /* Release savepoint sp1 */
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_savepoint_release(conn, "sp1"));
+
+    /* Commit transaction */
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_query(conn, "COMMIT WORK", &res));
+    if (res) { sqli_result_destroy(res); res = NULL; }
+    conn->in_transaction = false;
+
+    snprintf(sql, sizeof(sql), "DROP TABLE %s", tbl);
+    (void)sqli_query(conn, sql, &res);
+    if (res) { sqli_result_destroy(res); res = NULL; }
+
+    sqli_close(conn);
+    sqli_destroy(conn);
+}
+
 void test_pool_create_acquire_release_destroy(void)
 {
     mock_srv_ctx *ctx = calloc(1, sizeof(*ctx));

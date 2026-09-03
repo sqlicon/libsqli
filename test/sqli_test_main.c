@@ -156,6 +156,7 @@ void test_dt_203_money_get_double_packed(void);
 void test_dt_204_decimal_get_string_and_null(void);
 void test_dt_205_decimal_get_string_floating_scale(void);
 void test_dt_206_result_is_null_and_was_null(void);
+void test_dt_207_float_smfloat_null_detection(void);
 void test_dt_301_float_double_roundtrip(void);
 void test_dt_401_date_roundtrip(void);
 void test_dt_402_date_string_epoch_mapping(void);
@@ -349,6 +350,7 @@ void test_query_after_close(void);
 void test_query_live_systables(void);
 void test_batch_live_reports_success_and_error(void);
 void test_stmt_batch_live_reports_success_and_error(void);
+void test_savepoint_live_flow(void);
 void test_pool_create_acquire_release_destroy(void);
 void test_pool_acquire_timeout_when_busy(void);
 void test_pool_acquire_wakes_after_release(void);
@@ -550,6 +552,7 @@ int main(void)
     RUN_TEST(test_dt_204_decimal_get_string_and_null);
     RUN_TEST(test_dt_205_decimal_get_string_floating_scale);
     RUN_TEST(test_dt_206_result_is_null_and_was_null);
+    RUN_TEST(test_dt_207_float_smfloat_null_detection);
     section_checkpoint("phase4:mid2");
     RUN_TEST(test_dt_301_float_double_roundtrip);
     RUN_TEST(test_dt_401_date_roundtrip);
@@ -764,6 +767,7 @@ int main(void)
     RUN_TEST(test_query_live_systables);
     RUN_TEST(test_batch_live_reports_success_and_error);
     RUN_TEST(test_stmt_batch_live_reports_success_and_error);
+    RUN_TEST(test_savepoint_live_flow);
 #endif
     }
 #endif

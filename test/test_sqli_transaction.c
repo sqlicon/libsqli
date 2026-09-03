@@ -478,7 +478,7 @@ void test_savepoint_set_writes_opcode_payload_and_flag(void)
 
     uint8_t got[32] = {0};
     ssize_t n = read(sv[1], got, sizeof(got));
-    TEST_ASSERT_TRUE(n >= 10);
+    TEST_ASSERT_TRUE(n >= 12);
     TEST_ASSERT_EQUAL_UINT8(0, got[0]);
     TEST_ASSERT_EQUAL_UINT8(SQLI_SQ_SQLISETSVPT, got[1]);
     TEST_ASSERT_EQUAL_UINT8(0, got[2]);
@@ -489,6 +489,8 @@ void test_savepoint_set_writes_opcode_payload_and_flag(void)
     TEST_ASSERT_EQUAL_UINT8(0, got[7]); /* odd-length pad */
     TEST_ASSERT_EQUAL_UINT8(0, got[8]);
     TEST_ASSERT_EQUAL_UINT8(1, got[9]); /* unique flag */
+    TEST_ASSERT_EQUAL_UINT8(0, got[10]);
+    TEST_ASSERT_EQUAL_UINT8(SQLI_SQ_EOT, got[11]); /* trailing EOT */
 
     close(sv[0]);
     close(sv[1]);
@@ -521,18 +523,22 @@ void test_savepoint_release_and_rollback_write_expected_opcodes(void)
 
     uint8_t first[32] = {0};
     ssize_t n = read(sv[1], first, sizeof(first));
-    TEST_ASSERT_TRUE(n >= 8);
+    TEST_ASSERT_TRUE(n >= 10);
     TEST_ASSERT_EQUAL_UINT8(0, first[0]);
     TEST_ASSERT_EQUAL_UINT8(SQLI_SQ_SQLIRELSVPT, first[1]);
+    TEST_ASSERT_EQUAL_UINT8(0, first[n - 2]);
+    TEST_ASSERT_EQUAL_UINT8(SQLI_SQ_EOT, first[n - 1]); /* trailing EOT */
 
     TEST_ASSERT_EQUAL_INT((int)rn, (int)write(sv[1], reply, rn));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_savepoint_rollback(c, "abc"));
 
     uint8_t second[32] = {0};
     n = read(sv[1], second, sizeof(second));
-    TEST_ASSERT_TRUE(n >= 8);
+    TEST_ASSERT_TRUE(n >= 10);
     TEST_ASSERT_EQUAL_UINT8(0, second[0]);
     TEST_ASSERT_EQUAL_UINT8(SQLI_SQ_SQLIRBACKSVPT, second[1]);
+    TEST_ASSERT_EQUAL_UINT8(0, second[n - 2]);
+    TEST_ASSERT_EQUAL_UINT8(SQLI_SQ_EOT, second[n - 1]); /* trailing EOT */
 
     close(sv[0]);
     close(sv[1]);
