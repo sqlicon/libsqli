@@ -504,6 +504,35 @@ void test_dispatch_unknown_opcode_sets_diagnostics(void)
     close(write_fd);
 }
 
+void test_dispatch_reassoc_is_ignored(void)
+{
+    int read_fd = -1, write_fd = -1;
+    if (create_socket_pair(&read_fd, &write_fd) != 0)
+        TEST_IGNORE_MESSAGE("socketpair unavailable for dispatch test");
+
+    /* Send SQ_REASSOC (86), then SQ_DONE, then SQ_EOT (12) */
+    uint8_t resp[64];
+    size_t p = 0;
+    resp[p++] = 0; resp[p++] = SQLI_SQ_REASSOC;
+    p += build_done_response(resp + p, 1);
+    resp[p++] = 0; resp[p++] = SQLI_SQ_EOT;
+
+    TEST_ASSERT_EQUAL_INT((int)p, (int)write(write_fd, resp, p));
+    shutdown(write_fd, SHUT_WR);
+    set_nonblocking(read_fd);
+
+    sqli_result_t *result = calloc(1, sizeof(*result));
+    TEST_ASSERT_NOT_NULL(result);
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_receive_dispatch(read_fd, result, NULL));
+    TEST_ASSERT_EQUAL_INT(1, result->saw_done);
+    TEST_ASSERT_EQUAL_INT(1, (int)result->rows_affected);
+
+    sqli_result_destroy(result);
+    close(read_fd);
+    close(write_fd);
+}
+
 void test_dispatch_unknown_opcode_strict_mode_fails(void)
 {
     int read_fd = -1, write_fd = -1;

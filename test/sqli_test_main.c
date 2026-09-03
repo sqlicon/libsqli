@@ -57,6 +57,7 @@ void test_dispatch_error_response_sets_error_info(void);
 void test_dispatch_error_response_drains_truncated_string(void);
 void test_get_bytes_fetchblob_roundtrip(void);
 void test_dispatch_unknown_opcode_sets_diagnostics(void);
+void test_dispatch_reassoc_is_ignored(void);
 void test_dispatch_unknown_opcode_strict_mode_fails(void);
 void test_dispatch_execute_fetch_waits_past_empty_eot_groups(void);
 void test_error_classify_network_retryable_sqlcode(void);
@@ -455,6 +456,7 @@ int main(void)
     RUN_TEST(test_dispatch_error_response_drains_truncated_string);
     RUN_TEST(test_get_bytes_fetchblob_roundtrip);
     RUN_TEST(test_dispatch_unknown_opcode_sets_diagnostics);
+    RUN_TEST(test_dispatch_reassoc_is_ignored);
     RUN_TEST(test_dispatch_unknown_opcode_strict_mode_fails);
     RUN_TEST(test_dispatch_execute_fetch_waits_past_empty_eot_groups);
     RUN_TEST(test_error_classify_network_retryable_sqlcode);

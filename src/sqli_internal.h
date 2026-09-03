@@ -112,6 +112,7 @@ extern const char *env_secondary_list[ENV_SECONDARY_COUNT];
 #define SQLI_SQ_SQLISETSVPT       137
 #define SQLI_SQ_SQLIRELSVPT       138
 #define SQLI_SQ_SQLIRBACKSVPT     139
+#define SQLI_SQ_REASSOC           86
 #define SQLI_SQ_BATCHSTART        141
 #define SQLI_SQ_BATCHEND          142
 

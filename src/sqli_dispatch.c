@@ -940,7 +940,8 @@ static int sqli_is_likely_opcode(uint16_t v)
            v == SQLI_SQ_VERSION ||
            v == SQLI_SQ_EXIT || v == SQLI_SQ_INFO || v == SQLI_SQ_INSERTDONE ||
            v == SQLI_SQ_XACTSTAT || v == SQLI_SQ_RET_TYPE || v == SQLI_SQ_PROTOCOLS ||
-           v == SQLI_SQ_LODATA || v == SQLI_SQ_FILE || v == SQLI_SQ_COST;
+           v == SQLI_SQ_LODATA || v == SQLI_SQ_FILE || v == SQLI_SQ_COST ||
+           v == SQLI_SQ_REASSOC;
 }
 
 static int sqli_is_cost_follow_opcode(uint16_t v)
@@ -1274,6 +1275,9 @@ sqli_status sqli_receive_dispatch(int fd, sqli_result_t *result, sqli_conn_t *co
         case SQLI_SQ_COST: /* SQ_COST */
             rc = receive_cost(conn, fd);
             if (rc != SQLI_OK) goto out;
+            continue;
+        case SQLI_SQ_REASSOC: /* 86 — reassociation notice, log and ignore (Spec §3.2 / §3.3) */
+            sqli_log(SQLI_LOG_DEBUG, "dispatch: SQ_REASSOC");
             continue;
       default:
         {
