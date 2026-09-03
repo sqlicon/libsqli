@@ -227,6 +227,10 @@ if (SQLI_BUILD_TOOLS)
     add_executable(sysdbslocale_dump ${SQLI_TOOLS_DIR}/sysdbslocale_dump.c)
     target_include_directories(sysdbslocale_dump PRIVATE ${SQLI_INC_DIR})
     target_link_libraries(sysdbslocale_dump PRIVATE sqli)
+
+    add_executable(sqli_types_stress ${SQLI_TOOLS_DIR}/sqli_types_stress.c)
+    target_include_directories(sqli_types_stress PRIVATE ${SQLI_INC_DIR})
+    target_link_libraries(sqli_types_stress PRIVATE sqli)
 endif()
 
 if (SQLI_BUILD_CLI)
