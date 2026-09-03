@@ -26,11 +26,10 @@ An experimental, lightweight C11 substitute for parts of the IBM Informix Client
 To build and run `libsqli`, ensure the following packages are installed on your Linux system:
 - **CMake** (>= 3.16)
 - **OpenSSL** (development libraries)
-- **liburiparser** (development libraries)
 
 For example, on Debian/Ubuntu:
 ```bash
-sudo apt-get install cmake libssl-dev liburiparser-dev build-essential
+sudo apt-get install cmake libssl-dev build-essential
 ```
 
 ### Building the Project

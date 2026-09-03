@@ -5,14 +5,12 @@
 #include "sqli_tls.h"
 #include "sqli_unix.h"
 
-#include <uriparser/Uri.h>
-
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 
 /* ----------------------------------------------------------------
- * URI parsing helpers
+ * URI parsing helpers (zero external dependencies)
  * ---------------------------------------------------------------- */
 
 static void url_decode(const char *src, char *dst, size_t dst_sz)
@@ -39,39 +37,116 @@ static void url_decode(const char *src, char *dst, size_t dst_sz)
     dst[j] = '\0';
 }
 
-static void range_to_str(const char *base, const UriTextRangeA *r, char *out, size_t out_sz)
+typedef struct {
+    const char *scheme;     size_t scheme_len;
+    const char *userinfo;   size_t userinfo_len;
+    const char *host;       size_t host_len;
+    const char *port;       size_t port_len;
+    const char *path;       size_t path_len;
+    const char *query;      size_t query_len;
+} uri_components_t;
+
+static void copy_range(const char *src, size_t len, char *dst, size_t dst_sz)
 {
-    if (r == NULL || !r->afterLast || !r->first || r->first >= r->afterLast) {
-        out[0] = '\0';
+    if (dst == NULL || dst_sz == 0) return;
+    if (src == NULL || len == 0) {
+        dst[0] = '\0';
         return;
     }
-    size_t len = (size_t)(r->afterLast - r->first);
-    if (len >= out_sz)
-        len = out_sz - 1;
-    memcpy(out, base + (r->first - base), len);
-    out[len] = '\0';
+    size_t copy_len = len < dst_sz - 1 ? len : dst_sz - 1;
+    memcpy(dst, src, copy_len);
+    dst[copy_len] = '\0';
 }
 
-/* Build a null-terminated copy of the path from the segment list. */
-static void path_to_str(const UriUriA *uri, char *out, size_t out_sz)
+static bool parse_uri_components(const char *uri, uri_components_t *out)
 {
-    out[0] = '\0';
-    size_t pos = 0;
-    const UriPathSegmentA *seg = uri->pathHead;
-    while (seg && pos + 1 < out_sz) {
-        size_t slen = (size_t)(seg->text.afterLast - seg->text.first);
-        if (slen > 0) {
-            if (pos < out_sz - 1) {
-                size_t copy = slen;
-                if (pos + copy >= out_sz)
-                    copy = out_sz - pos - 1;
-                memcpy(out + pos, seg->text.first, copy);
-                pos += copy;
+    if (uri == NULL || *uri == '\0' || out == NULL)
+        return false;
+    memset(out, 0, sizeof(*out));
+
+    /* Scheme: up to "://" */
+    const char *colon_slash = strstr(uri, "://");
+    if (colon_slash == NULL || colon_slash == uri)
+        return false;
+
+    out->scheme = uri;
+    out->scheme_len = (size_t)(colon_slash - uri);
+
+    /* Validate RFC 3986 scheme: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ) */
+    if (!isalpha((unsigned char)out->scheme[0]))
+        return false;
+    for (size_t i = 1; i < out->scheme_len; i++) {
+        unsigned char c = (unsigned char)out->scheme[i];
+        if (!isalnum(c) && c != '+' && c != '-' && c != '.')
+            return false;
+    }
+
+    /* Authority starts after "://" */
+    const char *p = colon_slash + 3;
+    const char *auth_start = p;
+    while (*p != '\0' && *p != '/' && *p != '?' && *p != '#')
+        p++;
+    const char *auth_end = p;
+
+    /* Within authority, check for userinfo preceding '@' */
+    const char *host_port_start = auth_start;
+    const char *at = memchr(auth_start, '@', (size_t)(auth_end - auth_start));
+    if (at != NULL) {
+        out->userinfo = auth_start;
+        out->userinfo_len = (size_t)(at - auth_start);
+        host_port_start = at + 1;
+    }
+
+    /* Host and port in host_port_start .. auth_end */
+    size_t hp_len = (size_t)(auth_end - host_port_start);
+    if (hp_len > 0) {
+        if (*host_port_start == '[') {
+            /* IPv6 address: [::1]:port */
+            const char *bracket = memchr(host_port_start, ']', hp_len);
+            if (bracket == NULL)
+                return false;
+            out->host = host_port_start + 1;
+            out->host_len = (size_t)(bracket - (host_port_start + 1));
+            if (bracket + 1 < auth_end && *(bracket + 1) == ':') {
+                out->port = bracket + 2;
+                out->port_len = (size_t)(auth_end - (bracket + 2));
+            }
+        } else {
+            const char *colon = memchr(host_port_start, ':', hp_len);
+            if (colon != NULL) {
+                out->host = host_port_start;
+                out->host_len = (size_t)(colon - host_port_start);
+                out->port = colon + 1;
+                out->port_len = (size_t)(auth_end - (colon + 1));
+            } else {
+                out->host = host_port_start;
+                out->host_len = hp_len;
             }
         }
-        seg = seg->next;
     }
-    out[pos] = '\0';
+
+    /* Path: starts at '/' if present, up to '?' or '#' */
+    if (*p == '/') {
+        while (*p == '/')
+            p++; /* skip leading slash(es) */
+        const char *path_start = p;
+        while (*p != '\0' && *p != '?' && *p != '#')
+            p++;
+        out->path = path_start;
+        out->path_len = (size_t)(p - path_start);
+    }
+
+    /* Query: starts after '?' if present, up to '#' */
+    if (*p == '?') {
+        p++; /* skip '?' */
+        const char *query_start = p;
+        while (*p != '\0' && *p != '#')
+            p++;
+        out->query = query_start;
+        out->query_len = (size_t)(p - query_start);
+    }
+
+    return true;
 }
 
 /* Parse the query string into a key-value lookup.
@@ -160,10 +235,9 @@ sqli_status sqli_connect_uri(sqli_conn_t *conn, const char *uri,
         return conn ? (set_error(conn, "uri and conn are required"), SQLI_INVALID_STATE)
                     : SQLI_INVALID_STATE;
 
-    /* Parse URI with uriparser */
-    UriUriA parsed_uri;
-    const char *error_pos = NULL;
-    if (uriParseSingleUriA(&parsed_uri, uri, &error_pos) != URI_SUCCESS) {
+    /* Parse URI with zero external dependencies */
+    uri_components_t comps;
+    if (!parse_uri_components(uri, &comps)) {
         set_error(conn, "failed to parse connection URI");
         return SQLI_INVALID_STATE;
     }
@@ -181,28 +255,26 @@ sqli_status sqli_connect_uri(sqli_conn_t *conn, const char *uri,
     char default_socket[512];
     char unix_user[256] = {0};
 
-    range_to_str(uri, &parsed_uri.scheme, scheme_buf, sizeof(scheme_buf));
+    copy_range(comps.scheme, comps.scheme_len, scheme_buf, sizeof(scheme_buf));
 
     uri_protocol proto = detect_protocol(scheme_buf, strlen(scheme_buf));
     if (proto == (uri_protocol)-1) {
         set_error(conn, "unsupported URI scheme: use informix+onsoctcp, informix+onsocssl, or informix+onipcstr");
-        uriFreeUriMembersA(&parsed_uri);
         return SQLI_INVALID_STATE;
     }
 
     /* Extract path (database name) */
-    path_to_str(&parsed_uri, path_buf, sizeof(path_buf));
+    copy_range(comps.path, comps.path_len, path_buf, sizeof(path_buf));
     if (path_buf[0] == '\0')
         strcpy(path_buf, "informix");
 
     /* Extract and parse query parameters */
-    range_to_str(uri, &parsed_uri.query, query_raw, sizeof(query_raw));
+    copy_range(comps.query, comps.query_len, query_raw, sizeof(query_raw));
 
     uri_query_entry entries[32];
     int entry_count = parse_query_string(query_raw, entries, (int)(sizeof(entries) / sizeof(entries[0])));
     if (entry_count < 0) {
         set_error(conn, "memory allocation failed for query parameters");
-        uriFreeUriMembersA(&parsed_uri);
         return SQLI_ALLOC_FAIL;
     }
 
@@ -210,7 +282,6 @@ sqli_status sqli_connect_uri(sqli_conn_t *conn, const char *uri,
     const char *server = find_query_value(entries, entry_count, "INFORMIXSERVER");
     if (server == NULL || server[0] == '\0') {
         set_error(conn, "INFORMIXSERVER query parameter is mandatory");
-        uriFreeUriMembersA(&parsed_uri);
         return SQLI_INVALID_STATE;
     }
 
@@ -222,7 +293,7 @@ sqli_status sqli_connect_uri(sqli_conn_t *conn, const char *uri,
     params.database = path_buf;
 
     /* Extract userInfo from URI (user:password@) */
-    range_to_str(uri, &parsed_uri.userInfo, userinfo, sizeof(userinfo));
+    copy_range(comps.userinfo, comps.userinfo_len, userinfo, sizeof(userinfo));
     if (userinfo[0] != '\0') {
         char *colon = strchr(userinfo, ':');
         if (colon) {
@@ -291,18 +362,16 @@ sqli_status sqli_connect_uri(sqli_conn_t *conn, const char *uri,
 
     case URI_PROTO_ONSOCTCP:
     case URI_PROTO_ONSOCSSL: {
-        range_to_str(uri, &parsed_uri.hostText, host_raw, sizeof(host_raw));
+        copy_range(comps.host, comps.host_len, host_raw, sizeof(host_raw));
         if (host_raw[0] == '\0') {
             set_error(conn, "hostname is required for onsoctcp/onsocssl protocol");
-            uriFreeUriMembersA(&parsed_uri);
             return SQLI_INVALID_STATE;
         }
         params.hostname = host_raw;
 
-        range_to_str(uri, &parsed_uri.portText, port_raw, sizeof(port_raw));
+        copy_range(comps.port, comps.port_len, port_raw, sizeof(port_raw));
         if (port_raw[0] == '\0') {
             set_error(conn, "port is required for onsoctcp/onsocssl protocol");
-            uriFreeUriMembersA(&parsed_uri);
             return SQLI_INVALID_STATE;
         }
         params.service = port_raw;
@@ -326,11 +395,8 @@ sqli_status sqli_connect_uri(sqli_conn_t *conn, const char *uri,
 
     default:
         set_error(conn, "unsupported protocol");
-        uriFreeUriMembersA(&parsed_uri);
         return SQLI_INVALID_STATE;
     }
-
-    uriFreeUriMembersA(&parsed_uri);
 
     sqli_status connect_rc = sqli_connect(conn, &params);
 

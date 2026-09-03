@@ -16,7 +16,7 @@ if (MSVC)
     add_compile_options(/W4 /WX)
     # Minimize Release executable size: optimize for size instead of speed,
     # let the linker discard unreferenced functions/data (important for the
-    # statically linked OpenSSL/uriparser libs, which pull in far more than
+    # statically linked OpenSSL libs, which pull in far more than
     # this project actually calls), and fold identical COMDATs. Whole-program
     # optimization (/GL + LTCG) is required for /OPT:REF and /OPT:ICF to see
     # across translation units, including into the static "sqli" library.
@@ -64,14 +64,6 @@ set(SQLI_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/test)
 
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
-if (WIN32)
-    find_package(uriparser CONFIG REQUIRED)
-    set(SQLI_URI_PARSER_TARGET uriparser::uriparser)
-else()
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(URI_PARSER REQUIRED IMPORTED_TARGET liburiparser)
-    set(SQLI_URI_PARSER_TARGET PkgConfig::URI_PARSER)
-endif()
 include(FetchContent)
 
 # ----------------------------------------------------------------
@@ -131,7 +123,6 @@ target_link_libraries(sqli PUBLIC
     OpenSSL::SSL
     OpenSSL::Crypto
     Threads::Threads
-    ${SQLI_URI_PARSER_TARGET}
 )
 add_library(sqlicon::sqli ALIAS sqli)
 

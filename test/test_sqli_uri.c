@@ -303,7 +303,7 @@ void test_uri_onsoctcp_missing_port(void)
     sqli_status rc = sqli_connect_uri(conn,
         "informix+onsoctcp://db-host/db?INFORMIXSERVER=s",
         NULL, NULL);
-    /* uriparser may or may not parse this; if it does, port check should fail */
+    /* Host without port must fail since port is required for onsoctcp */
     TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, rc);
     sqli_destroy(conn);
 }
