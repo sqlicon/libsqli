@@ -2074,6 +2074,129 @@ void test_savepoint_live_flow(void)
     sqli_destroy(conn);
 }
 
+void test_datatypes_live_flow(void)
+{
+    const char *test_host = getenv("SQLI_TEST_HOST");
+    const char *test_port = getenv("SQLI_TEST_PORT");
+    const char *test_db = getenv("SQLI_TEST_DB");
+    const char *test_user = getenv("SQLI_TEST_USER");
+    const char *test_pass = getenv("SQLI_TEST_PASS");
+    const char *test_server = getenv("SQLI_TEST_SERVER");
+    const char *test_client_locale = getenv("SQLI_TEST_CLIENT_LOCALE");
+    const char *test_db_locale = getenv("SQLI_TEST_DB_LOCALE");
+    sqli_conn_t *conn = NULL;
+    sqli_result_t *res = NULL;
+
+    if (test_host == NULL || test_port == NULL || test_db == NULL ||
+        test_user == NULL || test_pass == NULL) {
+        TEST_IGNORE_MESSAGE("SQLI_TEST_* environment variables not set — skipping live datatypes test");
+        return;
+    }
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_create(&conn));
+
+    sqli_connect_params params = {0};
+    params.hostname = test_host;
+    params.service = test_port;
+    params.server = test_server;
+    params.database = test_db;
+    params.username = test_user;
+    params.password = test_pass;
+    params.client_locale = (test_client_locale && test_client_locale[0] != '\0')
+                         ? test_client_locale : "de_DE.1252";
+    params.db_locale = (test_db_locale && test_db_locale[0] != '\0')
+                     ? test_db_locale : "de_DE.1252";
+
+    if (sqli_connect(conn, &params) != SQLI_OK) {
+        sqli_destroy(conn);
+        TEST_IGNORE_MESSAGE("Informix database not reachable — skipping live datatypes test");
+        return;
+    }
+
+    char tbl[32];
+    snprintf(tbl, sizeof(tbl), "dt_%ld", (long)(time(NULL) % 100000));
+
+    char sql[512];
+    snprintf(sql, sizeof(sql),
+             "CREATE TABLE %s ("
+             "  id INT, b_val BOOLEAN, lv_val LVARCHAR(500), "
+             "  dt_val DATETIME YEAR TO SECOND, iv_val INTERVAL DAY TO SECOND, "
+             "  sf_val SMALLFLOAT, fl_val FLOAT)", tbl);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_query(conn, sql, &res));
+    if (res) { sqli_result_destroy(res); res = NULL; }
+
+    /* Insert Row 1: non-null values */
+    snprintf(sql, sizeof(sql),
+             "INSERT INTO %s VALUES (1, 't', 'Hello LVARCHAR 12345', "
+             "'2026-09-03 23:25:00', '1 02:03:04', 3.14, 2.718281828)", tbl);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_query(conn, sql, &res));
+    if (res) { sqli_result_destroy(res); res = NULL; }
+
+    /* Insert Row 2: NULL values */
+    snprintf(sql, sizeof(sql),
+             "INSERT INTO %s VALUES (2, NULL, NULL, NULL, NULL, NULL, NULL)", tbl);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_query(conn, sql, &res));
+    if (res) { sqli_result_destroy(res); res = NULL; }
+
+    /* Query and verify both rows */
+    snprintf(sql, sizeof(sql), "SELECT * FROM %s ORDER BY id", tbl);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_query(conn, sql, &res));
+    TEST_ASSERT_NOT_NULL(res);
+
+    /* Row 1 verification */
+    TEST_ASSERT_TRUE(sqli_result_next(res));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_get_int(res, 0));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 0));
+
+    /* BOOLEAN */
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 1));
+    TEST_ASSERT_TRUE(sqli_result_get_bool(res, 1));
+
+    /* LVARCHAR */
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 2));
+    TEST_ASSERT_EQUAL_STRING("Hello LVARCHAR 12345", sqli_result_get_string(res, 2));
+
+    /* DATETIME */
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 3));
+    TEST_ASSERT_EQUAL_STRING("2026-09-03 23:25:00", sqli_result_get_datetime_string(res, 3));
+
+    /* INTERVAL */
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 4));
+    sqli_interval_value iv;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_interval(res, 4, &iv));
+    TEST_ASSERT_EQUAL_INT(0, iv.is_null);
+    TEST_ASSERT_EQUAL_INT(1, iv.day);
+    TEST_ASSERT_EQUAL_INT(2, iv.hour);
+    TEST_ASSERT_EQUAL_INT(3, iv.minute);
+    TEST_ASSERT_EQUAL_INT(4, iv.second);
+
+    /* SMALLFLOAT */
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 5));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.14f, (float)sqli_result_get_double(res, 5));
+
+    /* FLOAT */
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 6));
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 2.71828f, (float)sqli_result_get_double(res, 6));
+
+    /* Row 2 verification: all NULLs */
+    TEST_ASSERT_TRUE(sqli_result_next(res));
+    TEST_ASSERT_EQUAL_INT(2, sqli_result_get_int(res, 0));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 0));
+    for (int col = 1; col <= 6; col++) {
+        TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(res, col));
+    }
+
+    sqli_result_destroy(res);
+    res = NULL;
+
+    snprintf(sql, sizeof(sql), "DROP TABLE %s", tbl);
+    (void)sqli_query(conn, sql, &res);
+    if (res) { sqli_result_destroy(res); res = NULL; }
+
+    sqli_close(conn);
+    sqli_destroy(conn);
+}
+
 void test_pool_create_acquire_release_destroy(void)
 {
     mock_srv_ctx *ctx = calloc(1, sizeof(*ctx));

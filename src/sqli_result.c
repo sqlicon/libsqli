@@ -195,78 +195,35 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
         }
     }
 
-    if (type == SQLI_TYPE_BOOL) {
-        /* Informix BOOLEAN (type 41) can be encoded as:
-         *   [4-byte zero marker][1-byte len][payload]  (non-NULL)
-         *   [4-byte nonzero marker][1-byte len=0]       (NULL, 5 bytes, no payload)
-         * Same marker/len scheme as LVARCHAR NULL below. Verified via wire
-         * capture against a live server: a NULL BOOLEAN column is 5 bytes
-         * (e.g. 01 00 00 00 00), not a bare 1-byte sentinel — an earlier
-         * version of this fix assumed a 1-byte NULL encoding based on
-         * reading only the first byte, which corrupted the offset of
-         * every following column whenever BOOLEAN NULL was followed by
-         * another marker-based type (e.g. LVARCHAR). */
+    if (type == SQLI_TYPE_BOOL || type == SQLI_TYPE_DBOOLEAN ||
+        type == SQLI_TYPE_LVARCHAR) {
+        /* Spec §5.5: LVARCHAR / BOOLEAN / opaque and user-defined types:
+         *   [nullMarker(uint8)][length(int32 BE)][length bytes of payload]
+         * nullMarker == 1 (or non-zero) signals NULL (length == 0, no payload, span = 5).
+         * Any other nullMarker (0) signals present value with 32-bit BE length.
+         * For BOOLEAN specifically: payload is 1 byte (0x01=true, 0x00=false). */
         if (base + 5 <= tuple_len) {
-            uint32_t marker = ((uint32_t)tuple_buf[base] << 24) |
-                              ((uint32_t)tuple_buf[base + 1] << 16) |
-                              ((uint32_t)tuple_buf[base + 2] << 8) |
-                              (uint32_t)tuple_buf[base + 3];
-            uint8_t len8 = tuple_buf[base + 4];
-            if (marker != 0 && len8 == 0) {
+            uint8_t null_marker = tuple_buf[base];
+            uint32_t len32 = ((uint32_t)tuple_buf[base + 1] << 24) |
+                             ((uint32_t)tuple_buf[base + 2] << 16) |
+                             ((uint32_t)tuple_buf[base + 3] << 8)  |
+                              (uint32_t)tuple_buf[base + 4];
+            if (null_marker != 0 && len32 == 0) {
                 *data_start = base + 5;
                 *data_len = 0;
                 *span = 5;
                 return SQLI_OK;
             }
             size_t start = base + 5;
-            size_t payload = (size_t)len8;
-            if (marker == 0 && start + payload <= tuple_len) {
+            size_t payload = (size_t)len32;
+            if (null_marker == 0 && start + payload <= tuple_len) {
                 *data_start = start;
                 *data_len = payload;
                 *span = 5 + payload;
                 return SQLI_OK;
             }
         }
-    }
-
-    if (type == SQLI_TYPE_LVARCHAR) {
-        /* LVARCHAR wire layout, verified via wire capture and byte-exact
-         * cross-checks against a live server across many tables and
-         * value lengths (0 to 760+ characters):
-         *   [3-byte zero prefix][2-byte BE length][payload]  (5-byte header)
-         * NULL is signaled by a nonzero first prefix byte with a zero
-         * length (no payload). This single format replaces what earlier
-         * looked like two different encodings (a "4-byte marker + 1-byte
-         * length" for short/empty values, and a separate "4-byte marker +
-         * 2-byte length" for long values): both were misreadings of the
-         * same 3-byte-prefix + 2-byte-length layout — the apparent 1-byte
-         * length was really the low byte of the 2-byte length with a
-         * zero high byte, which only stayed zero for values under 256
-         * bytes. Confirmed with two independent long values (698 and 760
-         * bytes) where the earlier "1-byte length" reading silently
-         * truncated the payload to at most 255 bytes. */
-        if (base + 5 <= tuple_len) {
-            uint32_t prefix = ((uint32_t)tuple_buf[base] << 16) |
-                              ((uint32_t)tuple_buf[base + 1] << 8) |
-                              (uint32_t)tuple_buf[base + 2];
-            uint16_t len16 = (uint16_t)((tuple_buf[base + 3] << 8) | tuple_buf[base + 4]);
-            if (prefix != 0 && len16 == 0) {
-                *data_start = base + 5;
-                *data_len = 0;
-                *span = 5;
-                return SQLI_OK;
-            }
-            size_t start = base + 5;
-            size_t payload = (size_t)len16;
-            if (start + payload <= tuple_len) {
-                *data_start = start;
-                *data_len = payload;
-                *span = 5 + payload;
-                return SQLI_OK;
-            }
-        }
-        // Fall back to a 2-byte header (no prefix) if the 5-byte
-        // interpretation doesn't fit the remaining tuple.
+        /* Fall back to a 2-byte header if the 5-byte interpretation doesn't fit */
         if (base + 2 <= tuple_len) {
             uint16_t len16 = (uint16_t)((tuple_buf[base] << 8) | tuple_buf[base + 1]);
             size_t payload = (size_t)len16;
@@ -472,20 +429,17 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
         offset += span;
 
         int is_null = 0;
-        /* LVARCHAR NULL prefix: header is [3-byte prefix][2-byte BE
-         * length][payload]; when the prefix is non-zero and the length
-         * is zero, Informix signals a NULL value. This distinguishes
-         * NULL from an empty string (prefix == 0, len == 0). */
-        if (type == SQLI_TYPE_LVARCHAR && data_len == 0 && span >= 5) {
+        /* Spec §5.5: LVARCHAR / BOOLEAN / opaque / UDT 5-byte header:
+         * [nullMarker(uint8)][length(int32 BE)][payload]
+         * nullMarker != 0 signals NULL (length == 0, span = 5). */
+        if ((type == SQLI_TYPE_LVARCHAR || type == SQLI_TYPE_BOOL || type == SQLI_TYPE_DBOOLEAN) &&
+            data_len == 0 && span >= 5) {
             size_t prefix_pos = offset - span;
-            uint32_t lv_prefix = ((uint32_t)result->tuple_buffer[prefix_pos] << 16) |
-                                 ((uint32_t)result->tuple_buffer[prefix_pos + 1] << 8) |
-                                 (uint32_t)result->tuple_buffer[prefix_pos + 2];
-            if (lv_prefix != 0)
+            if (result->tuple_buffer[prefix_pos] != 0)
                 is_null = 1;
         }
         if (data_len == 0) {
-            if (type == SQLI_TYPE_BOOL) {
+            if (type == SQLI_TYPE_BOOL || type == SQLI_TYPE_DBOOLEAN) {
                 is_null = 1;
             } else if (!sqli_is_stringy_type(type) &&
                 (sqli_type_is_two_byte_prefixed(type) ||

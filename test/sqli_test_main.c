@@ -157,15 +157,19 @@ void test_dt_204_decimal_get_string_and_null(void);
 void test_dt_205_decimal_get_string_floating_scale(void);
 void test_dt_206_result_is_null_and_was_null(void);
 void test_dt_207_float_smfloat_null_detection(void);
+void test_dt_208_smfloat_decoding(void);
 void test_dt_301_float_double_roundtrip(void);
 void test_dt_401_date_roundtrip(void);
 void test_dt_402_date_string_epoch_mapping(void);
 void test_dt_501_boolean_roundtrip(void);
 void test_dt_502_boolean_null_roundtrip(void);
+void test_dt_503_boolean_true_0xff_roundtrip(void);
 void test_dt_611_stream_bytes_chunked(void);
 void test_dt_412_datetime_semantic_object(void);
 void test_dt_413_interval_semantic_object(void);
 void test_dt_414_datetime_interval_two_column_layout(void);
+void test_dt_415_datetime_null_semantic_object(void);
+void test_dt_416_interval_null_semantic_object(void);
 void test_dt_timestamp_retrieval(void);
 void test_sqli_epoch_helpers(void);
 
@@ -351,6 +355,7 @@ void test_query_live_systables(void);
 void test_batch_live_reports_success_and_error(void);
 void test_stmt_batch_live_reports_success_and_error(void);
 void test_savepoint_live_flow(void);
+void test_datatypes_live_flow(void);
 void test_pool_create_acquire_release_destroy(void);
 void test_pool_acquire_timeout_when_busy(void);
 void test_pool_acquire_wakes_after_release(void);
@@ -553,16 +558,20 @@ int main(void)
     RUN_TEST(test_dt_205_decimal_get_string_floating_scale);
     RUN_TEST(test_dt_206_result_is_null_and_was_null);
     RUN_TEST(test_dt_207_float_smfloat_null_detection);
+    RUN_TEST(test_dt_208_smfloat_decoding);
     section_checkpoint("phase4:mid2");
     RUN_TEST(test_dt_301_float_double_roundtrip);
     RUN_TEST(test_dt_401_date_roundtrip);
     RUN_TEST(test_dt_402_date_string_epoch_mapping);
     RUN_TEST(test_dt_501_boolean_roundtrip);
     RUN_TEST(test_dt_502_boolean_null_roundtrip);
+    RUN_TEST(test_dt_503_boolean_true_0xff_roundtrip);
     RUN_TEST(test_dt_611_stream_bytes_chunked);
     RUN_TEST(test_dt_412_datetime_semantic_object);
     RUN_TEST(test_dt_413_interval_semantic_object);
     RUN_TEST(test_dt_414_datetime_interval_two_column_layout);
+    RUN_TEST(test_dt_415_datetime_null_semantic_object);
+    RUN_TEST(test_dt_416_interval_null_semantic_object);
     RUN_TEST(test_dt_timestamp_retrieval);
     RUN_TEST(test_sqli_epoch_helpers);
     section_checkpoint("phase4:end");
@@ -768,6 +777,7 @@ int main(void)
     RUN_TEST(test_batch_live_reports_success_and_error);
     RUN_TEST(test_stmt_batch_live_reports_success_and_error);
     RUN_TEST(test_savepoint_live_flow);
+    RUN_TEST(test_datatypes_live_flow);
 #endif
     }
 #endif

@@ -1211,6 +1211,19 @@ void test_dt_502_boolean_null_roundtrip(void)
     sqli_result_destroy(null_result);
 }
 
+void test_dt_503_boolean_true_0xff_roundtrip(void)
+{
+    /* Spec §5.5: alternative boolean true payload 0xFF */
+    const uint8_t tuple_true_ff[] = {0, 0, 0, 0, 1, 0xFF};
+    sqli_result_t *true_ff = make_single_row_result(SQLI_TYPE_BOOL, 1,
+                                                    tuple_true_ff,
+                                                    sizeof(tuple_true_ff));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(true_ff));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_get_int(true_ff, 0));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(true_ff));
+    sqli_result_destroy(true_ff);
+}
+
 void test_dt_204_decimal_get_string_and_null(void)
 {
     const uint8_t tuple[] = {0xC3, 0x01, 0x17, 0x2D, 0x43, 0x59, 0x00};
@@ -1281,6 +1294,18 @@ void test_dt_207_float_smfloat_null_detection(void)
     TEST_ASSERT_FLOAT_WITHIN(0.0001f, 1.0f, (float)sqli_result_get_double(res3, 0));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(res3));
     sqli_result_destroy(res3);
+}
+
+void test_dt_208_smfloat_decoding(void)
+{
+    /* 3.14f in IEEE-754 single precision float: 0x4048F5C3 */
+    const uint8_t smfloat_val[] = {0x40, 0x48, 0xF5, 0xC3};
+    sqli_result_t *res = make_single_row_result(SQLI_TYPE_SMFLOAT, 4, smfloat_val, sizeof(smfloat_val));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(res));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 0));
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 3.14f, (float)sqli_result_get_double(res, 0));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(res));
+    sqli_result_destroy(res);
 }
 
 typedef struct {
@@ -1392,6 +1417,36 @@ void test_dt_414_datetime_interval_two_column_layout(void)
     TEST_ASSERT_EQUAL_INT(2026, dt.year);
     TEST_ASSERT_EQUAL_INT(12, iv.day);
     TEST_ASSERT_EQUAL_INT(5, iv.second);
+    sqli_result_destroy(result);
+}
+
+void test_dt_415_datetime_null_semantic_object(void)
+{
+    /* Spec §5.7.1: DATETIME NULL is wireWidth bytes all zero */
+    const uint8_t tuple[] = {0, 0, 0, 0, 0, 0, 0, 0};
+    sqli_result_t *result = make_single_row_result(SQLI_TYPE_DATETIME, 0x00000E0Au,
+                                                    tuple, sizeof(tuple));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+
+    sqli_datetime_value dt;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_datetime(result, 0, &dt));
+    TEST_ASSERT_EQUAL_INT(1, dt.is_null);
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(result, 0));
+    sqli_result_destroy(result);
+}
+
+void test_dt_416_interval_null_semantic_object(void)
+{
+    /* Spec §5.8.2: INTERVAL NULL is wireWidth bytes all zero */
+    const uint8_t tuple[] = {0, 0, 0, 0, 0};
+    sqli_result_t *result = make_single_row_result(SQLI_TYPE_INTERVAL, 0x0000084Au,
+                                                    tuple, sizeof(tuple));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+
+    sqli_interval_value iv;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_interval(result, 0, &iv));
+    TEST_ASSERT_EQUAL_INT(1, iv.is_null);
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(result, 0));
     sqli_result_destroy(result);
 }
 

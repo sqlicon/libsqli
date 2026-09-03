@@ -226,18 +226,30 @@ double sqli_result_get_double(sqli_result_t *result, int col_index)
 
     size_t start = result->cur_col_data_start[col_index];
     size_t len = result->cur_col_data_len[col_index];
-    if (len < 8 || start > result->tuple_len || start + len > result->tuple_len)
+    if (len < 4 || start > result->tuple_len || start + len > result->tuple_len)
         return 0.0;
     const uint8_t *buf = result->tuple_buffer + start;
 
-    /* Wire format is big-endian IEEE 754 */
-    uint64_t bits = ((uint64_t)buf[0] << 56) | ((uint64_t)buf[1] << 48) |
-                    ((uint64_t)buf[2] << 40) | ((uint64_t)buf[3] << 32) |
-                    ((uint64_t)buf[4] << 24) | ((uint64_t)buf[5] << 16) |
-                    ((uint64_t)buf[6] << 8)  | (uint64_t)buf[7];
-    double val;
-    memcpy(&val, &bits, 8);
-    return val;
+    /* Wire format is big-endian IEEE 754 (4-byte single or 8-byte double precision) */
+    if (len == 4 || type == SQLI_TYPE_SMFLOAT) {
+        uint32_t bits32 = ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16) |
+                          ((uint32_t)buf[2] << 8)  | (uint32_t)buf[3];
+        float fval;
+        memcpy(&fval, &bits32, 4);
+        return (double)fval;
+    }
+
+    if (len >= 8) {
+        uint64_t bits = ((uint64_t)buf[0] << 56) | ((uint64_t)buf[1] << 48) |
+                        ((uint64_t)buf[2] << 40) | ((uint64_t)buf[3] << 32) |
+                        ((uint64_t)buf[4] << 24) | ((uint64_t)buf[5] << 16) |
+                        ((uint64_t)buf[6] << 8)  | (uint64_t)buf[7];
+        double val;
+        memcpy(&val, &bits, 8);
+        return val;
+    }
+
+    return 0.0;
 }
 
 /* String/UTF-8 decode buffer sizes per column, matching the previous
