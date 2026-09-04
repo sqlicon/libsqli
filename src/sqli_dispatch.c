@@ -79,10 +79,12 @@ static void format_informix_error_message(char *out, size_t outsz,
     const char *pos = strstr(tmpl, "%s");
     if (pos != NULL && param != NULL && param[0] != '\0') {
         size_t prefix_len = (size_t)(pos - tmpl);
+        if (prefix_len >= outsz)
+            prefix_len = outsz - 1;
         const char *suffix = pos + 2;
-        snprintf(out, outsz, "%.*s%s%s", (int)prefix_len, tmpl, param, suffix);
+        snprintf(out, outsz, "%.*s%.128s%.128s", (int)prefix_len, tmpl, param, suffix);
     } else if (param != NULL && param[0] != '\0') {
-        snprintf(out, outsz, "%s (%s)", tmpl, param);
+        snprintf(out, outsz, "%.240s (%.128s)", tmpl, param);
     } else {
         snprintf(out, outsz, "%s", tmpl);
     }
