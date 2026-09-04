@@ -217,3 +217,59 @@ void test_sqli_pad_even_large(void)
     TEST_ASSERT_EQUAL_UINT(1024, sqli_pad_even(1024));
     TEST_ASSERT_EQUAL_UINT(1026, sqli_pad_even(1025));
 }
+
+void test_sqli_error_message_lookup_valid_codes(void)
+{
+    char buf[SQLI_ERRMSG_MAX_LEN + 1];
+
+    /* Test SQL error codes */
+    int len = sqli_error_message_lookup(-206, buf, sizeof(buf));
+    TEST_ASSERT_GREATER_THAN(0, len);
+    TEST_ASSERT_NOT_NULL(strstr(buf, "The specified table"));
+
+    len = sqli_error_message_lookup(-201, buf, sizeof(buf));
+    TEST_ASSERT_GREATER_THAN(0, len);
+    TEST_ASSERT_NOT_NULL(strstr(buf, "syntax error"));
+
+    len = sqli_error_message_lookup(-1261, buf, sizeof(buf));
+    TEST_ASSERT_GREATER_THAN(0, len);
+    TEST_ASSERT_NOT_NULL(strstr(buf, "digits in the first field"));
+
+    /* Test ISAM codes (both positive and negative) */
+    len = sqli_error_message_lookup(107, buf, sizeof(buf));
+    TEST_ASSERT_GREATER_THAN(0, len);
+    TEST_ASSERT_NOT_NULL(strstr(buf, "record is locked"));
+
+    len = sqli_error_message_lookup(-107, buf, sizeof(buf));
+    TEST_ASSERT_GREATER_THAN(0, len);
+    TEST_ASSERT_NOT_NULL(strstr(buf, "record is locked"));
+
+    len = sqli_error_message_lookup(143, buf, sizeof(buf));
+    TEST_ASSERT_GREATER_THAN(0, len);
+    TEST_ASSERT_NOT_NULL(strstr(buf, "deadlock"));
+
+    len = sqli_error_message_lookup(-143, buf, sizeof(buf));
+    TEST_ASSERT_GREATER_THAN(0, len);
+    TEST_ASSERT_NOT_NULL(strstr(buf, "deadlock"));
+
+    len = sqli_error_message_lookup(100, buf, sizeof(buf));
+    TEST_ASSERT_GREATER_THAN(0, len);
+    TEST_ASSERT_NOT_NULL(strstr(buf, "duplicate value"));
+}
+
+void test_sqli_error_message_lookup_edge_cases(void)
+{
+    char buf[SQLI_ERRMSG_MAX_LEN + 1];
+
+    /* Unknown code */
+    int len = sqli_error_message_lookup(-999999, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_INT(-1, len);
+
+    /* Buffer too small */
+    char tiny[5];
+    len = sqli_error_message_lookup(-206, tiny, sizeof(tiny));
+    TEST_ASSERT_EQUAL_INT(-2, len);
+
+    /* Null buffer or 0 size */
+    TEST_ASSERT_EQUAL_INT(-2, sqli_error_message_lookup(-206, NULL, 0));
+}

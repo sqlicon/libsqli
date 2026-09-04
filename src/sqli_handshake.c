@@ -1104,7 +1104,7 @@ out:
          * answering SQ_PROTOCOLS) is real, but on its own looks like an
          * unrelated network hiccup. Prefix it with the CONREJ context so
          * the message points at the actual rejection instead. */
-        char prev_msg[256];
+        char prev_msg[sizeof(c->errmsg)];
         snprintf(prev_msg, sizeof(prev_msg), "%s", c->errmsg);
         set_error_fmt(c,
                       "server rejected connection (CONREJ, svcError=0) and did not "

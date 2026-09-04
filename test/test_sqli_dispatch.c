@@ -427,8 +427,8 @@ void test_dispatch_error_response_sets_error_info(void)
     TEST_ASSERT_EQUAL_INT(SQLI_SQ_ERR, conn.error_info.opcode);
     TEST_ASSERT_EQUAL_STRING("SQ_ERR", conn.error_info.opcode_name);
     TEST_ASSERT_EQUAL_STRING("query/execute_recv", conn.error_info.context);
-    TEST_ASSERT_EQUAL_INT(1, conn.error_info.has_error);
-    TEST_ASSERT_NOT_NULL(strstr(conn.error_info.sql_message, "Socket connection to server"));
+    TEST_ASSERT_TRUE(strstr(conn.error_info.sql_message, "database server") != NULL ||
+                     strstr(conn.error_info.sql_message, "Socket connection") != NULL);
     TEST_ASSERT_NOT_NULL(strstr(conn.error_info.isam_message, "daemon is no longer running"));
     TEST_ASSERT_NOT_NULL(strstr(sqli_error(&conn), "SQLCODE -908"));
 

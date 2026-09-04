@@ -77,6 +77,7 @@ typedef struct {
     const char *db_locale;
     const char *conn_uri;
     const char *log_level;
+    const char *finderr_code;
 } sqlicon_cli_options;
 
 /* ---------------------------------------------------------------- */

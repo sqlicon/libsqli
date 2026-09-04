@@ -1,3 +1,4 @@
 test_environment.sh
 build*/
 .claude/
+*.checkpoints.log

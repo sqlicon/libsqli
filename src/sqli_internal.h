@@ -157,7 +157,7 @@ typedef struct {
 
 struct sqli_conn {
     /* --- Error handling --- */
-    char errmsg[256];
+    char errmsg[512];
     sqli_error_info error_info;
     char error_context[48];
     uint16_t error_opcode;

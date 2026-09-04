@@ -24,6 +24,8 @@ void test_sqli_pad_even_zero(void);
 void test_sqli_pad_even_even(void);
 void test_sqli_pad_even_odd(void);
 void test_sqli_pad_even_large(void);
+void test_sqli_error_message_lookup_valid_codes(void);
+void test_sqli_error_message_lookup_edge_cases(void);
 #endif
 
 /* Phase 2 tests */
@@ -416,6 +418,8 @@ int main(void)
     RUN_TEST(test_sqli_pad_even_even);
     RUN_TEST(test_sqli_pad_even_odd);
     RUN_TEST(test_sqli_pad_even_large);
+    RUN_TEST(test_sqli_error_message_lookup_valid_codes);
+    RUN_TEST(test_sqli_error_message_lookup_edge_cases);
     }
 #endif
 

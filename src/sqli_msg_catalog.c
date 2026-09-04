@@ -39,6 +39,9 @@ static const code_msg_pair k_isam_msgs[] = {
     {7353, "The transaction cannot continue on the new primary server."},
 };
 
+#include "ifx_errmsg.h"
+#include <string.h>
+
 static const char *lookup_msg(const code_msg_pair *arr, size_t n, int code)
 {
     for (size_t i = 0; i < n; i++) {
@@ -48,16 +51,46 @@ static const char *lookup_msg(const code_msg_pair *arr, size_t n, int code)
     return NULL;
 }
 
+int sqli_catalog_message_get(int32_t code, char *out, size_t outsz)
+{
+    if (out == NULL || outsz == 0)
+        return -2;
+    int rc = ifx_errmsg_get(code, out, outsz);
+    if (rc >= 0)
+        return rc;
+    if (code != 0) {
+        rc = ifx_errmsg_get(-code, out, outsz);
+        if (rc >= 0)
+            return rc;
+    }
+    /* Fallback to legacy arrays (e.g. for GLS -23101/-23197) */
+    const char *fallback = lookup_msg(k_sql_msgs, sizeof(k_sql_msgs) / sizeof(k_sql_msgs[0]), code);
+    if (!fallback && code != 0)
+        fallback = lookup_msg(k_isam_msgs, sizeof(k_isam_msgs) / sizeof(k_isam_msgs[0]), code < 0 ? -code : code);
+    if (fallback) {
+        size_t len = strlen(fallback);
+        if (len + 1 > outsz)
+            return -2;
+        memcpy(out, fallback, len + 1);
+        return (int)len;
+    }
+    return -1;
+}
+
 const char *sqli_sql_message_lookup(int sqlcode)
 {
-    return lookup_msg(k_sql_msgs, sizeof(k_sql_msgs) / sizeof(k_sql_msgs[0]), sqlcode);
+    static _Thread_local char s_buf[IFX_ERRMSG_MAX_LEN + 1];
+    if (sqli_catalog_message_get(sqlcode, s_buf, sizeof(s_buf)) >= 0)
+        return s_buf;
+    return NULL;
 }
 
 const char *sqli_isam_message_lookup(int isamcode)
 {
-    if (isamcode < 0)
-        isamcode = -isamcode;
-    return lookup_msg(k_isam_msgs, sizeof(k_isam_msgs) / sizeof(k_isam_msgs[0]), isamcode);
+    static _Thread_local char s_buf[IFX_ERRMSG_MAX_LEN + 1];
+    if (sqli_catalog_message_get(isamcode, s_buf, sizeof(s_buf)) >= 0)
+        return s_buf;
+    return NULL;
 }
 
 const char *sqli_opcode_name(uint16_t opcode)

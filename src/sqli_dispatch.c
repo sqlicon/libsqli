@@ -60,6 +60,34 @@ static sqli_status socket_read_exact_fallback(int fd, uint8_t *buf, size_t count
     return SQLI_OK;
 }
 
+static void format_informix_error_message(char *out, size_t outsz,
+                                          const char *tmpl, const char *param)
+{
+    if (out == NULL || outsz == 0)
+        return;
+    out[0] = '\0';
+    if (tmpl == NULL || tmpl[0] == '\0') {
+        if (param != NULL && param[0] != '\0') {
+            snprintf(out, outsz, "%s", param);
+        } else {
+            snprintf(out, outsz, "server error");
+        }
+        return;
+    }
+
+    /* Check if tmpl contains Informix %s placeholder */
+    const char *pos = strstr(tmpl, "%s");
+    if (pos != NULL && param != NULL && param[0] != '\0') {
+        size_t prefix_len = (size_t)(pos - tmpl);
+        const char *suffix = pos + 2;
+        snprintf(out, outsz, "%.*s%s%s", (int)prefix_len, tmpl, param, suffix);
+    } else if (param != NULL && param[0] != '\0') {
+        snprintf(out, outsz, "%s (%s)", tmpl, param);
+    } else {
+        snprintf(out, outsz, "%s", tmpl);
+    }
+}
+
 static void set_error_info_from_sqerr(sqli_conn_t *conn, sqli_status status,
                                       uint16_t opcode, int sqlcode, int isamcode,
                                       const char *sqlstate, const char *server_msg)
@@ -88,26 +116,22 @@ static void set_error_info_from_sqerr(sqli_conn_t *conn, sqli_status status,
     if (server_msg != NULL)
         snprintf(e->server_message, sizeof(e->server_message), "%s", server_msg);
 
-    const char *sql_msg = sqli_sql_message_lookup(sqlcode);
-    if (sql_msg != NULL)
-        snprintf(e->sql_message, sizeof(e->sql_message), "%s", sql_msg);
+    (void)sqli_catalog_message_get(sqlcode, e->sql_message, sizeof(e->sql_message));
+    (void)sqli_catalog_message_get(isamcode, e->isam_message, sizeof(e->isam_message));
 
-    const char *isam_msg = sqli_isam_message_lookup(isamcode);
-    if (isam_msg != NULL)
-        snprintf(e->isam_message, sizeof(e->isam_message), "%s", isam_msg);
+    char formatted_detail[384];
+    format_informix_error_message(formatted_detail, sizeof(formatted_detail),
+                                  e->sql_message[0] ? e->sql_message : NULL,
+                                  e->server_message[0] ? e->server_message : NULL);
 
     if (e->sqlstate[0] != '\0') {
         snprintf(e->message, sizeof(e->message),
-                 "SQLCODE %d (ISAM %d, SQLSTATE %s): %.180s",
-                 sqlcode, isamcode, e->sqlstate,
-                 e->server_message[0] ? e->server_message :
-                 (e->sql_message[0] ? e->sql_message : "server error"));
+                 "SQLCODE %d (ISAM %d, SQLSTATE %s): %s",
+                 sqlcode, isamcode, e->sqlstate, formatted_detail);
     } else {
         snprintf(e->message, sizeof(e->message),
-                 "SQLCODE %d (ISAM %d): %.200s",
-                 sqlcode, isamcode,
-                 e->server_message[0] ? e->server_message :
-                 (e->sql_message[0] ? e->sql_message : "server error"));
+                 "SQLCODE %d (ISAM %d): %s",
+                 sqlcode, isamcode, formatted_detail);
     }
     snprintf(conn->errmsg, sizeof(conn->errmsg), "%s", e->message);
 }

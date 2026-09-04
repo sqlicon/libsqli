@@ -106,9 +106,9 @@ typedef struct {
     uint16_t unknown_opcode;        /* last unknown opcode observed in dispatch */
     uint32_t unknown_opcode_count;  /* number of unknown opcodes seen */
     char server_message[256];       /* server-provided message payload */
-    char sql_message[256];          /* SQL message text resolved from catalog */
-    char isam_message[256];         /* ISAM message text resolved from catalog */
-    char message[256];              /* final composed message */
+    char sql_message[384];          /* SQL message text resolved from catalog */
+    char isam_message[384];         /* ISAM message text resolved from catalog */
+    char message[512];              /* final composed message */
 } sqli_error_info;
 
 /**
@@ -118,6 +118,24 @@ typedef struct {
  * @return SQLI_OK on success.
  */
 sqli_status sqli_error_get_info(sqli_conn_t *conn, sqli_error_info *out);
+
+/* Upper bound, in bytes, on any single expanded message from the Informix catalog (excl. NUL). */
+#define SQLI_ERRMSG_MAX_LEN 347
+
+/**
+ * @brief Look up an Informix SQLCODE or ISAM error message by numeric code.
+ *
+ * Resolves standard Informix SQL error codes (e.g. -206) and ISAM error codes
+ * (e.g. 107 or -107) from the embedded 3,412-message Informix catalog.
+ *
+ * @param[in] code SQLCODE (e.g. -206) or ISAM error code (e.g. 107 or -107).
+ * @param[out] out Caller-supplied buffer to receive the NUL-terminated message.
+ * @param[in] outsz Size of the output buffer in bytes (recommended >= SQLI_ERRMSG_MAX_LEN + 1).
+ * @return Number of bytes written excluding NUL on success,
+ *         -1 if the code was not found in the catalog,
+ *         -2 if the buffer was too small.
+ */
+int sqli_error_message_lookup(int32_t code, char *out, size_t outsz);
 
 typedef enum {
     SQLI_ERROR_CLASS_NONE = 0,
@@ -1049,7 +1067,7 @@ typedef struct {
     int sqlcode;             /* Informix SQLCODE if available */
     int isamcode;            /* Informix ISAM code if available */
     uint16_t opcode;         /* related opcode if available */
-    char message[256];       /* composed diagnostic message */
+    char message[512];       /* composed diagnostic message */
 } sqli_batch_item_result;
 
 /**

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(sqli VERSION 0.1.35 LANGUAGES C)
+project(sqli VERSION 0.1.36 LANGUAGES C)
 
 if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     set(SQLI_IS_TOP_LEVEL ON)
@@ -92,6 +92,8 @@ add_library(sqli STATIC
     ${SQLI_SRC_DIR}/sqli_log.c
     ${SQLI_SRC_DIR}/sqli_msg_catalog.c
     ${SQLI_SRC_DIR}/sqli_uri.c
+    ${SQLI_SRC_DIR}/ifx_errmsg.c
+    ${SQLI_SRC_DIR}/ifx_errmsg_data.c
 )
 if (NOT WIN32)
     target_sources(sqli PRIVATE

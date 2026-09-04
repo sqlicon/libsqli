@@ -39,6 +39,7 @@ void print_help(FILE *out)
             "  -c, --command <sql>      Execute inline SQL and exit\n"
             "  -e, --execute <sql>      Execute inline SQL and exit\n"
             "  -f, --file <path>        Execute script file and exit\n"
+            "      --finderr <code>     Look up Informix error code description and exit\n"
             "  -h, --help               Show this help\n"
             "\n"
             "Connection/profile options:\n"
@@ -250,6 +251,13 @@ sqlicon_exit_code parse_args(int argc, char **argv, sqlicon_cli_options *opt)
         if (strcmp(arg, "--log-level") == 0) {
             if (!parse_option_value(argc, argv, &i, &opt->log_level)) {
                 fprintf(stderr, "error: %s requires a value\n", arg);
+                return SQLICON_EXIT_MISUSE;
+            }
+            continue;
+        }
+        if (strcmp(arg, "--finderr") == 0) {
+            if (!parse_option_value(argc, argv, &i, &opt->finderr_code)) {
+                fprintf(stderr, "error: %s requires an error code\n", arg);
                 return SQLICON_EXIT_MISUSE;
             }
             continue;

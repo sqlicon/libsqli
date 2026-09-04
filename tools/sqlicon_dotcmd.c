@@ -35,6 +35,7 @@ static void print_dot_help(FILE *out)
             "  .constraints TABLE    Show table constraints (PK/FK/UNIQUE/CHECK)\n"
             "  .dump [TABLE]         Export table rows as INSERT statements\n"
             "  .import FILE TABLE    Import CSV file (header row) into table\n"
+            "  .finderr CODE         Show Informix error message description\n"
             "  .tables               List user tables\n");
 }
 
@@ -189,6 +190,21 @@ sqlicon_exit_code handle_dot_command(sqli_conn_t *conn, sqlicon_runtime *rt,
             conn,
             "SELECT tabname FROM systables WHERE tabid >= 100 AND tabtype = 'T' ORDER BY tabname",
             false, false, rt);
+    } else if (strcmp(cmd, "finderr") == 0 || strcmp(cmd, "err") == 0) {
+        if (arg[0] == '\0') {
+            fprintf(stderr, "usage: .finderr <error_code>\n");
+            rc = SQLICON_EXIT_MISUSE;
+        } else {
+            int code = atoi(arg);
+            char msg[SQLI_ERRMSG_MAX_LEN + 1];
+            int n = sqli_error_message_lookup(code, msg, sizeof(msg));
+            if (n < 0) {
+                fprintf(stderr, "Error code %d not found in catalog\n", code);
+                rc = SQLICON_EXIT_SQL_ERROR;
+            } else {
+                fprintf(stdout, "[%d] %s\n", code, msg);
+            }
+        }
     } else {
         fprintf(stderr, "error: unknown dot-command '.%s'\n", cmd);
         rc = SQLICON_EXIT_MISUSE;

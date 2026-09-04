@@ -27,6 +27,22 @@ int main(int argc, char **argv)
         return (int)SQLICON_EXIT_OK;
     }
 
+    if (opt.finderr_code != NULL) {
+        int code = atoi(opt.finderr_code);
+        char msg[SQLI_ERRMSG_MAX_LEN + 1];
+        int n = sqli_error_message_lookup(code, msg, sizeof(msg));
+        if (n < 0) {
+            fprintf(stderr, "Error code %d not found in catalog\n", code);
+            rc = SQLICON_EXIT_SQL_ERROR;
+        } else {
+            fprintf(stdout, "[%d] %s\n", code, msg);
+            rc = SQLICON_EXIT_OK;
+        }
+        profile_override_destroy(&ov);
+        runtime_destroy(&rt);
+        return (int)rc;
+    }
+
     if (has_profile_store_action(&opt)) {
         rc = run_profile_action(&opt);
         profile_override_destroy(&ov);
