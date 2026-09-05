@@ -947,8 +947,8 @@ typedef enum {
  * Sends BEGIN WORK to the server. The connection enters transaction mode;
  * subsequent queries are part of the transaction until commit or rollback.
  *
- * Returns SQLI_OK on success. On error, the connection may be left in
- * an inconsistent state and should be closed.
+ * Returns SQLI_OK on success, or an error status (e.g. SQLI_IO_ERROR,
+ * SQLI_PROTO_ERROR, SQLI_TIMEOUT) if sending or receiving the response fails.
  */
 sqli_status sqli_begin(sqli_conn_t *conn);
 
@@ -957,7 +957,14 @@ sqli_status sqli_begin(sqli_conn_t *conn);
  *
  * Sends COMMIT WORK to the server. The connection returns to autocommit mode.
  *
- * Returns SQLI_OK on success.
+ * Returns SQLI_OK on success, or an error status (e.g. SQLI_IO_ERROR,
+ * SQLI_PROTO_ERROR, SQLI_TIMEOUT) if the commit request could not be sent
+ * or the server's acknowledgement was not received.
+ *
+ * NOTE: If a network or I/O error occurs while waiting for the commit response,
+ * the transaction outcome is uncertain: the server may have already committed
+ * the work before the connection was lost. Applications should inspect state
+ * or handle reconnection rather than blindly retrying non-idempotent operations.
  */
 sqli_status sqli_commit(sqli_conn_t *conn);
 
@@ -966,7 +973,8 @@ sqli_status sqli_commit(sqli_conn_t *conn);
  *
  * Sends ROLLBACK WORK to the server. The connection returns to autocommit mode.
  *
- * Returns SQLI_OK on success.
+ * Returns SQLI_OK on success, or an error status (e.g. SQLI_IO_ERROR,
+ * SQLI_PROTO_ERROR, SQLI_TIMEOUT) if sending or receiving the response fails.
  */
 sqli_status sqli_rollback(sqli_conn_t *conn);
 

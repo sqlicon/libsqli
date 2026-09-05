@@ -557,3 +557,128 @@ void test_savepoint_rejected_in_autocommit(void)
     TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_savepoint_set(c, "sp1", false));
     free(c);
 }
+
+void test_commit_loss_returns_io_error(void)
+{
+    int sv[2] = {-1, -1};
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+        TEST_IGNORE_MESSAGE("socketpair unavailable");
+        return;
+    }
+
+    sqli_conn_t *c = make_mock_conn();
+    if (c == NULL) {
+        close(sv[0]);
+        close(sv[1]);
+        TEST_IGNORE_MESSAGE("allocation failed");
+        return;
+    }
+    c->socket_fd = sv[0];
+    c->autocommit = 0;
+    c->in_transaction = 1;
+
+    /* Shut down write side of peer so send succeeds but read returns EOF */
+    shutdown(sv[1], SHUT_WR);
+
+    sqli_status rc = sqli_commit(c);
+    TEST_ASSERT_NOT_EQUAL(SQLI_OK, rc);
+    TEST_ASSERT_TRUE(c->error_info.has_error);
+    TEST_ASSERT_EQUAL_STRING("commit/recv", c->error_info.context);
+
+    close(sv[0]);
+    close(sv[1]);
+    free(c);
+}
+
+void test_begin_loss_returns_io_error(void)
+{
+    int sv[2] = {-1, -1};
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+        TEST_IGNORE_MESSAGE("socketpair unavailable");
+        return;
+    }
+
+    sqli_conn_t *c = make_mock_conn();
+    if (c == NULL) {
+        close(sv[0]);
+        close(sv[1]);
+        TEST_IGNORE_MESSAGE("allocation failed");
+        return;
+    }
+    c->socket_fd = sv[0];
+    c->autocommit = 0;
+    c->in_transaction = 0;
+
+    shutdown(sv[1], SHUT_WR);
+
+    sqli_status rc = sqli_begin(c);
+    TEST_ASSERT_NOT_EQUAL(SQLI_OK, rc);
+    TEST_ASSERT_TRUE(c->error_info.has_error);
+    TEST_ASSERT_EQUAL_INT(0, c->in_transaction);
+
+    close(sv[0]);
+    close(sv[1]);
+    free(c);
+}
+
+void test_rollback_loss_returns_io_error(void)
+{
+    int sv[2] = {-1, -1};
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+        TEST_IGNORE_MESSAGE("socketpair unavailable");
+        return;
+    }
+
+    sqli_conn_t *c = make_mock_conn();
+    if (c == NULL) {
+        close(sv[0]);
+        close(sv[1]);
+        TEST_IGNORE_MESSAGE("allocation failed");
+        return;
+    }
+    c->socket_fd = sv[0];
+    c->autocommit = 0;
+    c->in_transaction = 1;
+
+    shutdown(sv[1], SHUT_WR);
+
+    sqli_status rc = sqli_rollback(c);
+    TEST_ASSERT_NOT_EQUAL(SQLI_OK, rc);
+    TEST_ASSERT_TRUE(c->error_info.has_error);
+
+    close(sv[0]);
+    close(sv[1]);
+    free(c);
+}
+
+void test_commit_success_with_done_eot(void)
+{
+    int sv[2] = {-1, -1};
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+        TEST_IGNORE_MESSAGE("socketpair unavailable");
+        return;
+    }
+
+    sqli_conn_t *c = make_mock_conn();
+    if (c == NULL) {
+        close(sv[0]);
+        close(sv[1]);
+        TEST_IGNORE_MESSAGE("allocation failed");
+        return;
+    }
+    c->socket_fd = sv[0];
+    c->autocommit = 0;
+    c->in_transaction = 1;
+
+    uint8_t reply[64];
+    size_t rn = build_done_eot(reply);
+    TEST_ASSERT_EQUAL_INT((int)rn, (int)write(sv[1], reply, rn));
+
+    sqli_status rc = sqli_commit(c);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, rc);
+    TEST_ASSERT_EQUAL_INT(0, c->in_transaction);
+
+    close(sv[0]);
+    close(sv[1]);
+    free(c);
+}

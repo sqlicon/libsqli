@@ -305,6 +305,10 @@ void test_batch_result_accessors_null_safe(void);
 void test_savepoint_set_writes_opcode_payload_and_flag(void);
 void test_savepoint_release_and_rollback_write_expected_opcodes(void);
 void test_savepoint_rejected_in_autocommit(void);
+void test_commit_loss_returns_io_error(void);
+void test_begin_loss_returns_io_error(void);
+void test_rollback_loss_returns_io_error(void);
+void test_commit_success_with_done_eot(void);
 #endif
 
 #if SQLI_HAVE_POSIX_TESTS
@@ -737,6 +741,10 @@ int main(void)
     RUN_TEST(test_savepoint_set_writes_opcode_payload_and_flag);
     RUN_TEST(test_savepoint_release_and_rollback_write_expected_opcodes);
     RUN_TEST(test_savepoint_rejected_in_autocommit);
+    RUN_TEST(test_commit_loss_returns_io_error);
+    RUN_TEST(test_begin_loss_returns_io_error);
+    RUN_TEST(test_rollback_loss_returns_io_error);
+    RUN_TEST(test_commit_success_with_done_eot);
     }
 #endif
 

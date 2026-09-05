@@ -31,13 +31,17 @@ static sqli_status verify_txn_ready(sqli_conn_t *conn, const char *op)
     return SQLI_OK;
 }
 
-/* Receive and discard a transaction command response */
-static void drain_txn_response(sqli_conn_t *conn)
+/* Receive and check a transaction command response */
+static sqli_status drain_txn_response(sqli_conn_t *conn)
 {
     sqli_result_t result;
     memset(&result, 0, sizeof(result));
-    sqli_receive_dispatch(conn->socket_fd, &result, conn);
+    sqli_status rc = sqli_receive_dispatch(conn->socket_fd, &result, conn);
+    if (rc == SQLI_OK && result.saw_error) {
+        rc = SQLI_PROTO_ERROR;
+    }
     sqli_result_cleanup(&result);
+    return rc;
 }
 
 static sqli_status apply_session_sql(sqli_conn_t *conn, const char *sql)
@@ -133,7 +137,14 @@ static sqli_status savepoint_send_core(sqli_conn_t *conn, uint8_t opcode,
         return SQLI_IO_ERROR;
     }
 
-    drain_txn_response(conn);
+    set_error_context(conn, "savepoint/recv", opcode);
+    rc = drain_txn_response(conn);
+    if (rc != SQLI_OK) {
+        if (!conn->error_info.has_error) {
+            set_error(conn, "failed to receive savepoint response");
+        }
+        return rc;
+    }
     return SQLI_OK;
 }
 
@@ -163,7 +174,14 @@ sqli_status sqli_begin(sqli_conn_t *conn)
         return SQLI_IO_ERROR;
     }
 
-    drain_txn_response(conn);
+    set_error_context(conn, "begin/recv", SQLI_SQ_BEGIN);
+    rc = drain_txn_response(conn);
+    if (rc != SQLI_OK) {
+        if (!conn->error_info.has_error) {
+            set_error(conn, "failed to receive begin response");
+        }
+        return rc;
+    }
 
     conn->in_transaction = true;
     sqli_log(SQLI_LOG_INFO, "transaction started (isolation=%d)", conn->isolation);
@@ -196,7 +214,14 @@ sqli_status sqli_commit(sqli_conn_t *conn)
         return SQLI_IO_ERROR;
     }
 
-    drain_txn_response(conn);
+    set_error_context(conn, "commit/recv", SQLI_SQ_CMMTWORK);
+    rc = drain_txn_response(conn);
+    if (rc != SQLI_OK) {
+        if (!conn->error_info.has_error) {
+            set_error(conn, "failed to receive commit response");
+        }
+        return rc;
+    }
 
     conn->in_transaction = false;
     sqli_log(SQLI_LOG_INFO, "transaction committed");
@@ -232,7 +257,14 @@ sqli_status sqli_rollback(sqli_conn_t *conn)
         return SQLI_IO_ERROR;
     }
 
-    drain_txn_response(conn);
+    set_error_context(conn, "rollback/recv", SQLI_SQ_RBWORK);
+    rc = drain_txn_response(conn);
+    if (rc != SQLI_OK) {
+        if (!conn->error_info.has_error) {
+            set_error(conn, "failed to receive rollback response");
+        }
+        return rc;
+    }
 
     conn->in_transaction = false;
     sqli_log(SQLI_LOG_INFO, "transaction rolled back");
