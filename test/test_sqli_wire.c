@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 /*
  * Phase 2 unit tests for ASC-BINARY encoding helpers.
  *
@@ -205,6 +206,108 @@ void test_ipc_preamble_dynamic_magic(void)
     verify_preamble_header(buf, n);
 
     sqli_destroy(conn);
+}
+
+static int b64_ipc_val(char c)
+{
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '.') return 62;
+    if (c == '_') return 63;
+    return -1;
+}
+
+static size_t decode_ipc_b64(const char *in, uint8_t *out, size_t out_cap)
+{
+    size_t in_len = strlen(in);
+    size_t out_len = 0;
+    uint32_t acc = 0;
+    int bits = 0;
+
+    for (size_t i = 0; i < in_len; i++) {
+        int v = b64_ipc_val(in[i]);
+        if (v < 0) continue;
+        acc = (acc << 6) | (uint32_t)v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            if (out_len < out_cap) {
+                out[out_len++] = (uint8_t)(acc >> bits);
+            }
+        }
+    }
+    return out_len;
+}
+
+static void check_tag74_structure_for_path(const char *app_path)
+{
+    sqli_conn_t *conn = NULL;
+    uint8_t buf[2048];
+    uint8_t body[1024];
+
+    if (app_path != NULL) {
+        setenv("SQLI_IPC_APP_PATH", app_path, 1);
+    } else {
+        unsetenv("SQLI_IPC_APP_PATH");
+    }
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_create(&conn));
+    strcpy(conn->username, "informix");
+    strcpy(conn->server, "ol_test");
+
+    size_t n = sqli_asc_encode_ipc_preamble(conn, buf, sizeof(buf), "ipcstr");
+    TEST_ASSERT_GREATER_THAN_UINT(0, n);
+
+    char *sep = strrchr((char *)buf, ':');
+    TEST_ASSERT_NOT_NULL(sep);
+
+    size_t body_len = decode_ipc_b64(sep + 1, body, sizeof(body));
+    TEST_ASSERT_GREATER_THAN_UINT(30, body_len);
+
+    /* Find tag 0x0074 */
+    size_t tag74_pos = 0;
+    bool found_tag74 = false;
+    for (size_t i = 0; i + 4 < body_len; i++) {
+        if (body[i] == 0x00 && body[i + 1] == 0x74) {
+            tag74_pos = i;
+            found_tag74 = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(found_tag74);
+
+    uint16_t tag74_len = (uint16_t)((body[tag74_pos + 2] << 8) | body[tag74_pos + 3]);
+    uint16_t path_len = (uint16_t)((body[tag74_pos + 12] << 8) | body[tag74_pos + 13]);
+
+    /* Expected: tag74_len is 4 + 4 + 2 + path_len */
+    TEST_ASSERT_EQUAL_UINT16(10 + path_len, tag74_len);
+
+    if (app_path != NULL) {
+        TEST_ASSERT_EQUAL_UINT16((uint16_t)(strlen(app_path) + 1), path_len);
+        TEST_ASSERT_EQUAL_STRING(app_path, (char *)&body[tag74_pos + 14]);
+    }
+
+    /* Tag immediately after tag 0x0074 container MUST be 0x007F (END marker) */
+    size_t next_tag_pos = tag74_pos + 4 + tag74_len;
+    TEST_ASSERT_LESS_OR_EQUAL_UINT(body_len - 2, next_tag_pos);
+    TEST_ASSERT_EQUAL_UINT8(0x00, body[next_tag_pos]);
+    TEST_ASSERT_EQUAL_UINT8(0x7F, body[next_tag_pos + 1]);
+
+    unsetenv("SQLI_IPC_APP_PATH");
+    sqli_destroy(conn);
+}
+
+void test_ipc_preamble_tag74_dynamic_length(void)
+{
+    /* Test with short path */
+    check_tag74_structure_for_path("sqlicon");
+
+    /* Test with long custom path */
+    check_tag74_structure_for_path("/opt/informix/clients/custom/bin/sqlicon_long_path_test");
+
+    /* Test with default (proc self exe or fallback) */
+    check_tag74_structure_for_path(NULL);
 }
 
 /* ----------------------------------------------------------------

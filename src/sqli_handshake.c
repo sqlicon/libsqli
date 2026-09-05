@@ -618,11 +618,13 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
     bool use_unix_socket = (c->service[0] == '/');
 
     if (use_unix_socket) {
-        /* Override username to current Unix user, clear password */
-        uid_t uid = getuid();
-        struct passwd *pw = getpwuid(uid);
-        if (pw != NULL) {
-            str_copy(c->username, 256, pw->pw_name);
+        /* Default username to current Unix user if not provided, clear password */
+        if (c->username[0] == '\0') {
+            uid_t uid = getuid();
+            struct passwd *pw = getpwuid(uid);
+            if (pw != NULL) {
+                str_copy(c->username, 256, pw->pw_name);
+            }
         }
         c->password[0] = '\0';
     }

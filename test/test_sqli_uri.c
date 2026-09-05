@@ -232,6 +232,18 @@ void test_uri_onipcstr_default_socket_priority(void)
     sqli_destroy(conn);
 }
 
+void test_uri_onipcstr_explicit_user(void)
+{
+    sqli_conn_t *conn = NULL;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_create(&conn));
+    sqli_status rc = sqli_connect_uri(conn,
+        "informix+onipcstr://custom_user@/db?INFORMIXSERVER=srv1",
+        NULL, NULL);
+    TEST_ASSERT_NOT_EQUAL_INT(SQLI_INVALID_STATE, rc);
+    TEST_ASSERT_EQUAL_STRING("custom_user", conn->username);
+    sqli_destroy(conn);
+}
+
 /* ----------------------------------------------------------------
  * Query parameter parsing
  * ---------------------------------------------------------------- */

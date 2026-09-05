@@ -66,6 +66,12 @@ static void sqli_get_ipc_app_path(char *buf, size_t buf_size)
     if (buf == NULL || buf_size == 0)
         return;
 
+    const char *env_path = getenv("SQLI_IPC_APP_PATH");
+    if (env_path && env_path[0] != '\0') {
+        snprintf(buf, buf_size, "%s", env_path);
+        return;
+    }
+
 #ifdef _WIN32
     if (GetModuleFileNameA(NULL, buf, (DWORD)buf_size) == 0 ||
         buf[0] == '\0') {
@@ -77,6 +83,8 @@ static void sqli_get_ipc_app_path(char *buf, size_t buf_size)
         ssize_t link_len = readlink("/proc/self/exe", buf, buf_size - 1);
         if (link_len > 0) {
             buf[link_len] = '\0';
+        } else {
+            snprintf(buf, buf_size, "sqlicon");
         }
     } else {
         char resolved[512];
@@ -527,28 +535,35 @@ size_t sqli_asc_encode_ipc_preamble(sqli_conn_t *c, uint8_t *buf, size_t buf_siz
     body[bp++] = 0;
     body[bp++] = 2;
 
-    /* TID: tag(2) + tid(2) + pad(2) */
-    wb16(0x0074); wb16(0x0034); wb16(0x0000);
-
-    /* Legacy and modern dbaccess traces use different tags/values here. */
-    wb16(legacy_style ? 0x03E8 : 0x03E7);
-    if (bp + 4 >= sizeof(body)) goto ipc_fail;
-    body[bp++] = 0; body[bp++] = 0;
-    if (legacy_style) {
-        body[bp++] = 0x03;
-        body[bp++] = 0xE8;
-    } else {
-        body[bp++] = 3;
-        body[bp++] = 0xDD;
-    }
-
-    /* App path: tag(2) + path + NUL */
+    /* Tag 0x0074: container tag wrapping TID/tag info and client app path.
+     * Length of the block is 10 + strlen(app_path) + 1:
+     * 4 bytes (ldlong) + 4 bytes (ldlong) + 2 bytes (app_path_len) + (app_path + NUL).
+     * Server uses this length to skip past the app path to the 0x007F end marker.
+     * Hardcoding this length desynchronizes tag parsing for any executable path
+     * of different length, causing server rejection with error -408. */
     {
         char app_path_buf[512];
         app_path_buf[0] = '\0';
         sqli_get_ipc_app_path(app_path_buf, sizeof(app_path_buf));
         size_t al = strlen(app_path_buf);
-        wb16(0x002A);
+        size_t tag74_len = 4 + 4 + 2 + al + 1;
+
+        wb16(0x0074);
+        wb16((uint16_t)tag74_len);
+        wb16(0x0000);
+        wb16(legacy_style ? 0x03E8 : 0x03E7);
+
+        if (bp + 4 >= sizeof(body)) goto ipc_fail;
+        body[bp++] = 0; body[bp++] = 0;
+        if (legacy_style) {
+            body[bp++] = 0x03;
+            body[bp++] = 0xE8;
+        } else {
+            body[bp++] = 3;
+            body[bp++] = 0xDD;
+        }
+
+        wb16((uint16_t)(al + 1));
         if (bp + al + 1 >= sizeof(body)) goto ipc_fail;
         memcpy(body + bp, app_path_buf, al); bp += al;
         body[bp++] = 0;
