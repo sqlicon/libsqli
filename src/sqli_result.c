@@ -48,7 +48,6 @@ static size_t sqli_fixed_width_for_type(uint8_t type)
     case SQLI_TYPE_INT:
     case SQLI_TYPE_DATE:
     case SQLI_TYPE_SERIAL:
-    case SQLI_TYPE_BYTE:
     case SQLI_TYPE_SMFLOAT:  return 4;
     case SQLI_TYPE_FLOAT:
     case SQLI_TYPE_BIGINT:
@@ -186,8 +185,21 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
         }
     }
 
+    if (type == SQLI_TYPE_BYTE || type == SQLI_TYPE_TEXT) {
+        /* Spec §6.1.2: Legacy blob descriptor is fixed size in tuple (56 or 68 bytes) */
+        size_t desc_len = col_info->encoded_length > 0 ? (size_t)col_info->encoded_length : 56;
+        if (base + desc_len <= tuple_len) {
+            *data_start = base;
+            *data_len = desc_len;
+            *span = desc_len;
+            return SQLI_OK;
+        }
+        return SQLI_PROTO_ERROR;
+    }
+
     if (type == SQLI_TYPE_BOOL || type == SQLI_TYPE_DBOOLEAN ||
-        type == SQLI_TYPE_LVARCHAR) {
+        type == SQLI_TYPE_LVARCHAR ||
+        type == SQLI_TYPE_BLOB || type == SQLI_TYPE_CLOB) {
         /* Spec §5.5: LVARCHAR / BOOLEAN / opaque and user-defined types:
          *   [nullMarker(uint8)][length(int32 BE)][length bytes of payload]
          * nullMarker == 1 (or non-zero) signals NULL (length == 0, no payload, span = 5).
@@ -332,7 +344,19 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
             } else {
                 rc = SQLI_PROTO_ERROR;
             }
-        } else if (type == SQLI_TYPE_BOOL) {
+        } else if (type == SQLI_TYPE_BYTE || type == SQLI_TYPE_TEXT) {
+            size_t desc_len = col->encoded_length > 0 ? (size_t)col->encoded_length : 56;
+            if (offset + desc_len <= result->tuple_len) {
+                data_start = offset;
+                data_len = desc_len;
+                span = desc_len;
+            } else {
+                rc = SQLI_PROTO_ERROR;
+            }
+        } else if (type == SQLI_TYPE_BOOL ||
+                   type == SQLI_TYPE_LVARCHAR ||
+                   type == SQLI_TYPE_BLOB ||
+                   type == SQLI_TYPE_CLOB) {
             rc = sqli_tuple_locate_column(col, result->tuple_buffer, result->tuple_len,
                                           &data_start, &data_len, &span);
         } else {
@@ -365,9 +389,6 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
                     rc = sqli_tuple_locate_column(col, result->tuple_buffer, result->tuple_len,
                                                   &data_start, &data_len, &span);
                 }
-            } else if (type == SQLI_TYPE_LVARCHAR) {
-                rc = sqli_tuple_locate_column(col, result->tuple_buffer, result->tuple_len,
-                                              &data_start, &data_len, &span);
             } else if (type == SQLI_TYPE_VARCHAR || type == SQLI_TYPE_NVCHAR) {
                 size_t payload = (size_t)result->tuple_buffer[offset];
                 size_t start = offset + 1;
@@ -500,6 +521,9 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
                  * this encoding, but is not a realistic value for these
                  * short catalog/label VARCHAR columns. */
                 is_null = 1;
+            } else if ((type == SQLI_TYPE_BYTE || type == SQLI_TYPE_TEXT) && data_len >= 40) {
+                if ((p[39] & 0x01) != 0)
+                    is_null = 1;
             } else if (sqli_type_all_zero_is_null_sentinel(type)) {
                 int all_zero = 1;
                 for (size_t k = 0; k < data_len; k++) {
@@ -573,6 +597,11 @@ bool sqli_result_is_null_internal(sqli_result_t *result, int col_index)
         p[0] == 0xFF && p[1] == 0xFF && p[2] == 0xFF && p[3] == 0xFF &&
         p[4] == 0xFF && p[5] == 0xFF && p[6] == 0xFF && p[7] == 0xFF)
         return 1;
+    if ((type == SQLI_TYPE_BYTE || type == SQLI_TYPE_TEXT) && data_len >= 40) {
+        if ((p[39] & 0x01) != 0)
+            return 1;
+        return 0;
+    }
 
     int all_zero = 1;
     for (size_t i = 0; i < data_len; i++) {

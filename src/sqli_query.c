@@ -186,10 +186,17 @@ sqli_status sqli_query_ex(sqli_conn_t *conn, const char *sql,
                 return rc;
             }
         }
-        if (resolved_options.cursor_type != SQLI_CURSOR_SCROLL_INSENSITIVE)
+        bool has_lobs = false;
+        for (int c = 0; c < r->column_count; c++) {
+            if (sqli_is_legacy_lob_type((uint8_t)r->columns[c].type)) {
+                has_lobs = true;
+                break;
+            }
+        }
+        if (!has_lobs && resolved_options.cursor_type != SQLI_CURSOR_SCROLL_INSENSITIVE) {
             sqli_stmt_close_release(conn, stmt_id);
-        if (resolved_options.cursor_type != SQLI_CURSOR_SCROLL_INSENSITIVE)
             r->stmt_id = -1;
+        }
     } else {
         int guard = 0;
         for (;;) {

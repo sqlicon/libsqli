@@ -21,6 +21,8 @@ int sqli_decode_decimal(const uint8_t *buf, size_t buf_size,
 #include <windows.h>
 #else
 #include <sys/time.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #endif
 
 static uint64_t tv_now_ms(void);
@@ -469,11 +471,17 @@ void test_execute_null_stmt(void)
     TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_execute(NULL));
 }
 
-void test_execute_rejects_unimplemented_prepared_lob_streaming(void)
+void test_execute_prepared_lob_streaming_wire_protocol(void)
 {
+#ifndef _WIN32
+    int sv[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0)
+        TEST_IGNORE_MESSAGE("socketpair unavailable");
+
     sqli_conn_t conn;
     memset(&conn, 0, sizeof(conn));
     conn.state = SQLI_CONN_READY;
+    conn.socket_fd = sv[0];
 
     sqli_bound_param param;
     memset(&param, 0, sizeof(param));
@@ -488,15 +496,62 @@ void test_execute_rejects_unimplemented_prepared_lob_streaming(void)
     sqli_stmt_t stmt;
     memset(&stmt, 0, sizeof(stmt));
     stmt.conn = &conn;
-    stmt.socket_fd = -1;
+    stmt.socket_fd = sv[0];
+    stmt.stmt_id = 42;
     stmt.param_count = 1;
     stmt.params = &param;
     stmt.param_server_types = param_types;
     stmt.param_server_type_count = 1;
 
+    /* Preload mock server response: SQ_DONE */
+    uint8_t mock_resp[] = {
+        0, SQLI_SQ_DONE,
+        0, 0,              /* warnings */
+        0, 0, 0, 1,        /* rows_affected */
+        0, 0, 0, 0,        /* rowid */
+        0, 0, 0, 0         /* sqlerrd1 */
+    };
+    TEST_ASSERT_EQUAL_INT((int)sizeof(mock_resp),
+                          (int)write(sv[1], mock_resp, sizeof(mock_resp)));
+
     sqli_status rc = sqli_execute(&stmt);
-    TEST_ASSERT_EQUAL_INT(SQLI_PROTO_ERROR, rc);
-    TEST_ASSERT_NOT_NULL(sqli_error(&conn));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, rc);
+
+    /* Verify wire contains SQ_BBIND (41), SQ_BLOB (39), SQ_EXECUTE (7), and SQ_EOT (12) */
+    uint8_t wire[512];
+    ssize_t n = read(sv[1], wire, sizeof(wire));
+    TEST_ASSERT_GREATER_THAN_INT(0, n);
+
+    int found_bbind = 0, found_blob = 0, found_execute = 0, found_eot = 0;
+    for (ssize_t i = 0; i + 1 < n; i++) {
+        if (wire[i] == 0 && wire[i+1] == SQLI_SQ_BBIND) found_bbind = 1;
+        if (wire[i] == 0 && wire[i+1] == SQLI_SQ_BLOB) found_blob = 1;
+        if (wire[i] == 0 && wire[i+1] == SQLI_SQ_EXECUTE) found_execute = 1;
+        if (wire[i] == 0 && wire[i+1] == SQLI_SQ_EOT) found_eot = 1;
+    }
+    TEST_ASSERT_EQUAL_INT(1, found_bbind);
+    TEST_ASSERT_EQUAL_INT(1, found_blob);
+    TEST_ASSERT_EQUAL_INT(1, found_execute);
+    TEST_ASSERT_EQUAL_INT(1, found_eot);
+
+    close(sv[0]);
+    close(sv[1]);
+#endif
+}
+
+void test_sblob_api_null_and_invalid_state(void)
+{
+    int lofd = -1;
+    size_t br = 0, bw = 0;
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_open(NULL, "loc", 1, &lofd));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_open_clob(NULL, "loc", 1, &lofd));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_open_query(NULL, "query", &lofd));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_close(NULL, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_close(NULL, -1));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_read(NULL, 1, NULL, 0, &br));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_read_seek(NULL, 1, 0, NULL, 0, &br));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_write(NULL, 1, NULL, 0, &bw));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_result_read_sblob(NULL, 0, NULL, 0, &br));
 }
 
 void test_execute_with_retry_null_stmt(void)

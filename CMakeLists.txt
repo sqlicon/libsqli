@@ -94,6 +94,7 @@ add_library(sqli STATIC
     ${SQLI_SRC_DIR}/sqli_uri.c
     ${SQLI_SRC_DIR}/ifx_errmsg.c
     ${SQLI_SRC_DIR}/ifx_errmsg_data.c
+    ${SQLI_SRC_DIR}/sqli_sblob.c
 )
 if (NOT WIN32)
     target_sources(sqli PRIVATE
@@ -233,6 +234,10 @@ if (SQLI_BUILD_TOOLS)
     add_executable(sqli_types_stress ${SQLI_TOOLS_DIR}/sqli_types_stress.c)
     target_include_directories(sqli_types_stress PRIVATE ${SQLI_INC_DIR})
     target_link_libraries(sqli_types_stress PRIVATE sqli)
+
+    add_executable(sqli_blob_stress ${SQLI_TOOLS_DIR}/sqli_blob_stress.c)
+    target_include_directories(sqli_blob_stress PRIVATE ${SQLI_INC_DIR})
+    target_link_libraries(sqli_blob_stress PRIVATE sqli)
 endif()
 
 if (SQLI_BUILD_CLI)

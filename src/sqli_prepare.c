@@ -376,8 +376,7 @@ static bool sqli_stmt_param_needs_lob_streaming(const sqli_stmt_t *stmt,
         return false;
 
     uint8_t col_type = stmt->param_server_types[(size_t)(param_index - 1)];
-    bool is_lob_col = (col_type == SQLI_TYPE_BYTE || col_type == SQLI_TYPE_TEXT ||
-                       col_type == SQLI_TYPE_BLOB || col_type == SQLI_TYPE_CLOB);
+    bool is_lob_col = (col_type == SQLI_TYPE_BYTE || col_type == SQLI_TYPE_TEXT);
     if (!is_lob_col)
         return false;
 
@@ -620,6 +619,13 @@ static size_t estimate_bind_msg_size(const sqli_stmt_t *stmt, const sqli_bound_p
         n += 6; /* type + null + encoded_length */
         if (par->is_null)
             continue;
+        uint8_t stype = 0;
+        if (stmt->param_server_types != NULL && i < stmt->param_server_type_count)
+            stype = stmt->param_server_types[(size_t)i];
+        if (stype == SQLI_TYPE_BYTE || stype == SQLI_TYPE_TEXT) {
+            n += 56;
+            continue;
+        }
         switch (par->type) {
         case SQLI_BIND_INT: n += 4; break;
         case SQLI_BIND_BIGINT: n += 8; break;
@@ -768,14 +774,48 @@ static size_t build_bind_msg(sqli_stmt_t *stmt, const sqli_bound_param *params,
     /* Per-parameter: type(2) + null_indicator(2) + encoded_length(2) + data */
     for (int i = 0; i < stmt->param_count; i++) {
         const sqli_bound_param *par = &params[(size_t)i];
+        uint8_t server_type = 0;
+        if (stmt->param_server_types != NULL && i < stmt->param_server_type_count)
+            server_type = stmt->param_server_types[(size_t)i];
+
+        bool is_legacy_lob = (server_type == SQLI_TYPE_BYTE || server_type == SQLI_TYPE_TEXT);
+        uint8_t wire_type = is_legacy_lob ? server_type : (uint8_t)par->type;
 
         /* Type code */
-        buf[p++] = 0; buf[p++] = (uint8_t)par->type;
+        buf[p++] = 0; buf[p++] = wire_type;
 
         if (par->is_null) {
             /* null_indicator = -1 (0xFFFF), encoded_length = 0, no data */
             buf[p++] = 0xFF; buf[p++] = 0xFF;  /* null_indicator = -1 */
             buf[p++] = 0x00; buf[p++] = 0x00;  /* encoded_length = 0 */
+        } else if (is_legacy_lob) {
+            buf[p++] = 0x00; buf[p++] = 0x00;  /* null_indicator = 0 */
+            buf[p++] = 0x00; buf[p++] = 56;    /* encoded_length = 56 */
+            uint32_t total_len = 0;
+            if (par->type == SQLI_BIND_BYTES) {
+                total_len = (uint32_t)par->blen;
+            } else if (par->type == SQLI_BIND_STRING) {
+                if (server_type == SQLI_TYPE_TEXT && par->sval != NULL) {
+                    uint8_t *enc = NULL;
+                    size_t slen = 0;
+                    if (sqli_conn_encode_client_to_db(stmt->conn, par->sval, &enc, &slen) == SQLI_OK && enc != NULL) {
+                        total_len = (uint32_t)slen;
+                        free(enc);
+                    } else {
+                        total_len = (uint32_t)strlen(par->sval);
+                    }
+                } else if (par->sval != NULL) {
+                    total_len = (uint32_t)strlen(par->sval);
+                }
+            }
+            uint8_t desc[56];
+            memset(desc, 0, sizeof(desc));
+            desc[16] = (uint8_t)((total_len >> 24) & 0xFF);
+            desc[17] = (uint8_t)((total_len >> 16) & 0xFF);
+            desc[18] = (uint8_t)((total_len >> 8) & 0xFF);
+            desc[19] = (uint8_t)(total_len & 0xFF);
+            memcpy(buf + p, desc, 56);
+            p += 56;
         } else {
             /* null_indicator = 0 */
             buf[p++] = 0x00; buf[p++] = 0x00;
@@ -1001,6 +1041,82 @@ static sqli_status sqli_stmt_execute_bound_params(sqli_stmt_t *stmt,
         sqli_status bind_rc = sqli_stmt_send_bind_if_needed(stmt, params, false);
         if (bind_rc != SQLI_OK)
             return bind_rc;
+
+        int lob_count = 0;
+        for (int i = 1; i <= stmt->param_count; i++) {
+            if (sqli_stmt_param_needs_lob_streaming(stmt, params, i))
+                lob_count++;
+        }
+
+        if (lob_count > 0) {
+            uint8_t bbind_hdr[4] = {0, 41, (uint8_t)((lob_count >> 8) & 0xFF), (uint8_t)(lob_count & 0xFF)};
+            if (sqli_tcp_send(fd, bbind_hdr, 4) != 4) {
+                set_error_context(stmt->conn, "execute/bbind_send", 41);
+                set_error(stmt->conn, "failed to send SQ_BBIND");
+                return SQLI_IO_ERROR;
+            }
+
+            for (int i = 1; i <= stmt->param_count; i++) {
+                if (!sqli_stmt_param_needs_lob_streaming(stmt, params, i))
+                    continue;
+
+                const sqli_bound_param *par = &params[(size_t)(i - 1)];
+                const uint8_t *data = NULL;
+                uint8_t *enc_buf = NULL;
+                size_t total_len = 0;
+
+                if (par->type == SQLI_BIND_BYTES) {
+                    data = par->bval;
+                    total_len = par->blen;
+                } else if (par->type == SQLI_BIND_STRING) {
+                    uint8_t col_type = stmt->param_server_types[(size_t)(i - 1)];
+                    if (col_type == SQLI_TYPE_TEXT && par->sval != NULL) {
+                        size_t slen = 0;
+                        if (sqli_conn_encode_client_to_db(stmt->conn, par->sval, &enc_buf, &slen) == SQLI_OK && enc_buf != NULL) {
+                            data = enc_buf;
+                            total_len = slen;
+                        } else {
+                            data = (const uint8_t *)par->sval;
+                            total_len = strlen(par->sval);
+                        }
+                    } else if (par->sval != NULL) {
+                        data = (const uint8_t *)par->sval;
+                        total_len = strlen(par->sval);
+                    }
+                }
+
+                size_t rem = total_len;
+                size_t cur = 0;
+                while (rem > 0) {
+                    uint16_t chlen = rem > 1024 ? 1024 : (uint16_t)rem;
+                    uint8_t ch_hdr[4] = {0, 39, (uint8_t)(chlen >> 8), (uint8_t)(chlen & 0xFF)};
+                    if (sqli_tcp_send(fd, ch_hdr, 4) != 4 ||
+                        sqli_tcp_send(fd, data + cur, chlen) != (ssize_t)chlen) {
+                        free(enc_buf);
+                        set_error_context(stmt->conn, "execute/blob_chunk_send", 39);
+                        set_error(stmt->conn, "failed to send BLOB chunk");
+                        return SQLI_IO_ERROR;
+                    }
+                    if (chlen & 1) {
+                        uint8_t pad = 0;
+                        if (sqli_tcp_send(fd, &pad, 1) != 1) {
+                            free(enc_buf);
+                            return SQLI_IO_ERROR;
+                        }
+                    }
+                    cur += chlen;
+                    rem -= chlen;
+                }
+                free(enc_buf);
+
+                uint8_t term[4] = {0, 39, 0, 0};
+                if (sqli_tcp_send(fd, term, 4) != 4) {
+                    set_error_context(stmt->conn, "execute/blob_term_send", 39);
+                    set_error(stmt->conn, "failed to send BLOB terminator");
+                    return SQLI_IO_ERROR;
+                }
+            }
+        }
     } else {
         uint8_t id_msg[4];
         id_msg[0] = 0;
@@ -1131,15 +1247,6 @@ sqli_status sqli_execute(sqli_stmt_t *stmt)
     if (stmt->read_only && stmt->result.statement_type == 2)
         return sqli_stmt_execute_select(stmt);
 
-    for (int i = 1; i <= stmt->param_count; i++) {
-        if (!sqli_stmt_param_needs_lob_streaming(stmt, stmt->params, i))
-            continue;
-        set_error_context(stmt->conn, "execute/precheck", SQLI_SQ_EXECUTE);
-        set_error(stmt->conn,
-                  "prepared BYTE/TEXT/BLOB/CLOB parameter streaming is not implemented");
-        return SQLI_PROTO_ERROR;
-    }
-
     return sqli_stmt_execute_bound_params(stmt, stmt->params);
 }
 
@@ -1246,18 +1353,6 @@ sqli_status sqli_stmt_batch_execute(sqli_stmt_t *stmt, sqli_batch_result_t **out
     if (stmt->batch_count == 0) {
         *out_batch = batch;
         return SQLI_OK;
-    }
-
-    for (size_t i = 0; i < stmt->batch_count; i++) {
-        for (int p = 1; p <= stmt->param_count; p++) {
-            if (!sqli_stmt_param_needs_lob_streaming(stmt, stmt->batch_rows[i].params, p))
-                continue;
-            set_error_context(stmt->conn, "stmt_batch_execute/precheck", SQLI_SQ_EXECUTE);
-            set_error(stmt->conn,
-                      "prepared BYTE/TEXT/BLOB/CLOB parameter streaming is not implemented");
-            sqli_batch_result_destroy(batch);
-            return SQLI_PROTO_ERROR;
-        }
     }
 
     sqli_status rc = SQLI_OK;

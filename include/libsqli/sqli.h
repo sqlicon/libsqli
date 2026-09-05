@@ -1143,6 +1143,103 @@ const sqli_sqlhosts_entry *sqli_find_sqlhosts_entry(
     const char *server_name);
 
 /* ----------------------------------------------------------------
+ * Smart Large Object (BLOB / CLOB) API
+ * ---------------------------------------------------------------- */
+
+#define SQLI_LO_APPEND       1
+#define SQLI_LO_WRONLY       2
+#define SQLI_LO_RDONLY       4
+#define SQLI_LO_RDWR         8
+
+#define SQLI_LO_SEEK_SET     0
+#define SQLI_LO_SEEK_CUR     1
+#define SQLI_LO_SEEK_END     2
+
+/**
+ * @brief Open a smart large object from its hexadecimal locator string (for BLOB).
+ * @param[in] conn Active connection.
+ * @param[in] locator_hex Hexadecimal locator string obtained from result set.
+ * @param[in] mode Open mode (e.g. SQLI_LO_RDONLY, SQLI_LO_RDWR).
+ * @param[out] out_lofd Output file descriptor handle.
+ * @return SQLI_OK on success.
+ */
+sqli_status sqli_sblob_open(sqli_conn_t *conn, const char *locator_hex, int mode, int *out_lofd);
+
+/**
+ * @brief Open a smart large object from its hexadecimal locator string (for CLOB).
+ * @param[in] conn Active connection.
+ * @param[in] locator_hex Hexadecimal locator string obtained from result set.
+ * @param[in] mode Open mode (e.g. SQLI_LO_RDONLY, SQLI_LO_RDWR).
+ * @param[out] out_lofd Output file descriptor handle.
+ * @return SQLI_OK on success.
+ */
+sqli_status sqli_sblob_open_clob(sqli_conn_t *conn, const char *locator_hex, int mode, int *out_lofd);
+
+/**
+ * @brief Open a smart large object using a custom query returning a file descriptor handle.
+ * @param[in] conn Active connection.
+ * @param[in] open_sql SQL query (e.g. "SELECT ifx_lo_open(b, 4) FROM tbl WHERE id=1").
+ * @param[out] out_lofd Output file descriptor handle.
+ * @return SQLI_OK on success.
+ */
+sqli_status sqli_sblob_open_query(sqli_conn_t *conn, const char *open_sql, int *out_lofd);
+
+/**
+ * @brief Close an open smart large object file descriptor handle.
+ * @param[in] conn Active connection.
+ * @param[in] lofd File descriptor handle to close.
+ * @return SQLI_OK on success.
+ */
+sqli_status sqli_sblob_close(sqli_conn_t *conn, int lofd);
+
+/**
+ * @brief Read data from an open smart large object using SQ_LODATA (subCom = 0).
+ * @param[in] conn Active connection.
+ * @param[in] lofd Open file descriptor handle.
+ * @param[out] buf Destination buffer.
+ * @param[in] nbytes Maximum bytes to read.
+ * @param[out] bytes_read Number of bytes actually read.
+ * @return SQLI_OK on success.
+ */
+sqli_status sqli_sblob_read(sqli_conn_t *conn, int lofd, void *buf, size_t nbytes, size_t *bytes_read);
+
+/**
+ * @brief Seek and read data from an open smart large object using SQ_LODATA (subCom = 1).
+ * @param[in] conn Active connection.
+ * @param[in] lofd Open file descriptor handle.
+ * @param[in] offset Byte offset to seek to.
+ * @param[out] buf Destination buffer.
+ * @param[in] nbytes Maximum bytes to read.
+ * @param[out] bytes_read Number of bytes actually read.
+ * @return SQLI_OK on success.
+ */
+sqli_status sqli_sblob_read_seek(sqli_conn_t *conn, int lofd, int64_t offset,
+                                 void *buf, size_t nbytes, size_t *bytes_read);
+
+/**
+ * @brief Write data to an open smart large object using SQ_LODATA (subCom = 2).
+ * @param[in] conn Active connection.
+ * @param[in] lofd Open file descriptor handle.
+ * @param[in] buf Source buffer to write.
+ * @param[in] nbytes Number of bytes to write.
+ * @param[out] bytes_written Number of bytes written confirmed by server.
+ * @return SQLI_OK on success.
+ */
+sqli_status sqli_sblob_write(sqli_conn_t *conn, int lofd, const void *buf, size_t nbytes, size_t *bytes_written);
+
+/**
+ * @brief Convenience function to read a smart large object directly from a result column.
+ * @param[in] res Result handle with active row.
+ * @param[in] col_index 0-based column index of BLOB or CLOB.
+ * @param[out] buf Destination buffer.
+ * @param[in] nbytes Maximum bytes to read.
+ * @param[out] bytes_read Number of bytes actually read.
+ * @return SQLI_OK on success.
+ */
+sqli_status sqli_result_read_sblob(sqli_result_t *res, int col_index,
+                                   void *buf, size_t nbytes, size_t *bytes_read);
+
+/* ----------------------------------------------------------------
  * Logging levels (for configuration)
  * ---------------------------------------------------------------- */
 

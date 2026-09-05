@@ -81,11 +81,13 @@ extern const char *env_secondary_list[ENV_SECONDARY_COUNT];
 #define SQLI_SQ_NDESCRIBE         22
 #define SQLI_SQ_SFETCH            23
 #define SQLI_SQ_SCROLL            24
+#define SQLI_SQ_TUPID             25
 #define SQLI_SQ_BEGIN             35
 #define SQLI_SQ_DBOPEN            36
 #define SQLI_SQ_DBCLOSE           37
 #define SQLI_SQ_FETCHBLOB         38
 #define SQLI_SQ_BLOB              39
+#define SQLI_SQ_BBIND             41
 #define SQLI_SQ_DBOPEN_FLAGS      0
 #define SQLI_SQ_HOLD              43
 #define SQLI_SQ_ISOLEVEL          47

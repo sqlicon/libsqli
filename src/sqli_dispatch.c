@@ -380,11 +380,19 @@ out:
     return rc;
 }
 
+bool sqli_is_legacy_lob_type(uint8_t type)
+{
+    return type == SQLI_TYPE_TEXT || type == SQLI_TYPE_BYTE;
+}
+
 bool sqli_is_lob_like_type(uint8_t type)
 {
-    return type == SQLI_TYPE_TEXT || type == SQLI_TYPE_BYTE ||
+    return sqli_is_legacy_lob_type(type) ||
            type == SQLI_TYPE_BLOB || type == SQLI_TYPE_CLOB;
 }
+
+static sqli_status receive_cost(sqli_conn_t *conn, int fd);
+static sqli_status drain_sq_info(sqli_conn_t *conn, int fd);
 
 sqli_status sqli_fetchblob_materialize(sqli_result_t *result, int col_index,
                                        uint8_t **blob_buf, size_t *blob_len)
@@ -427,6 +435,9 @@ sqli_status sqli_fetchblob_materialize(sqli_result_t *result, int col_index,
         if (sqli_tcp_send(fd, &pad, 1) != 1)
             return SQLI_IO_ERROR;
     }
+    uint8_t eot_msg[2] = {0, SQLI_SQ_EOT};
+    if (sqli_tcp_send(fd, eot_msg, sizeof(eot_msg)) != (ssize_t)sizeof(eot_msg))
+        return SQLI_IO_ERROR;
 
     sqli_conn_t *conn = result->owner_conn;
 
@@ -440,6 +451,18 @@ sqli_status sqli_fetchblob_materialize(sqli_result_t *result, int col_index,
         if (rc != SQLI_OK)
             break;
 
+        if (opcode == SQLI_SQ_COST) {
+            rc = receive_cost(conn, fd);
+            if (rc != SQLI_OK)
+                break;
+            continue;
+        }
+        if (opcode == SQLI_SQ_INFO) {
+            rc = drain_sq_info(conn, fd);
+            if (rc != SQLI_OK)
+                break;
+            continue;
+        }
         if (opcode == SQLI_SQ_BLOB) {
             uint16_t chunk_len = 0;
             rc = read_be16(conn, fd, &chunk_len);
@@ -664,6 +687,16 @@ static sqli_status receive_describe(int fd, sqli_result_t *r, sqli_conn_t *conn)
             if (rc != SQLI_OK) return rc;
             col->encoded_length = enc_len;
 
+            if (ext_info == 10) {
+                col->type = SQLI_TYPE_BLOB;
+            } else if (ext_info == 11) {
+                col->type = SQLI_TYPE_CLOB;
+            } else if (ext_info == 1) {
+                col->type = SQLI_TYPE_LVARCHAR;
+            } else if (ext_info == 5) {
+                col->type = SQLI_TYPE_BOOL;
+            }
+
             sqli_log(SQLI_LOG_DEBUG,
                      "  col[%u]: fidx=%u spos=%u type=%u extInfo=%u srcType=%u encLen=%u name=[%s]",
                      i, field_index, start_pos, type_raw, ext_info, source_type, enc_len, col->name);
@@ -875,6 +908,33 @@ static sqli_status receive_done(int fd, sqli_result_t *r, sqli_conn_t *conn)
                 }
             }
         }
+    }
+
+    /* Drain trailing SQ_COST, SQ_INFO, and SQ_EOT if already buffered */
+    for (;;) {
+        uint8_t peek[2];
+        ssize_t pn2 = sqli_peek_bytes(conn, fd, peek, sizeof(peek));
+        if (pn2 != (ssize_t)sizeof(peek))
+            break;
+        uint16_t next_op = (uint16_t)((peek[0] << 8) | peek[1]);
+        if (next_op == SQLI_SQ_COST) {
+            uint16_t op = 0;
+            if (read_be16(conn, fd, &op) != SQLI_OK) break;
+            if (receive_cost(conn, fd) != SQLI_OK) break;
+            continue;
+        }
+        if (next_op == SQLI_SQ_INFO) {
+            uint16_t op = 0;
+            if (read_be16(conn, fd, &op) != SQLI_OK) break;
+            if (drain_sq_info(conn, fd) != SQLI_OK) break;
+            continue;
+        }
+        if (next_op == SQLI_SQ_EOT) {
+            uint16_t op = 0;
+            if (read_be16(conn, fd, &op) != SQLI_OK) break;
+            continue;
+        }
+        break;
     }
 
     r->eof = 1;
@@ -1191,6 +1251,14 @@ sqli_status sqli_receive_dispatch(int fd, sqli_result_t *result, sqli_conn_t *co
         case SQLI_SQ_TUPLE: /* 14 */
             rc = receive_tuple(fd, result, conn);
             break;
+        case SQLI_SQ_TUPID: /* 25 — tuple identifier (Spec §3) */
+        {
+            uint32_t tupid = 0;
+            rc = read_be32(conn, fd, &tupid);
+            if (rc != SQLI_OK) goto out;
+            sqli_log(SQLI_LOG_DEBUG, "dispatch: SQ_TUPID id=%u", tupid);
+            continue;
+        }
         case SQLI_SQ_DONE: /* 15 */
             rc = receive_done(fd, result, conn);
             break;

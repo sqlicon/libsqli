@@ -109,6 +109,7 @@ const char *sqli_opcode_name(uint16_t opcode)
     case SQLI_SQ_EOT: return "SQ_EOT";
     case SQLI_SQ_ERR: return "SQ_ERR";
     case SQLI_SQ_TUPLE: return "SQ_TUPLE";
+    case SQLI_SQ_TUPID: return "SQ_TUPID";
     case SQLI_SQ_DONE: return "SQ_DONE";
     case SQLI_SQ_BEGIN: return "SQ_BEGIN";
     case SQLI_SQ_DBOPEN: return "SQ_DBOPEN";

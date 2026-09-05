@@ -227,12 +227,13 @@ static int result_has_variable_columns(const sqli_result_t *result)
     return 0;
 }
 
-static int result_has_lvarchar_columns(const sqli_result_t *result)
+static int result_has_extended_columns(const sqli_result_t *result)
 {
     if (result == NULL || result->columns == NULL || result->column_count <= 0)
         return 0;
     for (int i = 0; i < result->column_count; i++) {
-        if ((uint8_t)result->columns[i].type == SQLI_TYPE_LVARCHAR)
+        uint8_t t = (uint8_t)result->columns[i].type;
+        if (t == SQLI_TYPE_LVARCHAR || t == SQLI_TYPE_BLOB || t == SQLI_TYPE_CLOB)
             return 1;
     }
     return 0;
@@ -400,7 +401,7 @@ sqli_status sqli_send_fetch(int fd, int stmt_id, sqli_result_t *result)
         return SQLI_IO_ERROR;
 
     if (result_has_variable_columns(result) &&
-        !result_has_lvarchar_columns(result) &&
+        !result_has_extended_columns(result) &&
         (result == NULL || !result->ret_type_sent)) {
         uint8_t hdr[6] = {
             0, SQLI_SQ_RET_TYPE,
@@ -461,7 +462,7 @@ sqli_status sqli_send_scroll_fetch(int fd, int stmt_id, sqli_result_t *result,
         return SQLI_IO_ERROR;
 
     if (result_has_variable_columns(result) &&
-        !result_has_lvarchar_columns(result) &&
+        !result_has_extended_columns(result) &&
         (result == NULL || !result->ret_type_sent)) {
         uint8_t hdr[6] = {
             0, SQLI_SQ_RET_TYPE,

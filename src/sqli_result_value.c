@@ -330,6 +330,21 @@ const char *sqli_result_get_string(sqli_result_t *result, int col_index)
     char *str_buf = result->col_str_bufs[col_index];
     char *utf8_buf = result->col_utf8_bufs[col_index];
 
+    if (sqli_is_lob_like_type((uint8_t)col->type)) {
+        uint8_t *lob = NULL;
+        size_t lob_len = 0;
+        sqli_status frc = sqli_fetchblob_materialize(result, col_index, &lob, &lob_len);
+        if (frc == SQLI_OK && lob != NULL) {
+            size_t copy = lob_len < SQLI_STR_BUF_SIZE - 1 ? lob_len : SQLI_STR_BUF_SIZE - 1;
+            memcpy(str_buf, lob, copy);
+            str_buf[copy] = '\0';
+            free(lob);
+            return str_buf;
+        }
+        free(lob);
+        return "";
+    }
+
     size_t copy = data_len < SQLI_STR_BUF_SIZE - 1 ? data_len : SQLI_STR_BUF_SIZE - 1;
     memcpy(str_buf, result->tuple_buffer + data_start, copy);
 
