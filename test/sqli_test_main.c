@@ -123,6 +123,10 @@ void test_bind_null_stmt(void);
 void test_execute_null_stmt(void);
 void test_execute_prepared_lob_streaming_wire_protocol(void);
 void test_sblob_api_null_and_invalid_state(void);
+void test_sblob_create_validation(void);
+void test_sblob_write_buffer_validation(void);
+void test_sblob_write_stream_validation(void);
+void test_sblob_close_and_release_validation(void);
 void test_execute_with_retry_null_stmt(void);
 void test_execute_with_retry_retries_on_retryable_error(void);
 void test_execute_with_retry_nonreadonly_does_not_retry(void);
@@ -191,6 +195,9 @@ void test_bind_int64_success(void);
 void test_bind_double_success(void);
 void test_bind_timestamp_success(void);
 void test_bind_epoch_success(void);
+void test_bind_sblob_success(void);
+void test_bind_sblob_null_and_inference(void);
+void test_bind_sblob_invalid(void);
 
 
 void test_bind_int_invalid_index(void);
@@ -247,6 +254,8 @@ void test_execute_with_params_bytes(void);
 void test_execute_with_params_date(void);
 void test_execute_with_params_decimal(void);
 void test_execute_with_params_multiple(void);
+void test_execute_with_params_sblob(void);
+void test_execute_with_params_sblob_null(void);
 void test_bind_decimal_success(void);
 void test_bind_decimal_negative(void);
 void test_bind_datetime_success(void);
@@ -362,6 +371,7 @@ void test_batch_live_reports_success_and_error(void);
 void test_stmt_batch_live_reports_success_and_error(void);
 void test_savepoint_live_flow(void);
 void test_datatypes_live_flow(void);
+void test_smart_lob_live_flow(void);
 void test_pool_create_acquire_release_destroy(void);
 void test_pool_acquire_timeout_when_busy(void);
 void test_pool_acquire_wakes_after_release(void);
@@ -529,6 +539,10 @@ int main(void)
     RUN_TEST(test_execute_null_stmt);
     RUN_TEST(test_execute_prepared_lob_streaming_wire_protocol);
     RUN_TEST(test_sblob_api_null_and_invalid_state);
+    RUN_TEST(test_sblob_create_validation);
+    RUN_TEST(test_sblob_write_buffer_validation);
+    RUN_TEST(test_sblob_write_stream_validation);
+    RUN_TEST(test_sblob_close_and_release_validation);
     RUN_TEST(test_execute_with_retry_null_stmt);
     RUN_TEST(test_execute_with_retry_retries_on_retryable_error);
     RUN_TEST(test_execute_with_retry_nonreadonly_does_not_retry);
@@ -606,6 +620,9 @@ int main(void)
     RUN_TEST(test_bind_double_success);
     RUN_TEST(test_bind_timestamp_success);
     RUN_TEST(test_bind_epoch_success);
+    RUN_TEST(test_bind_sblob_success);
+    RUN_TEST(test_bind_sblob_null_and_inference);
+    RUN_TEST(test_bind_sblob_invalid);
 
 
     RUN_TEST(test_bind_int_invalid_index);
@@ -662,6 +679,8 @@ int main(void)
     RUN_TEST(test_execute_with_params_date);
     RUN_TEST(test_execute_with_params_decimal);
     RUN_TEST(test_execute_with_params_multiple);
+    RUN_TEST(test_execute_with_params_sblob);
+    RUN_TEST(test_execute_with_params_sblob_null);
     RUN_TEST(test_bind_decimal_success);
     RUN_TEST(test_bind_decimal_negative);
     RUN_TEST(test_bind_datetime_success);
@@ -790,6 +809,7 @@ int main(void)
     RUN_TEST(test_stmt_batch_live_reports_success_and_error);
     RUN_TEST(test_savepoint_live_flow);
     RUN_TEST(test_datatypes_live_flow);
+    RUN_TEST(test_smart_lob_live_flow);
 #endif
     }
 #endif

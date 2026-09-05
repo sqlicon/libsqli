@@ -594,6 +594,46 @@ sqli_status sqli_bind_null_double(sqli_stmt_t *stmt, int param_index)
     return SQLI_OK;
 }
 
+sqli_status sqli_bind_sblob(sqli_stmt_t *stmt, int param_index, const sqli_sblob_t *lob)
+{
+    sqli_status rc = validate_param_index(stmt, param_index);
+    if (rc != SQLI_OK) return rc;
+
+    sqli_bound_param *p = &stmt->params[(size_t)(param_index - 1)];
+    sqli_free_bound_param(p);
+
+    if (lob == NULL) {
+        sqli_sblob_type stype = SQLI_SBLOB_BLOB;
+        if (stmt->param_server_types != NULL &&
+            (param_index - 1) < stmt->param_server_type_count &&
+            stmt->param_server_types[(size_t)(param_index - 1)] == SQLI_TYPE_CLOB) {
+            stype = SQLI_SBLOB_CLOB;
+        }
+        p->type = SQLI_BIND_SBLOB;
+        p->value.ival = (int32_t)stype;
+        p->is_null = true;
+        return SQLI_OK;
+    }
+
+    if (lob->locator_len == 0 || lob->locator_len > SQLI_SBLOB_LOCATOR_MAX) {
+        if (stmt->conn)
+            set_error(stmt->conn, "invalid smartblob locator length");
+        return SQLI_INVALID_STATE;
+    }
+
+    uint8_t *dup = malloc(lob->locator_len);
+    if (dup == NULL)
+        return SQLI_ALLOC_FAIL;
+    memcpy(dup, lob->locator, lob->locator_len);
+
+    p->bval = dup;
+    p->blen = lob->locator_len;
+    p->value.ival = (int32_t)lob->type;
+    p->type = SQLI_BIND_SBLOB;
+    p->is_null = false;
+    return SQLI_OK;
+}
+
 /* ----------------------------------------------------------------
  * Build SQ_BIND message
  *
@@ -617,6 +657,8 @@ static size_t estimate_bind_msg_size(const sqli_stmt_t *stmt, const sqli_bound_p
     for (int i = 0; i < stmt->param_count; i++) {
         const sqli_bound_param *par = &params[(size_t)i];
         n += 6; /* type + null + encoded_length */
+        if (par->type == SQLI_BIND_SBLOB)
+            n += 8; /* owner(2) + name(6) */
         if (par->is_null)
             continue;
         uint8_t stype = 0;
@@ -649,6 +691,11 @@ static size_t estimate_bind_msg_size(const sqli_stmt_t *stmt, const sqli_bound_p
         case SQLI_BIND_BYTES: {
             size_t blen = par->blen;
             n += blen + (blen & 1u);
+            break;
+        }
+        case SQLI_BIND_SBLOB: {
+            size_t blen = par->blen;
+            n += 4 + blen + ((4 + blen) & 1u);
             break;
         }
         default: break;
@@ -783,6 +830,20 @@ static size_t build_bind_msg(sqli_stmt_t *stmt, const sqli_bound_param *params,
 
         /* Type code */
         buf[p++] = 0; buf[p++] = wire_type;
+
+        if (par->type == SQLI_BIND_SBLOB) {
+            /* Extended type owner: empty string (length 0) */
+            buf[p++] = 0; buf[p++] = 0;
+            /* Extended type name: "blob" or "clob" */
+            const char *tname = (par->value.ival == SQLI_SBLOB_CLOB) ? "clob" : "blob";
+            uint16_t tnlen = (uint16_t)strlen(tname);
+            buf[p++] = (uint8_t)(tnlen >> 8);
+            buf[p++] = (uint8_t)(tnlen & 0xFF);
+            memcpy(buf + p, tname, tnlen);
+            p += tnlen;
+            if ((2 + tnlen) & 1)
+                buf[p++] = 0;
+        }
 
         if (par->is_null) {
             /* null_indicator = -1 (0xFFFF), encoded_length = 0, no data */
@@ -931,6 +992,21 @@ static size_t build_bind_msg(sqli_stmt_t *stmt, const sqli_bound_param *params,
                     buf[p++] = 0;
                 break;
             }
+            case SQLI_BIND_SBLOB: {
+                buf[p++] = 0; buf[p++] = 0;    /* encoded_length = 0 */
+                uint32_t blen = (uint32_t)par->blen;
+                buf[p++] = (uint8_t)((blen >> 24) & 0xFF);
+                buf[p++] = (uint8_t)((blen >> 16) & 0xFF);
+                buf[p++] = (uint8_t)((blen >> 8) & 0xFF);
+                buf[p++] = (uint8_t)(blen & 0xFF);
+                if (blen > 0 && par->bval != NULL) {
+                    memcpy(buf + p, par->bval, blen);
+                    p += blen;
+                }
+                if ((4 + blen) & 1u)
+                    buf[p++] = 0;
+                break;
+            }
             default:
                 buf[p++] = 0; buf[p++] = 0;    /* encoded_length = 0 */
                 break;
@@ -1023,6 +1099,30 @@ static sqli_status sqli_stmt_receive_execute_result(sqli_stmt_t *stmt)
     }
 
     if (rc == SQLI_OK) {
+        if (stmt->conn != NULL && fd >= 0) {
+            for (int extra = 0; extra < 8; extra++) {
+                if (!sqli_protocol_has_buffered_data(stmt->conn, fd)) {
+                    struct pollfd pfd;
+                    pfd.fd = fd;
+                    pfd.events = POLLIN;
+                    pfd.revents = 0;
+                    int prc = poll(&pfd, 1, 20);
+                    if (prc <= 0 || !(pfd.revents & POLLIN))
+                        break;
+                }
+
+                sqli_result_t tail;
+                memset(&tail, 0, sizeof(tail));
+                tail.owner_conn = stmt->conn;
+                tail.eof = 0;
+                tail.saw_done = false;
+                tail.saw_error = false;
+                sqli_status drc = sqli_receive_dispatch(fd, &tail, stmt->conn);
+                sqli_result_cleanup(&tail);
+                if (drc != SQLI_OK)
+                    break;
+            }
+        }
         stmt->result_valid = true;
     } else if (!stmt->conn->error_info.has_error) {
         set_error(stmt->conn, "error receiving execute response");
@@ -1410,8 +1510,13 @@ void sqli_stmt_close(sqli_stmt_t *stmt)
         return;
 
     /* Close and release statement on server; keep stream aligned. */
-    sqli_stmt_best_effort_control(stmt, 10);              /* SQ_CLOSE */
-    sqli_stmt_best_effort_control(stmt, SQLI_SQ_RELEASE); /* SQ_RELEASE */
+    if (stmt->conn != NULL && stmt->conn->socket_fd > 0 &&
+        stmt->conn->state == SQLI_CONN_READY && stmt->stmt_id >= 0) {
+        sqli_stmt_close_release(stmt->conn, stmt->stmt_id);
+    } else if (stmt->socket_fd > 0 && stmt->stmt_id >= 0) {
+        sqli_stmt_best_effort_control(stmt, 10);              /* SQ_CLOSE */
+        sqli_stmt_best_effort_control(stmt, SQLI_SQ_RELEASE); /* SQ_RELEASE */
+    }
 
     if (stmt->params != NULL) {
         sqli_free_bound_param_array(stmt->params, stmt->param_count);

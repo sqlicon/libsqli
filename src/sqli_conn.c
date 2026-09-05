@@ -316,6 +316,8 @@ sqli_status sqli_create(sqli_conn_t **conn)
     c->cursor_type = SQLI_CURSOR_FORWARD_ONLY;
     c->holdability = SQLI_CURSOR_CLOSE_AT_COMMIT;
     c->fetch_buf_size = 4194304u;
+    c->lo_create_fphandle = -1;
+    c->lo_create_dbname[0] = '\0';
     sqli_charset_decoder_init(&c->decode_cs);
     c->decode_cs_ready = false;
     c->decode_locale_checked = false;

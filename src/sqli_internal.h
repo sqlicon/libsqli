@@ -217,6 +217,10 @@ struct sqli_conn {
     char **env_vars;
     size_t env_var_count;
     size_t env_var_cap;
+
+    /* --- Smart Large Object cached routine handle --- */
+    int32_t lo_create_fphandle;
+    char lo_create_dbname[128];
 };
 
 struct sqli_batch_result {
@@ -443,6 +447,7 @@ sqli_status sqli_send_fetch(int fd, int stmt_id, sqli_result_t *result);
 sqli_status sqli_send_scroll_fetch(int fd, int stmt_id, sqli_result_t *result,
                                    uint16_t scroll_type, int32_t index);
 sqli_status sqli_receive_dispatch(int fd, sqli_result_t *result, sqli_conn_t *conn);
+sqli_status sqli_receive_error(sqli_conn_t *conn, int fd, sqli_result_t *r);
 
 /* Type codecs (sqli_types.c) */
 int sqli_decode_decimal(const uint8_t *buf, size_t buf_size,
@@ -518,6 +523,7 @@ typedef enum {
     SQLI_BIND_DATE      = 7,    /* SQLI_TYPE_DATE */
     SQLI_BIND_STRING    = 13,   /* SQLI_TYPE_VARCHAR */
     SQLI_BIND_BYTES     = 11,   /* SQLI_TYPE_BYTE */
+    SQLI_BIND_SBLOB     = 44,   /* SQLUDTFIXED / SENDRECV for BLOB/CLOB */
     SQLI_BIND_NULL      = -1,   /* NULL marker */
 } sqli_bind_type;
 

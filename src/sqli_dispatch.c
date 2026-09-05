@@ -17,7 +17,6 @@
 #define SQLI_MAX_TUPLE_BYTES (64u * 1024u * 1024u)
 
 static sqli_status receive_done(int fd, sqli_result_t *r, sqli_conn_t *conn);
-static sqli_status receive_error(sqli_conn_t *conn, int fd, sqli_result_t *r);
 static sqli_status drain_bytes(sqli_conn_t *conn, int fd, size_t count);
 
 static int sqli_eot_wait_ms(void)
@@ -515,7 +514,7 @@ sqli_status sqli_fetchblob_materialize(sqli_result_t *result, int col_index,
         if (opcode == SQLI_SQ_ERR) {
             sqli_result_t tmp_result;
             memset(&tmp_result, 0, sizeof(tmp_result));
-            rc = receive_error(result->owner_conn, fd, &tmp_result);
+            rc = sqli_receive_error(result->owner_conn, fd, &tmp_result);
             sqli_result_cleanup(&tmp_result);
             if (rc == SQLI_OK)
                 rc = SQLI_PROTO_ERROR;
@@ -1104,7 +1103,7 @@ static sqli_status receive_cost(sqli_conn_t *conn, int fd)
  *   else: statementOffset (2 or 4 bytes per Remove64KLimit), msg
  * ---------------------------------------------------------------- */
 
-static sqli_status receive_error(sqli_conn_t *conn, int fd, sqli_result_t *r)
+sqli_status sqli_receive_error(sqli_conn_t *conn, int fd, sqli_result_t *r)
 {
     int16_t sqlcode, isamcode;
     sqli_status rc;
@@ -1263,7 +1262,7 @@ sqli_status sqli_receive_dispatch(int fd, sqli_result_t *result, sqli_conn_t *co
             rc = receive_done(fd, result, conn);
             break;
         case SQLI_SQ_ERR: /* 13 */
-            rc = receive_error(conn, fd, result);
+            rc = sqli_receive_error(conn, fd, result);
             break;
         case SQLI_SQ_CLOSE: /* SQ_CLOSE — acknowledged */
             sqli_log(SQLI_LOG_DEBUG, "dispatch: SQ_CLOSE ack");

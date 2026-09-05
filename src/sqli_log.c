@@ -81,7 +81,7 @@ void sqli_log(sqli_log_level level, const char *fmt, ...)
     sqli_log_level current = atomic_load_explicit(&g_log_level, memory_order_relaxed);
 #endif
 
-    if (level > current)
+    if (level > current || fmt == NULL)
         return;
 
     va_list ap;

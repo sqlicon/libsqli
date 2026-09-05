@@ -2197,6 +2197,225 @@ void test_datatypes_live_flow(void)
     sqli_destroy(conn);
 }
 
+#ifdef SQLI_ENABLE_LIVE_TESTS
+typedef struct {
+    const uint8_t *data;
+    size_t total_size;
+    size_t offset;
+    size_t chunk_size;
+} live_stream_ctx;
+
+static sqli_status live_test_memory_stream_reader(void *context, unsigned char *buffer, size_t capacity, size_t *bytes_read)
+{
+    live_stream_ctx *ctx = (live_stream_ctx *)context;
+    if (ctx->offset >= ctx->total_size) {
+        *bytes_read = 0;
+        return SQLI_OK;
+    }
+    size_t remaining = ctx->total_size - ctx->offset;
+    size_t chunk = (ctx->chunk_size > 0 && ctx->chunk_size < capacity) ? ctx->chunk_size : capacity;
+    size_t to_copy = remaining < chunk ? remaining : chunk;
+    memcpy(buffer, ctx->data + ctx->offset, to_copy);
+    ctx->offset += to_copy;
+    *bytes_read = to_copy;
+    return SQLI_OK;
+}
+
+void test_smart_lob_live_flow(void)
+{
+    const char *test_host = getenv("SQLI_TEST_HOST");
+    const char *test_port = getenv("SQLI_TEST_PORT");
+    const char *test_db = getenv("SQLI_TEST_DB");
+    const char *test_user = getenv("SQLI_TEST_USER");
+    const char *test_pass = getenv("SQLI_TEST_PASS");
+    const char *test_server = getenv("SQLI_TEST_SERVER");
+    const char *test_client_locale = getenv("SQLI_TEST_CLIENT_LOCALE");
+    const char *test_db_locale = getenv("SQLI_TEST_DB_LOCALE");
+    sqli_conn_t *conn = NULL;
+    sqli_result_t *res = NULL;
+
+    if (test_host == NULL || test_port == NULL || test_db == NULL ||
+        test_user == NULL || test_pass == NULL) {
+        TEST_IGNORE_MESSAGE("SQLI_TEST_* environment variables not set — skipping live smart lob test");
+        return;
+    }
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_create(&conn));
+
+    const char *target_db = getenv("SQLI_TEST_LOGGING_DB");
+    if (target_db == NULL || target_db[0] == '\0')
+        target_db = test_db;
+
+    sqli_connect_params params = {0};
+    params.hostname = test_host;
+    params.service = test_port;
+    params.server = test_server;
+    params.database = target_db;
+    params.username = test_user;
+    params.password = test_pass;
+    params.client_locale = (test_client_locale && test_client_locale[0] != '\0')
+                         ? test_client_locale : "de_DE.1252";
+    params.db_locale = (test_db_locale && test_db_locale[0] != '\0')
+                     ? test_db_locale : "de_DE.1252";
+
+    if (sqli_connect(conn, &params) != SQLI_OK) {
+        sqli_destroy(conn);
+        TEST_IGNORE_MESSAGE("Informix database not reachable — skipping live smart lob test");
+        return;
+    }
+
+    char tbl[32];
+    snprintf(tbl, sizeof(tbl), "slob_%ld", (long)(time(NULL) % 100000));
+
+    char sql[512];
+    snprintf(sql, sizeof(sql), "CREATE TABLE %s (id INT, b BLOB, c CLOB)", tbl);
+    sqli_status rc = sqli_query(conn, sql, &res);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, rc);
+    if (res) { sqli_result_destroy(res); res = NULL; }
+
+    /* 1. Create BLOB in memory and write buffer */
+    const size_t blob_len = 5000;
+    uint8_t *blob_data = malloc(blob_len);
+    TEST_ASSERT_NOT_NULL(blob_data);
+    for (size_t i = 0; i < blob_len; i++) {
+        blob_data[i] = (uint8_t)((i * 31 + 7) & 0xFF);
+    }
+
+    sqli_sblob_t sblob;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_create(conn, SQLI_SBLOB_BLOB, NULL, &sblob));
+    TEST_ASSERT_TRUE(sblob.open);
+    TEST_ASSERT_GREATER_THAN(0, sblob.lofd);
+    TEST_ASSERT_GREATER_THAN(0, sblob.locator_len);
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_write_buffer(conn, &sblob, blob_data, blob_len));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_close_created(conn, &sblob));
+    TEST_ASSERT_FALSE(sblob.open);
+    TEST_ASSERT_EQUAL_INT(-1, sblob.lofd);
+
+    /* 2. Create CLOB in memory and write stream (spanning multi-chunks across 32000-byte boundary) */
+    const size_t clob_len = 70000;
+    char *clob_data = malloc(clob_len + 1);
+    TEST_ASSERT_NOT_NULL(clob_data);
+    for (size_t i = 0; i < clob_len; i++) {
+        clob_data[i] = (char)('A' + (i % 26));
+    }
+    clob_data[clob_len] = '\0';
+
+    sqli_sblob_t sclob;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_create(conn, SQLI_SBLOB_CLOB, NULL, &sclob));
+    TEST_ASSERT_TRUE(sclob.open);
+    TEST_ASSERT_GREATER_THAN(0, sclob.lofd);
+    TEST_ASSERT_GREATER_THAN(0, sclob.locator_len);
+
+    live_stream_ctx sctx = {
+        .data = (const uint8_t *)clob_data,
+        .total_size = clob_len,
+        .offset = 0,
+        .chunk_size = 16384
+    };
+    uint64_t written_total = 0;
+    sqli_status wrc = sqli_sblob_write_stream(conn, &sclob, live_test_memory_stream_reader, &sctx, &written_total);
+    if (wrc != SQLI_OK) {
+        printf("DEBUG sqli_sblob_write_stream failed: rc=%d err=%s\n", (int)wrc, sqli_error(conn));
+    }
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, wrc);
+    TEST_ASSERT_EQUAL_UINT64((uint64_t)clob_len, written_total);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_close_created(conn, &sclob));
+    TEST_ASSERT_FALSE(sclob.open);
+    TEST_ASSERT_EQUAL_INT(-1, sclob.lofd);
+
+    /* 3. Prepared INSERT of Row 1 (with sblob and sclob) and Row 2 (with NULLs) */
+    sqli_stmt_t *stmt = NULL;
+    int pcount = 0;
+    snprintf(sql, sizeof(sql), "INSERT INTO %s (id, b, c) VALUES (?, ?, ?)", tbl);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_prepare(conn, sql, &pcount, &stmt));
+    TEST_ASSERT_EQUAL_INT(3, pcount);
+
+    /* Row 1 */
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 1, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(stmt, 2, &sblob));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(stmt, 3, &sclob));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_execute(stmt));
+
+    /* Row 2: NULL BLOB and NULL CLOB */
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 1, 2));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(stmt, 2, NULL));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(stmt, 3, NULL));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_execute(stmt));
+
+    sqli_stmt_destroy(stmt);
+
+    /* 4. Query and verify contents */
+    snprintf(sql, sizeof(sql), "SELECT id, b, c FROM %s ORDER BY id", tbl);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_query(conn, sql, &res));
+    TEST_ASSERT_NOT_NULL(res);
+
+    /* Row 1 */
+    TEST_ASSERT_TRUE(sqli_result_next(res));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_get_int(res, 0));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 1));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 2));
+
+    const char *hex_blob = sqli_result_get_string(res, 1);
+    TEST_ASSERT_NOT_NULL(hex_blob);
+    int read_lofd = -1;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_open(conn, hex_blob, SQLI_LO_RDONLY, &read_lofd));
+    TEST_ASSERT_GREATER_THAN(0, read_lofd);
+
+    uint8_t *read_blob_buf = malloc(blob_len + 100);
+    TEST_ASSERT_NOT_NULL(read_blob_buf);
+    size_t blob_bytes_read = 0;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_read(conn, read_lofd, read_blob_buf, blob_len + 100, &blob_bytes_read));
+    TEST_ASSERT_EQUAL_UINT64((uint64_t)blob_len, (uint64_t)blob_bytes_read);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(blob_data, read_blob_buf, blob_len);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_close(conn, read_lofd));
+    free(read_blob_buf);
+
+    const char *hex_clob = sqli_result_get_string(res, 2);
+    TEST_ASSERT_NOT_NULL(hex_clob);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_open_clob(conn, hex_clob, SQLI_LO_RDONLY, &read_lofd));
+    TEST_ASSERT_GREATER_THAN(0, read_lofd);
+
+    char *read_clob_buf = malloc(clob_len + 100);
+    TEST_ASSERT_NOT_NULL(read_clob_buf);
+    size_t clob_bytes_read = 0;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_read(conn, read_lofd, read_clob_buf, clob_len + 100, &clob_bytes_read));
+    TEST_ASSERT_EQUAL_UINT64((uint64_t)clob_len, (uint64_t)clob_bytes_read);
+    TEST_ASSERT_EQUAL_MEMORY(clob_data, read_clob_buf, clob_len);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_close(conn, read_lofd));
+    free(read_clob_buf);
+
+    /* Row 2 */
+    TEST_ASSERT_TRUE(sqli_result_next(res));
+    TEST_ASSERT_EQUAL_INT(2, sqli_result_get_int(res, 0));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(res, 1));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(res, 2));
+
+    sqli_result_destroy(res);
+    res = NULL;
+
+    /* 5. Test sqli_sblob_release on unreferenced Smart-LOB */
+    sqli_sblob_t unref_lob;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_create(conn, SQLI_SBLOB_BLOB, NULL, &unref_lob));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_write_buffer(conn, &unref_lob, "test release", 12));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_close_created(conn, &unref_lob));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_release(conn, &unref_lob));
+    TEST_ASSERT_EQUAL_UINT64(0u, (uint64_t)unref_lob.locator_len);
+    /* Calling release again must fail */
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_release(conn, &unref_lob));
+
+    /* Cleanup */
+    free(blob_data);
+    free(clob_data);
+    snprintf(sql, sizeof(sql), "DROP TABLE %s", tbl);
+    (void)sqli_query(conn, sql, &res);
+    if (res) { sqli_result_destroy(res); res = NULL; }
+
+    sqli_close(conn);
+    sqli_destroy(conn);
+}
+#endif
+
 void test_pool_create_acquire_release_destroy(void)
 {
     mock_srv_ctx *ctx = calloc(1, sizeof(*ctx));

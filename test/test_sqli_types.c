@@ -1637,3 +1637,152 @@ void test_sqli_epoch_helpers(void)
 
     sqli_result_destroy(result);
 }
+
+/* ----------------------------------------------------------------
+ * Smart-LOB creation and streaming lifecycle validation tests
+ * ---------------------------------------------------------------- */
+
+static sqli_status mock_failing_reader(void *ctx, unsigned char *buf, size_t cap, size_t *bread)
+{
+    (void)ctx; (void)buf; (void)cap; (void)bread;
+    return SQLI_ERR;
+}
+
+static sqli_status mock_overflowing_reader(void *ctx, unsigned char *buf, size_t cap, size_t *bread)
+{
+    (void)ctx; (void)buf;
+    *bread = cap + 1;
+    return SQLI_OK;
+}
+
+void test_sblob_create_validation(void)
+{
+    sqli_conn_t fake_conn;
+    memset(&fake_conn, 0, sizeof(fake_conn));
+    fake_conn.state = SQLI_CONN_CLOSED;
+    fake_conn.socket_fd = -1;
+
+    sqli_sblob_t lob;
+    sqli_sblob_options opts = SQLI_SBLOB_OPTIONS_INIT;
+
+    /* NULL conn or NULL out */
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_create(NULL, SQLI_SBLOB_BLOB, NULL, &lob));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_create(&fake_conn, SQLI_SBLOB_BLOB, NULL, NULL));
+
+    /* Invalid type */
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_create(&fake_conn, (sqli_sblob_type)42, NULL, &lob));
+
+    /* Invalid open_mode (< 0 or > 0xFFFF) */
+    opts.open_mode = -1;
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_create(&fake_conn, SQLI_SBLOB_BLOB, &opts, &lob));
+    opts.open_mode = 0x10000;
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_create(&fake_conn, SQLI_SBLOB_BLOB, &opts, &lob));
+    opts.open_mode = 0;
+
+    /* Invalid sbspace (> 127 chars) */
+    char long_name[140];
+    memset(long_name, 'a', sizeof(long_name) - 1);
+    long_name[sizeof(long_name) - 1] = '\0';
+    opts.sbspace = long_name;
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_create(&fake_conn, SQLI_SBLOB_BLOB, &opts, &lob));
+    opts.sbspace = NULL;
+
+    /* Invalid size options (< -1) */
+    opts.estimated_bytes = -2;
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_create(&fake_conn, SQLI_SBLOB_BLOB, &opts, &lob));
+    opts.estimated_bytes = -1;
+
+    opts.maximum_bytes = -5;
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_create(&fake_conn, SQLI_SBLOB_BLOB, &opts, &lob));
+    opts.maximum_bytes = -1;
+
+    opts.extent_kib = -10;
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_create(&fake_conn, SQLI_SBLOB_BLOB, &opts, &lob));
+    opts.extent_kib = -1;
+
+    /* Connection not ready */
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_create(&fake_conn, SQLI_SBLOB_BLOB, NULL, &lob));
+}
+
+void test_sblob_write_buffer_validation(void)
+{
+    sqli_conn_t fake_conn;
+    memset(&fake_conn, 0, sizeof(fake_conn));
+    fake_conn.state = SQLI_CONN_READY;
+    fake_conn.socket_fd = -1;
+
+    sqli_sblob_t lob;
+    memset(&lob, 0, sizeof(lob));
+    lob.lofd = -1;
+    lob.open = false;
+    uint8_t data[10] = {0};
+
+    /* NULL conn or NULL lob */
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_write_buffer(NULL, &lob, data, sizeof(data)));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_write_buffer(&fake_conn, NULL, data, sizeof(data)));
+
+    /* NULL buffer with length > 0 */
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_write_buffer(&fake_conn, &lob, NULL, 10));
+
+    /* Closed handle / lofd < 0 */
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_write_buffer(&fake_conn, &lob, data, sizeof(data)));
+    lob.open = true;
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_write_buffer(&fake_conn, &lob, data, sizeof(data)));
+}
+
+void test_sblob_write_stream_validation(void)
+{
+    sqli_conn_t fake_conn;
+    memset(&fake_conn, 0, sizeof(fake_conn));
+    fake_conn.state = SQLI_CONN_READY;
+    fake_conn.socket_fd = -1;
+
+    sqli_sblob_t lob;
+    memset(&lob, 0, sizeof(lob));
+    lob.lofd = -1;
+    lob.open = false;
+    uint64_t written = 0;
+
+    /* NULL conn, lob, or reader */
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_write_stream(NULL, &lob, mock_failing_reader, NULL, &written));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_write_stream(&fake_conn, NULL, mock_failing_reader, NULL, &written));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_write_stream(&fake_conn, &lob, NULL, NULL, &written));
+
+    /* Closed handle */
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_write_stream(&fake_conn, &lob, mock_failing_reader, NULL, &written));
+
+    /* Open handle: reader returns failure */
+    lob.open = true;
+    lob.lofd = 10;
+    TEST_ASSERT_EQUAL_INT(SQLI_ERR, sqli_sblob_write_stream(&fake_conn, &lob, mock_failing_reader, NULL, &written));
+
+    /* Open handle: reader exceeds buffer capacity */
+    TEST_ASSERT_EQUAL_INT(SQLI_ERR, sqli_sblob_write_stream(&fake_conn, &lob, mock_overflowing_reader, NULL, &written));
+}
+
+void test_sblob_close_and_release_validation(void)
+{
+    sqli_conn_t fake_conn;
+    memset(&fake_conn, 0, sizeof(fake_conn));
+    fake_conn.state = SQLI_CONN_READY;
+    fake_conn.socket_fd = -1;
+
+    sqli_sblob_t lob;
+    memset(&lob, 0, sizeof(lob));
+    lob.lofd = -1;
+    lob.open = false;
+    lob.locator_len = 0;
+
+    /* close_created validation */
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_close_created(NULL, &lob));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_close_created(&fake_conn, NULL));
+    /* Idempotent when already closed: returns SQLI_OK */
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_close_created(&fake_conn, &lob));
+
+    /* release validation */
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_release(NULL, &lob));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_release(&fake_conn, NULL));
+    /* Empty locator: returns SQLI_INVALID_STATE */
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_release(&fake_conn, &lob));
+}
+

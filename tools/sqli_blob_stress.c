@@ -286,49 +286,78 @@ static void *worker_smart_lob_stress(void *arg)
         size_t write_len = smart_sizes[size_idx];
         uint8_t seed = (uint8_t)((task->worker_id * 100 + iter * 7) & 0xFF);
 
-        /* Pre-create dedicated row for this iteration */
-        char ins_sql[256];
-        snprintf(ins_sql, sizeof(ins_sql),
-                 "INSERT INTO test_smart_stress (id, b, c) VALUES (%d, FILETOBLOB('/etc/hosts', 'server'), FILETOCLOB('/etc/hosts', 'server'))",
-                 base_row_id);
-        sqli_result_t *ir = NULL;
-        sqli_status irc = sqli_query(conn, ins_sql, &ir);
-        if (ir) sqli_result_destroy(ir);
-        if (irc != SQLI_OK) {
-            fprintf(stderr, "[Smart Worker %d] seed row %d failed: %s\n",
-                    task->worker_id, base_row_id, sqli_error(conn));
-            atomic_fetch_add_explicit(&task->metrics->total_errors, 1, memory_order_relaxed);
-            break;
-        }
-
-        /* 1. Open smartblob for writing */
-        char open_sql[128];
-        snprintf(open_sql, sizeof(open_sql), "SELECT ifx_lo_open(b, %d) FROM test_smart_stress WHERE id = %d",
-                 SQLI_LO_RDWR, base_row_id);
-
-        int lofd = -1;
-        sqli_status rc = sqli_sblob_open_query(conn, open_sql, &lofd);
-        if (rc != SQLI_OK || lofd < 0) {
-            fprintf(stderr, "[Smart Worker %d] open for write failed on row %d: %s\n",
-                    task->worker_id, base_row_id, sqli_error(conn));
-            atomic_fetch_add_explicit(&task->metrics->total_errors, 1, memory_order_relaxed);
-            break;
-        }
-
         /* Generate payload */
         uint8_t *payload = malloc(write_len);
+        if (payload == NULL) {
+            atomic_fetch_add_explicit(&task->metrics->total_errors, 1, memory_order_relaxed);
+            break;
+        }
         fill_pattern(payload, write_len, seed);
 
-        /* 2. Write payload using SQ_LODATA streaming chunks */
-        size_t bytes_written = 0;
-        rc = sqli_sblob_write(conn, lofd, payload, write_len, &bytes_written);
-        (void)sqli_sblob_close(conn, lofd);
+        /* 1. Create and populate smart BLOB and CLOB via path-blind API */
+        sqli_sblob_t sblob;
+        sqli_status rc = sqli_sblob_create(conn, SQLI_SBLOB_BLOB, NULL, &sblob);
+        if (rc != SQLI_OK) {
+            fprintf(stderr, "[Smart Worker %d] sqli_sblob_create failed on row %d: %s\n",
+                    task->worker_id, base_row_id, sqli_error(conn));
+            free(payload);
+            atomic_fetch_add_explicit(&task->metrics->total_errors, 1, memory_order_relaxed);
+            break;
+        }
+
+        rc = sqli_sblob_write_buffer(conn, &sblob, payload, write_len);
+        if (rc != SQLI_OK) {
+            fprintf(stderr, "[Smart Worker %d] sqli_sblob_write_buffer failed on row %d: %s\n",
+                    task->worker_id, base_row_id, sqli_error(conn));
+            (void)sqli_sblob_release(conn, &sblob);
+            free(payload);
+            atomic_fetch_add_explicit(&task->metrics->total_errors, 1, memory_order_relaxed);
+            break;
+        }
+        (void)sqli_sblob_close_created(conn, &sblob);
+
+        sqli_sblob_t sclob;
+        rc = sqli_sblob_create(conn, SQLI_SBLOB_CLOB, NULL, &sclob);
+        if (rc != SQLI_OK) {
+            fprintf(stderr, "[Smart Worker %d] sqli_sblob_create CLOB failed on row %d: %s\n",
+                    task->worker_id, base_row_id, sqli_error(conn));
+            (void)sqli_sblob_release(conn, &sblob);
+            free(payload);
+            atomic_fetch_add_explicit(&task->metrics->total_errors, 1, memory_order_relaxed);
+            break;
+        }
+
+        rc = sqli_sblob_write_buffer(conn, &sclob, payload, write_len);
+        if (rc != SQLI_OK) {
+            fprintf(stderr, "[Smart Worker %d] sqli_sblob_write_buffer CLOB failed on row %d: %s\n",
+                    task->worker_id, base_row_id, sqli_error(conn));
+            (void)sqli_sblob_release(conn, &sclob);
+            (void)sqli_sblob_release(conn, &sblob);
+            free(payload);
+            atomic_fetch_add_explicit(&task->metrics->total_errors, 1, memory_order_relaxed);
+            break;
+        }
+        (void)sqli_sblob_close_created(conn, &sclob);
+
+        /* 2. Insert row attaching both Smart-LOBs */
+        sqli_stmt_t *ins_stmt = NULL;
+        int pcount = 0;
+        rc = sqli_prepare(conn, "INSERT INTO test_smart_stress (id, b, c) VALUES (?, ?, ?)", &pcount, &ins_stmt);
+        if (rc == SQLI_OK && ins_stmt != NULL) {
+            sqli_bind_int(ins_stmt, 1, base_row_id);
+            sqli_bind_sblob(ins_stmt, 2, &sblob);
+            sqli_bind_sblob(ins_stmt, 3, &sclob);
+            rc = sqli_execute(ins_stmt);
+            sqli_stmt_destroy(ins_stmt);
+        }
 
         if (rc != SQLI_OK) {
-            fprintf(stderr, "[Smart Worker %d] write failed (%zu bytes): %s\n",
-                    task->worker_id, write_len, sqli_error(conn));
-            atomic_fetch_add_explicit(&task->metrics->total_errors, 1, memory_order_relaxed);
+            fprintf(stderr, "[Smart Worker %d] insert row %d failed: %s\n",
+                    task->worker_id, base_row_id, sqli_error(conn));
+            (void)sqli_sblob_release(conn, &sclob);
+            (void)sqli_sblob_release(conn, &sblob);
             free(payload);
+            atomic_fetch_add_explicit(&task->metrics->total_errors, 1, memory_order_relaxed);
             break;
         }
 
@@ -336,6 +365,8 @@ static void *worker_smart_lob_stress(void *arg)
         atomic_fetch_add_explicit(&task->metrics->total_bytes_written, write_len, memory_order_relaxed);
 
         /* 3. Re-open for reading and verify byte-for-byte */
+        char open_sql[256];
+        int lofd = -1;
         snprintf(open_sql, sizeof(open_sql), "SELECT ifx_lo_open(b, %d) FROM test_smart_stress WHERE id = %d",
                  SQLI_LO_RDONLY, base_row_id);
         rc = sqli_sblob_open_query(conn, open_sql, &lofd);
@@ -524,20 +555,58 @@ int main(int argc, char **argv)
     if (r) { sqli_result_destroy(r); r = NULL; }
     printf("          -> Created table test_smart_stress (BLOB, CLOB)\n");
 
-    /* Pre-seed 10 base rows in test_smart_stress with FILETOBLOB */
+    /* Pre-seed 10 base rows in test_smart_stress using path-blind Smart-LOB API */
+    const char *seed_text = "127.0.0.1 localhost informix-host\n::1 localhost ip6-localhost ip6-loopback\n";
+    size_t seed_text_len = strlen(seed_text);
     for (int id = 1; id <= 10; id++) {
-        char seed_sql[256];
-        snprintf(seed_sql, sizeof(seed_sql),
-                 "INSERT INTO test_smart_stress (id, b, c) VALUES (%d, FILETOBLOB('/etc/hosts', 'server'), FILETOCLOB('/etc/hosts', 'server'))",
-                 id);
-        rc = sqli_query(admin_conn, seed_sql, &r);
-        if (r) { sqli_result_destroy(r); r = NULL; }
+        sqli_sblob_t sblob;
+        sqli_sblob_t sclob;
+        rc = sqli_sblob_create(admin_conn, SQLI_SBLOB_BLOB, NULL, &sblob);
+        if (rc != SQLI_OK) {
+            fprintf(stderr, "FATAL: Failed to create seed BLOB %d: %s\n", id, sqli_error(admin_conn));
+            return 1;
+        }
+        rc = sqli_sblob_write_buffer(admin_conn, &sblob, (const uint8_t *)seed_text, seed_text_len);
+        if (rc != SQLI_OK) {
+            fprintf(stderr, "FATAL: Failed to write seed BLOB %d: %s\n", id, sqli_error(admin_conn));
+            (void)sqli_sblob_release(admin_conn, &sblob);
+            return 1;
+        }
+        (void)sqli_sblob_close_created(admin_conn, &sblob);
+
+        rc = sqli_sblob_create(admin_conn, SQLI_SBLOB_CLOB, NULL, &sclob);
+        if (rc != SQLI_OK) {
+            fprintf(stderr, "FATAL: Failed to create seed CLOB %d: %s\n", id, sqli_error(admin_conn));
+            (void)sqli_sblob_release(admin_conn, &sblob);
+            return 1;
+        }
+        rc = sqli_sblob_write_buffer(admin_conn, &sclob, (const uint8_t *)seed_text, seed_text_len);
+        if (rc != SQLI_OK) {
+            fprintf(stderr, "FATAL: Failed to write seed CLOB %d: %s\n", id, sqli_error(admin_conn));
+            (void)sqli_sblob_release(admin_conn, &sclob);
+            (void)sqli_sblob_release(admin_conn, &sblob);
+            return 1;
+        }
+        (void)sqli_sblob_close_created(admin_conn, &sclob);
+
+        sqli_stmt_t *stmt = NULL;
+        int pcount = 0;
+        rc = sqli_prepare(admin_conn, "INSERT INTO test_smart_stress (id, b, c) VALUES (?, ?, ?)", &pcount, &stmt);
+        if (rc == SQLI_OK && stmt != NULL) {
+            sqli_bind_int(stmt, 1, id);
+            sqli_bind_sblob(stmt, 2, &sblob);
+            sqli_bind_sblob(stmt, 3, &sclob);
+            rc = sqli_execute(stmt);
+            sqli_stmt_destroy(stmt);
+        }
         if (rc != SQLI_OK) {
             fprintf(stderr, "FATAL: Failed to seed test_smart_stress row %d: %s\n", id, sqli_error(admin_conn));
+            (void)sqli_sblob_release(admin_conn, &sclob);
+            (void)sqli_sblob_release(admin_conn, &sblob);
             return 1;
         }
     }
-    printf("          -> Seeded 10 template smartblob rows using server /etc/hosts\n");
+    printf("          -> Seeded 10 template smartblob rows in memory\n");
 
     /* Create connection pool for multi-threaded stress */
     sqli_pool_t *pool = NULL;

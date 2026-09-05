@@ -799,3 +799,141 @@ void test_bind_epoch_success(void)
 
     sqli_stmt_destroy(s);
 }
+
+/* ----------------------------------------------------------------
+ * sqli_bind_sblob tests
+ * ---------------------------------------------------------------- */
+
+void test_bind_sblob_success(void)
+{
+    sqli_stmt_t *s = mock_stmt(2);
+    sqli_sblob_t blob;
+    memset(&blob, 0, sizeof(blob));
+    blob.lofd = 1;
+    blob.type = SQLI_SBLOB_BLOB;
+    blob.locator_len = 72;
+    blob.open = false;
+    memset(blob.locator, 0xAB, sizeof(blob.locator));
+
+    sqli_sblob_t clob;
+    memset(&clob, 0, sizeof(clob));
+    clob.lofd = 2;
+    clob.type = SQLI_SBLOB_CLOB;
+    clob.locator_len = 72;
+    clob.open = false;
+    memset(clob.locator, 0xCD, sizeof(clob.locator));
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 1, &blob));
+    TEST_ASSERT_EQUAL_INT(SQLI_BIND_SBLOB, s->params[0].type);
+    TEST_ASSERT_FALSE(s->params[0].is_null);
+    TEST_ASSERT_EQUAL_INT(72, s->params[0].blen);
+    TEST_ASSERT_EQUAL_INT((int32_t)SQLI_SBLOB_BLOB, s->params[0].value.ival);
+    TEST_ASSERT_NOT_NULL(s->params[0].bval);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(blob.locator, s->params[0].bval, 72);
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 2, &clob));
+    TEST_ASSERT_EQUAL_INT(SQLI_BIND_SBLOB, s->params[1].type);
+    TEST_ASSERT_FALSE(s->params[1].is_null);
+    TEST_ASSERT_EQUAL_INT(72, s->params[1].blen);
+    TEST_ASSERT_EQUAL_INT((int32_t)SQLI_SBLOB_CLOB, s->params[1].value.ival);
+    TEST_ASSERT_NOT_NULL(s->params[1].bval);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(clob.locator, s->params[1].bval, 72);
+
+    sqli_stmt_destroy(s);
+}
+
+void test_bind_sblob_null_and_inference(void)
+{
+    sqli_stmt_t *s = mock_stmt(2);
+    uint8_t stypes[2] = { SQLI_TYPE_BLOB, SQLI_TYPE_CLOB };
+    s->param_server_types = stypes;
+    s->param_server_type_count = 2;
+
+    /* Binding NULL with BLOB server type -> infers SQLI_SBLOB_BLOB */
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 1, NULL));
+    TEST_ASSERT_EQUAL_INT(SQLI_BIND_SBLOB, s->params[0].type);
+    TEST_ASSERT_TRUE(s->params[0].is_null);
+    TEST_ASSERT_EQUAL_INT((int32_t)SQLI_SBLOB_BLOB, s->params[0].value.ival);
+
+    /* Binding NULL with CLOB server type -> infers SQLI_SBLOB_CLOB */
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 2, NULL));
+    TEST_ASSERT_EQUAL_INT(SQLI_BIND_SBLOB, s->params[1].type);
+    TEST_ASSERT_TRUE(s->params[1].is_null);
+    TEST_ASSERT_EQUAL_INT((int32_t)SQLI_SBLOB_CLOB, s->params[1].value.ival);
+
+    s->param_server_types = NULL; /* s did not allocate stypes */
+    sqli_stmt_destroy(s);
+}
+
+void test_bind_sblob_invalid(void)
+{
+    sqli_stmt_t *s = mock_stmt(1);
+    sqli_sblob_t blob;
+    memset(&blob, 0, sizeof(blob));
+
+    /* Invalid index */
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_sblob(s, 0, &blob));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_sblob(s, 2, &blob));
+
+    /* NULL stmt */
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_sblob(NULL, 1, &blob));
+
+    /* Empty locator */
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_sblob(s, 1, &blob));
+
+    /* Locator length > SQLI_SBLOB_LOCATOR_MAX */
+    blob.locator_len = SQLI_SBLOB_LOCATOR_MAX + 1;
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_sblob(s, 1, &blob));
+
+    sqli_stmt_destroy(s);
+}
+
+void test_execute_with_params_sblob(void)
+{
+    sqli_stmt_t *s = mock_stmt(2);
+    s->socket_fd = -1;
+    s->stmt_id = 1;
+    s->read_only = false;
+    s->conn = NULL;
+
+    sqli_sblob_t b;
+    memset(&b, 0, sizeof(b));
+    b.type = SQLI_SBLOB_BLOB;
+    b.locator_len = 72;
+    memset(b.locator, 0x11, 72);
+
+    sqli_sblob_t c;
+    memset(&c, 0, sizeof(c));
+    c.type = SQLI_SBLOB_CLOB;
+    c.locator_len = 72;
+    memset(c.locator, 0x22, 72);
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 1, &b));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 2, &c));
+
+    sqli_status rc = sqli_execute(s);
+    TEST_ASSERT_NOT_EQUAL_INT(SQLI_OK, rc); /* exercises estimate_bind_msg_size & build_bind_msg */
+    sqli_stmt_destroy(s);
+}
+
+void test_execute_with_params_sblob_null(void)
+{
+    sqli_stmt_t *s = mock_stmt(2);
+    s->socket_fd = -1;
+    s->stmt_id = 1;
+    s->read_only = false;
+    s->conn = NULL;
+
+    uint8_t stypes[2] = { SQLI_TYPE_BLOB, SQLI_TYPE_CLOB };
+    s->param_server_types = stypes;
+    s->param_server_type_count = 2;
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 1, NULL));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 2, NULL));
+
+    sqli_status rc = sqli_execute(s);
+    TEST_ASSERT_NOT_EQUAL_INT(SQLI_OK, rc); /* exercises estimate_bind_msg_size & build_bind_msg for NULL Smart-LOBs */
+    s->param_server_types = NULL;
+    sqli_stmt_destroy(s);
+}
+

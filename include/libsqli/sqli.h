@@ -1155,6 +1155,116 @@ const sqli_sqlhosts_entry *sqli_find_sqlhosts_entry(
 #define SQLI_LO_SEEK_CUR     1
 #define SQLI_LO_SEEK_END     2
 
+#define SQLI_SBLOB_LOCATOR_MAX 72
+
+typedef enum {
+    SQLI_SBLOB_BLOB = 0,
+    SQLI_SBLOB_CLOB = 1
+} sqli_sblob_type;
+
+typedef struct {
+    const char *sbspace;      /* NULL: server/column default */
+    int64_t estimated_bytes;  /* -1: unspecified */
+    int64_t maximum_bytes;    /* -1: unspecified */
+    int32_t extent_kib;       /* -1: unspecified */
+    uint32_t create_flags;    /* 0: inherited defaults */
+    int open_mode;            /* normally SQLI_LO_WRONLY or SQLI_LO_RDWR */
+} sqli_sblob_options;
+
+#define SQLI_SBLOB_OPTIONS_INIT { NULL, -1, -1, -1, 0, SQLI_LO_WRONLY }
+
+typedef struct {
+    int lofd;
+    sqli_sblob_type type;
+    unsigned char locator[SQLI_SBLOB_LOCATOR_MAX];
+    size_t locator_len;
+    bool open;
+} sqli_sblob_t;
+
+typedef sqli_status (*sqli_sblob_reader)(
+    void *context,
+    unsigned char *buffer,
+    size_t capacity,
+    size_t *bytes_read);
+
+/**
+ * @brief Create a new smart large object on the server and return an open handle.
+ *
+ * Invokes the server routine informix.ifx_lo_create to allocate a new Smart-LOB,
+ * opens it with the requested mode (default SQLI_LO_WRONLY), and retrieves the
+ * 72-byte locator.
+ *
+ * @param[in] conn Active connection.
+ * @param[in] type SQLI_SBLOB_BLOB or SQLI_SBLOB_CLOB.
+ * @param[in] options Optional creation parameters (can be NULL for server defaults).
+ * @param[out] out Output Smart-LOB structure.
+ * @return SQLI_OK on success.
+ */
+sqli_status sqli_sblob_create(sqli_conn_t *conn, sqli_sblob_type type,
+                              const sqli_sblob_options *options, sqli_sblob_t *out);
+
+/**
+ * @brief Write an in-memory buffer to an open created Smart Large Object.
+ *
+ * @param[in] conn Active connection.
+ * @param[in,out] lob Created Smart-LOB handle.
+ * @param[in] data Buffer containing data to upload.
+ * @param[in] length Number of bytes to write.
+ * @return SQLI_OK on success.
+ */
+sqli_status sqli_sblob_write_buffer(sqli_conn_t *conn, sqli_sblob_t *lob,
+                                    const void *data, size_t length);
+
+/**
+ * @brief Stream data to an open created Smart Large Object via reader callback.
+ *
+ * Synchronously invokes @p reader with library scratch buffers until @p reader
+ * reports EOF (0 bytes read) or returns an error. Does not accept or open file paths.
+ *
+ * @param[in] conn Active connection.
+ * @param[in,out] lob Created Smart-LOB handle.
+ * @param[in] reader Reader callback function.
+ * @param[in] context User context passed to callback.
+ * @param[out] bytes_written Optional pointer to receive confirmed total bytes written.
+ * @return SQLI_OK on success.
+ */
+sqli_status sqli_sblob_write_stream(sqli_conn_t *conn, sqli_sblob_t *lob,
+                                    sqli_sblob_reader reader, void *context,
+                                    uint64_t *bytes_written);
+
+/**
+ * @brief Close an open descriptor in a created Smart Large Object handle.
+ *
+ * Idempotent locally; subsequent calls return SQLI_OK. The locator remains
+ * available in @p lob for statement binding.
+ *
+ * @param[in] conn Active connection.
+ * @param[in,out] lob Created Smart-LOB handle.
+ * @return SQLI_OK on success.
+ */
+sqli_status sqli_sblob_close_created(sqli_conn_t *conn, sqli_sblob_t *lob);
+
+/**
+ * @brief Release an unreferenced Smart Large Object on the server and invalidate the handle.
+ *
+ * Fails if the object is already referenced by a table column.
+ *
+ * @param[in] conn Active connection.
+ * @param[in,out] lob Created Smart-LOB handle.
+ * @return SQLI_OK on success.
+ */
+sqli_status sqli_sblob_release(sqli_conn_t *conn, sqli_sblob_t *lob);
+
+/**
+ * @brief Bind a Smart Large Object locator to a prepared statement parameter.
+ *
+ * @param[in] stmt Prepared statement handle.
+ * @param[in] parameter_index 1-based parameter index.
+ * @param[in] lob Created Smart-LOB handle with valid locator (or NULL for NULL).
+ * @return SQLI_OK on success.
+ */
+sqli_status sqli_bind_sblob(sqli_stmt_t *stmt, int parameter_index, const sqli_sblob_t *lob);
+
 /**
  * @brief Open a smart large object from its hexadecimal locator string (for BLOB).
  * @param[in] conn Active connection.

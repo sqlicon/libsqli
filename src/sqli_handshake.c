@@ -1163,6 +1163,8 @@ void sqli_close(sqli_conn_t *conn)
 
     conn->state = SQLI_CONN_CLOSED;
     conn->database_open = 0;
+    conn->lo_create_fphandle = -1;
+    conn->lo_create_dbname[0] = '\0';
     clear_error(conn);
 
     sqli_log(SQLI_LOG_DEBUG, "connection closed");
