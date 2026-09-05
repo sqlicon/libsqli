@@ -575,14 +575,28 @@ static void write_long_sign_mag(uint8_t *dest, int64_t val)
     dest[11] = 0;
 }
 
+static void sqli_safe_copy_str(char *dest, size_t dest_cap, const char *src)
+{
+    if (dest == NULL || dest_cap == 0)
+        return;
+    if (src == NULL) {
+        dest[0] = '\0';
+        return;
+    }
+    size_t len = strlen(src);
+    if (len >= dest_cap)
+        len = dest_cap - 1;
+    memcpy(dest, src, len);
+    dest[len] = '\0';
+}
+
 static sqli_status get_lo_create_fphandle(sqli_conn_t *conn, int32_t *out_handle,
                                          char *out_dbname, size_t dbname_cap)
 {
     if (conn->lo_create_fphandle > 0) {
         *out_handle = conn->lo_create_fphandle;
         if (out_dbname != NULL && dbname_cap > 0) {
-            strncpy(out_dbname, conn->lo_create_dbname, dbname_cap - 1);
-            out_dbname[dbname_cap - 1] = '\0';
+            sqli_safe_copy_str(out_dbname, dbname_cap, conn->lo_create_dbname);
         }
         return SQLI_OK;
     }
@@ -611,12 +625,29 @@ static sqli_status get_lo_create_fphandle(sqli_conn_t *conn, int32_t *out_handle
         return SQLI_IO_ERROR;
     }
 
-    uint8_t op_buf[2];
-    if (sqli_tcp_read(fd, op_buf, 2) != 2) {
-        set_error(conn, "failed to read SQ_GETROUTINE opcode");
-        return SQLI_IO_ERROR;
+    uint16_t op = 0;
+    while (1) {
+        uint8_t op_buf[2];
+        if (sqli_tcp_read(fd, op_buf, 2) != 2) {
+            set_error(conn, "failed to read SQ_GETROUTINE opcode");
+            return SQLI_IO_ERROR;
+        }
+        op = (uint16_t)((op_buf[0] << 8) | op_buf[1]);
+        if (op == SQLI_SQ_DBOPEN_FLAGS) {
+            uint8_t flags_buf[2];
+            if (sqli_tcp_read(fd, flags_buf, 2) != 2) return SQLI_IO_ERROR;
+            continue;
+        }
+        if (op == SQLI_SQ_EOT) {
+            continue;
+        }
+        if (op == SQLI_SQ_XACTSTAT) {
+            uint8_t xact_buf[6];
+            if (sqli_tcp_read(fd, xact_buf, 6) != 6) return SQLI_IO_ERROR;
+            continue;
+        }
+        break;
     }
-    uint16_t op = (uint16_t)((op_buf[0] << 8) | op_buf[1]);
     if (op == SQLI_SQ_ERR) {
         sqli_result_t tmp_res;
         memset(&tmp_res, 0, sizeof(tmp_res));
@@ -684,13 +715,11 @@ static sqli_status get_lo_create_fphandle(sqli_conn_t *conn, int32_t *out_handle
     }
 
     conn->lo_create_fphandle = handle;
-    strncpy(conn->lo_create_dbname, dbname, sizeof(conn->lo_create_dbname) - 1);
-    conn->lo_create_dbname[sizeof(conn->lo_create_dbname) - 1] = '\0';
+    sqli_safe_copy_str(conn->lo_create_dbname, sizeof(conn->lo_create_dbname), dbname);
 
     *out_handle = handle;
     if (out_dbname != NULL && dbname_cap > 0) {
-        strncpy(out_dbname, dbname, dbname_cap - 1);
-        out_dbname[dbname_cap - 1] = '\0';
+        sqli_safe_copy_str(out_dbname, dbname_cap, dbname);
     }
     return SQLI_OK;
 }

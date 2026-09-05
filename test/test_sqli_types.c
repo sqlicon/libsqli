@@ -1786,3 +1786,54 @@ void test_sblob_close_and_release_validation(void)
     TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_release(&fake_conn, &lob));
 }
 
+void test_count_zero_decimal_decoding(void)
+{
+    /* COUNT(*) in Informix wire protocol returns DECIMAL(15,0) with value 0 */
+    const uint8_t tuple[] = {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    sqli_result_t *result = make_single_row_result(SQLI_TYPE_DECIMAL, 0x00000F00u,
+                                                    tuple, sizeof(tuple));
+    TEST_ASSERT_NOT_NULL(result);
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_get_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(result));
+    TEST_ASSERT_EQUAL_INT64(0, sqli_result_get_int64(result, 0));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(result));
+    TEST_ASSERT_EQUAL_STRING("0", sqli_result_get_string(result, 0));
+    sqli_result_destroy(result);
+}
+
+void test_int8_zero_get_int(void)
+{
+    /* INT8 representation of 0: sign = 1, low32 = 0, high32 = 0 */
+    const uint8_t tuple[] = {0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    sqli_result_t *result = make_single_row_result(SQLI_TYPE_INT8, 10,
+                                                    tuple, sizeof(tuple));
+    TEST_ASSERT_NOT_NULL(result);
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_get_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(result));
+    TEST_ASSERT_EQUAL_INT64(0, sqli_result_get_int64(result, 0));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(result));
+    sqli_result_destroy(result);
+}
+
+void test_interval_year_to_month_field_boundary(void)
+{
+    /* INTERVAL(3-2) YEAR TO MONTH: qualifier 0x0602, raw 0xC6 0x03 0x02 0x00 */
+    const uint8_t tuple[] = {0xC6, 0x03, 0x02, 0x00};
+    sqli_result_t *result = make_single_row_result(SQLI_TYPE_INTERVAL, 0x00000602u,
+                                                    tuple, sizeof(tuple));
+    TEST_ASSERT_NOT_NULL(result);
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+
+    sqli_interval_value iv;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_interval(result, 0, &iv));
+    TEST_ASSERT_EQUAL_INT(0, iv.is_null);
+    TEST_ASSERT_EQUAL_INT(0, iv.negative);
+    TEST_ASSERT_EQUAL_INT(3, iv.year);
+    TEST_ASSERT_EQUAL_INT(2, iv.month);
+    TEST_ASSERT_EQUAL_STRING("3-02", sqli_result_get_string(result, 0));
+    sqli_result_destroy(result);
+}
+
+

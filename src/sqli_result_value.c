@@ -58,8 +58,75 @@ static sqli_status sqli_extract_current_value(sqli_result_t *result, int col_ind
 }
 
 /* ----------------------------------------------------------------
- * Typed extractors
+ * Base-100 and typed extractors
  * ---------------------------------------------------------------- */
+
+static int sqli_base100_decode_parts(const uint8_t *raw, size_t len,
+                                     uint8_t *digits, size_t *ndgts,
+                                     int *frac_digits, int *negative)
+{
+    if (raw == NULL || len < 2 || digits == NULL || ndgts == NULL ||
+        frac_digits == NULL || negative == NULL)
+        return 0;
+    int expon = (int8_t)raw[0];
+    *ndgts = len - 1;
+    memcpy(digits, raw + 1, *ndgts);
+    *negative = 0;
+    if ((expon & 0x80) == 0) {
+        sqli_base100_complement(digits, *ndgts);
+        expon ^= 0x7F;
+        *negative = 1;
+    }
+    expon = (expon & 0x7F) - 64;
+    *frac_digits = (int)(*ndgts * 2) - (expon * 2);
+    return 1;
+}
+
+static bool sqli_decimal_to_int64(const uint8_t *raw, size_t len, int64_t *out)
+{
+    if (raw == NULL || len < 1 || out == NULL)
+        return false;
+
+    int expon = (int8_t)raw[0];
+    uint8_t digits[64];
+    size_t ndgts = len - 1;
+    if (ndgts > sizeof(digits))
+        ndgts = sizeof(digits);
+    if (ndgts > 0)
+        memcpy(digits, raw + 1, ndgts);
+
+    int negative = 0;
+    if ((expon & 0x80) == 0) {
+        sqli_base100_complement(digits, ndgts);
+        expon ^= 0x7F;
+        negative = 1;
+    }
+    expon = (expon & 0x7F) - 64;
+
+    bool all_zero = true;
+    for (size_t i = 0; i < ndgts; i++) {
+        if (digits[i] != 0) {
+            all_zero = false;
+            break;
+        }
+    }
+    if (all_zero || expon <= 0) {
+        *out = 0;
+        return true;
+    }
+
+    int64_t v = 0;
+    for (int i = 0; i < expon; i++) {
+        uint8_t d = (i < (int)ndgts) ? digits[i] : 0;
+        if (d > 99)
+            return false;
+        v = (v * 100) + d;
+    }
+    if (negative)
+        v = -v;
+    *out = v;
+    return true;
+}
 
 int32_t sqli_result_get_int(sqli_result_t *result, int col_index)
 {
@@ -74,6 +141,18 @@ int32_t sqli_result_get_int(sqli_result_t *result, int col_index)
 
     const sqli_column_info *col = &result->columns[(size_t)col_index];
     uint8_t type = (uint8_t)col->type;
+
+    if (type == SQLI_TYPE_DECIMAL || type == SQLI_TYPE_MONEY) {
+        uint8_t raw[64];
+        size_t raw_len = sizeof(raw);
+        if (sqli_extract_current_value(result, col_index, raw, &raw_len) != SQLI_OK)
+            return 0;
+        int64_t v64 = 0;
+        if (!sqli_decimal_to_int64(raw, raw_len, &v64))
+            return 0;
+        return (int32_t)v64;
+    }
+
     if (result->cur_cache_row != result->current_row ||
         result->cur_col_data_start == NULL || result->cur_col_data_len == NULL)
         sqli_result_prepare_row_cache(result);
@@ -100,6 +179,16 @@ int32_t sqli_result_get_int(sqli_result_t *result, int col_index)
         default:
             return 1;
         }
+    }
+
+    if (type == SQLI_TYPE_INT8 || type == SQLI_TYPE_SERIAL8) {
+        if (len < 10)
+            return 0;
+        bool is_null = false;
+        int64_t v = sqli_decode_ifx_int8(buf, &is_null);
+        if (is_null)
+            return INT32_MIN;
+        return (int32_t)v;
     }
 
     if (len >= 4) {
@@ -129,6 +218,18 @@ int64_t sqli_result_get_int64(sqli_result_t *result, int col_index)
 
     const sqli_column_info *col = &result->columns[(size_t)col_index];
     uint8_t type = (uint8_t)col->type;
+
+    if (type == SQLI_TYPE_DECIMAL || type == SQLI_TYPE_MONEY) {
+        uint8_t raw[64];
+        size_t raw_len = sizeof(raw);
+        if (sqli_extract_current_value(result, col_index, raw, &raw_len) != SQLI_OK)
+            return 0;
+        int64_t v64 = 0;
+        if (!sqli_decimal_to_int64(raw, raw_len, &v64))
+            return 0;
+        return v64;
+    }
+
     if (result->cur_cache_row != result->current_row ||
         result->cur_col_data_start == NULL || result->cur_col_data_len == NULL)
         sqli_result_prepare_row_cache(result);
@@ -345,6 +446,33 @@ const char *sqli_result_get_string(sqli_result_t *result, int col_index)
         return "";
     }
 
+    if (col->type == SQLI_TYPE_DECIMAL || col->type == SQLI_TYPE_MONEY) {
+        const char *dec_str = sqli_result_get_decimal_string(result, col_index);
+        size_t dlen = strlen(dec_str);
+        size_t copy = dlen < SQLI_STR_BUF_SIZE - 1 ? dlen : SQLI_STR_BUF_SIZE - 1;
+        memcpy(str_buf, dec_str, copy);
+        str_buf[copy] = '\0';
+        return str_buf;
+    }
+
+    if (col->type == SQLI_TYPE_DATETIME) {
+        const char *dt_str = sqli_result_get_datetime_string(result, col_index);
+        size_t dlen = strlen(dt_str);
+        size_t copy = dlen < SQLI_STR_BUF_SIZE - 1 ? dlen : SQLI_STR_BUF_SIZE - 1;
+        memcpy(str_buf, dt_str, copy);
+        str_buf[copy] = '\0';
+        return str_buf;
+    }
+
+    if (col->type == SQLI_TYPE_INTERVAL) {
+        const char *iv_str = sqli_result_get_interval_string(result, col_index);
+        size_t ilen = strlen(iv_str);
+        size_t copy = ilen < SQLI_STR_BUF_SIZE - 1 ? ilen : SQLI_STR_BUF_SIZE - 1;
+        memcpy(str_buf, iv_str, copy);
+        str_buf[copy] = '\0';
+        return str_buf;
+    }
+
     size_t copy = data_len < SQLI_STR_BUF_SIZE - 1 ? data_len : SQLI_STR_BUF_SIZE - 1;
     memcpy(str_buf, result->tuple_buffer + data_start, copy);
 
@@ -486,27 +614,6 @@ bool sqli_result_get_bool(sqli_result_t *result, int col_index)
 {
     int32_t v = sqli_result_get_int(result, col_index);
     return v != 0;
-}
-
-static int sqli_base100_decode_parts(const uint8_t *raw, size_t len,
-                                     uint8_t *digits, size_t *ndgts,
-                                     int *frac_digits, int *negative)
-{
-    if (raw == NULL || len < 2 || digits == NULL || ndgts == NULL ||
-        frac_digits == NULL || negative == NULL)
-        return 0;
-    int expon = (int8_t)raw[0];
-    *ndgts = len - 1;
-    memcpy(digits, raw + 1, *ndgts);
-    *negative = 0;
-    if ((expon & 0x80) == 0) {
-        sqli_base100_complement(digits, *ndgts);
-        expon ^= 0x7F;
-        *negative = 1;
-    }
-    expon = (expon & 0x7F) - 64;
-    *frac_digits = (int)(*ndgts * 2) - (expon * 2);
-    return 1;
 }
 
 void sqli_days_to_ymd_ifx(int32_t ifx_days, int *y, int *m, int *d)
@@ -774,25 +881,62 @@ const char *sqli_result_get_interval_string(sqli_result_t *result, int col_index
     if (sqli_result_get_interval(result, col_index, &iv) != SQLI_OK || iv.is_null)
         return out;
 
-    /* Canonical style: [-]Y-M D H:M:S[.f] with omitted leading sections */
     int n = 0;
     if (iv.negative)
         n += snprintf(out + n, sizeof(out) - (size_t)n, "-");
-    if (iv.year || iv.month) {
-        n += snprintf(out + n, sizeof(out) - (size_t)n, "%d-%02d", iv.year, iv.month);
-    }
-    if (iv.day || iv.hour || iv.minute || iv.second || iv.fraction_scale > 0) {
-        if (n > 0 && (size_t)n < sizeof(out))
-            n += snprintf(out + n, sizeof(out) - (size_t)n, " ");
-        n += snprintf(out + n, sizeof(out) - (size_t)n, "%d %02d:%02d:%02d",
-                      iv.day, iv.hour, iv.minute, iv.second);
-        if (iv.fraction_scale > 0 && (size_t)n < sizeof(out)) {
-            (void)snprintf(out + n, sizeof(out) - (size_t)n, ".%0*u",
-                           iv.fraction_scale, iv.fraction);
+
+    if (iv.start_qualifier <= 2 && iv.end_qualifier <= 2) {
+        if (iv.start_qualifier == 0 && iv.end_qualifier == 0) {
+            n += snprintf(out + n, sizeof(out) - (size_t)n, "%d", iv.year);
+        } else if (iv.start_qualifier == 2 && iv.end_qualifier == 2) {
+            n += snprintf(out + n, sizeof(out) - (size_t)n, "%d", iv.month);
+        } else {
+            n += snprintf(out + n, sizeof(out) - (size_t)n, "%d-%02d", iv.year, iv.month);
         }
-    } else if (n == 0) {
-        snprintf(out, sizeof(out), "0");
+    } else {
+        bool started = false;
+        if (iv.start_qualifier == 4) {
+            n += snprintf(out + n, sizeof(out) - (size_t)n, "%d", iv.day);
+            started = true;
+        }
+        if (iv.end_qualifier >= 6) {
+            if (started && n < (int)sizeof(out))
+                n += snprintf(out + n, sizeof(out) - (size_t)n, " ");
+            if (iv.start_qualifier <= 6) {
+                if (started)
+                    n += snprintf(out + n, sizeof(out) - (size_t)n, "%02d", iv.hour);
+                else
+                    n += snprintf(out + n, sizeof(out) - (size_t)n, "%d", iv.hour);
+                started = true;
+            }
+            if (iv.end_qualifier >= 8) {
+                if (started)
+                    n += snprintf(out + n, sizeof(out) - (size_t)n, ":%02d", iv.minute);
+                else {
+                    n += snprintf(out + n, sizeof(out) - (size_t)n, "%d", iv.minute);
+                    started = true;
+                }
+                if (iv.end_qualifier >= 10) {
+                    if (started)
+                        n += snprintf(out + n, sizeof(out) - (size_t)n, ":%02d", iv.second);
+                    else {
+                        n += snprintf(out + n, sizeof(out) - (size_t)n, "%d", iv.second);
+                        started = true;
+                    }
+                }
+            }
+        }
+        if (iv.fraction_scale > 0 && n < (int)sizeof(out)) {
+            if (!started)
+                n += snprintf(out + n, sizeof(out) - (size_t)n, "0");
+            n += snprintf(out + n, sizeof(out) - (size_t)n, ".%0*u",
+                          iv.fraction_scale, iv.fraction);
+        }
     }
+
+    if (n == 0)
+        snprintf(out, sizeof(out), "0");
+
     return out;
 }
 
@@ -917,21 +1061,54 @@ sqli_status sqli_result_get_interval(sqli_result_t *result, int col_index,
     out->end_qualifier = (uint8_t)qend;
     out->first_field_width = (uint8_t)first_width;
 
-    char digits[160];
-    int negative = 0;
-    int dlen = sqli_extract_temporal_digits(raw, raw_len, digits, sizeof(digits), &negative);
-    if (dlen <= 0)
+    if (raw_len < 2)
         return SQLI_PROTO_ERROR;
-    out->negative = negative ? 1 : 0;
 
-    int pos = 0;
-    int fields_end = qend > 10 ? 10 : qend;
-    for (int code = qstart; code <= fields_end; code += 2) {
-        int w = (code == qstart) ? first_width : 2;
-        if (pos + w > dlen)
-            break;
-        int val = sqli_parse_digits_to_int(digits + pos, (size_t)w);
-        switch (code) {
+    int expon = (int8_t)raw[0];
+    uint8_t dec_dgts[64];
+    size_t dec_ndgts = raw_len - 1;
+    if (dec_ndgts > sizeof(dec_dgts))
+        dec_ndgts = sizeof(dec_dgts);
+    memcpy(dec_dgts, raw + 1, dec_ndgts);
+
+    int negative = 0;
+    if ((expon & 0x80) == 0) {
+        sqli_base100_complement(dec_dgts, dec_ndgts);
+        expon ^= 0x7F;
+        negative = 1;
+    }
+    out->negative = negative ? 1 : 0;
+    expon = (expon & 0x7F) - 64;
+
+    while (dec_ndgts > 0 && dec_dgts[dec_ndgts - 1] == 0)
+        dec_ndgts--;
+
+    int bexpon = (qlen + 10 - qend + 1) / 2;
+    uint8_t dtbuf[32];
+    memset(dtbuf, 0, sizeof(dtbuf));
+    if (dec_ndgts > 0 && bexpon >= expon) {
+        size_t offset = (size_t)(bexpon - expon);
+        if (offset < sizeof(dtbuf)) {
+            size_t copy = dec_ndgts;
+            if (offset + copy > sizeof(dtbuf))
+                copy = sizeof(dtbuf) - offset;
+            memcpy(dtbuf + offset, dec_dgts, copy);
+        }
+    }
+
+    int flen = first_width;
+    int dtbufIndex = 0;
+    int currentField = qstart;
+
+    if (qstart != 12) {
+        int i = flen / 2;
+        if ((flen & 1) > 0)
+            i++;
+        int val = 0;
+        while (dtbufIndex < i && dtbufIndex < (int)sizeof(dtbuf)) {
+            val = val * 100 + dtbuf[dtbufIndex++];
+        }
+        switch (qstart) {
         case 0: out->year = val; break;
         case 2: out->month = val; break;
         case 4: out->day = val; break;
@@ -940,16 +1117,37 @@ sqli_status sqli_result_get_interval(sqli_result_t *result, int col_index,
         case 10: out->second = val; break;
         default: break;
         }
-        pos += w;
+        currentField = qstart + 2;
+    }
+
+    int fields_end = qend > 10 ? 10 : qend;
+    while (currentField <= fields_end) {
+        int val = (dtbufIndex < (int)sizeof(dtbuf)) ? dtbuf[dtbufIndex++] : 0;
+        switch (currentField) {
+        case 0: out->year = val; break;
+        case 2: out->month = val; break;
+        case 4: out->day = val; break;
+        case 6: out->hour = val; break;
+        case 8: out->minute = val; break;
+        case 10: out->second = val; break;
+        default: break;
+        }
+        currentField += 2;
     }
 
     if (qend > 10) {
-        int frac_w = qend - 10;
-        if (frac_w > 0 && pos + frac_w <= dlen) {
-            out->fraction = sqli_parse_digits_to_int(digits + pos, (size_t)frac_w);
-            out->fraction_scale = frac_w;
+        int scale = qend - 10;
+        int nbytes = (scale + 1) / 2;
+        int frac_val = 0;
+        for (int b = 0; b < nbytes; b++) {
+            frac_val = frac_val * 100 + ((dtbufIndex < (int)sizeof(dtbuf)) ? dtbuf[dtbufIndex++] : 0);
         }
+        if (scale & 1)
+            frac_val /= 10;
+        out->fraction = frac_val;
+        out->fraction_scale = scale;
     }
+
     out->is_null = 0;
     return SQLI_OK;
 }

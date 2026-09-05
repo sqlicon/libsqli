@@ -1214,3 +1214,83 @@ void test_result_destroy_skips_close_when_stmt_invalid(void)
     close(read_fd);
     close(write_fd);
 }
+
+void test_send_fetch_with_varlen_and_bool_suppresses_ret_type(void)
+{
+    int read_fd = -1, write_fd = -1;
+    if (create_socket_pair(&read_fd, &write_fd) != 0)
+        TEST_IGNORE_MESSAGE("socketpair unavailable for dispatch test");
+
+    sqli_result_t result;
+    memset(&result, 0, sizeof(result));
+    result.column_count = 2;
+    result.columns = calloc(2, sizeof(*result.columns));
+    TEST_ASSERT_NOT_NULL(result.columns);
+
+    /* Column 0: VARCHAR (variable length) */
+    result.columns[0].type = SQLI_TYPE_VARCHAR;
+    result.columns[0].encoded_length = 64;
+
+    /* Column 1: BOOLEAN (extended / UDT) */
+    result.columns[1].type = SQLI_TYPE_BOOL;
+    result.columns[1].encoded_length = 1;
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_send_fetch(write_fd, 0x1234, &result));
+
+    uint8_t buf[64];
+    int n = (int)recv(read_fd, buf, sizeof(buf), 0);
+    TEST_ASSERT_GREATER_THAN_INT(0, n);
+    /* Should only send SQ_ID (4 bytes) + SQ_NFETCH (10 bytes) = 14 bytes; NO SQ_RET_TYPE */
+    TEST_ASSERT_EQUAL_INT(14, n);
+    TEST_ASSERT_EQUAL_UINT8(0, buf[0]);
+    TEST_ASSERT_EQUAL_UINT8(SQLI_SQ_ID, buf[1]);
+    TEST_ASSERT_EQUAL_UINT8(0x12, buf[2]);
+    TEST_ASSERT_EQUAL_UINT8(0x34, buf[3]);
+    TEST_ASSERT_EQUAL_UINT8(0, buf[4]);
+    TEST_ASSERT_EQUAL_UINT8(SQLI_SQ_NFETCH, buf[5]);
+    TEST_ASSERT_EQUAL_UINT8(0, buf[12]);
+    TEST_ASSERT_EQUAL_UINT8(SQLI_SQ_EOT, buf[13]);
+
+    free(result.columns);
+    close(read_fd);
+    close(write_fd);
+}
+
+void test_receive_done_drains_dbopen_flags(void)
+{
+    int read_fd = -1, write_fd = -1;
+    if (create_socket_pair(&read_fd, &write_fd) != 0)
+        TEST_IGNORE_MESSAGE("socketpair unavailable for dispatch test");
+
+    /* Send DONE frame followed by SQ_DBOPEN_FLAGS (0x0000, flags 0x0001) */
+    uint8_t wire[] = {
+        0, SQLI_SQ_DONE,
+        0, 0,                   /* warnings */
+        0, 0, 0, 1,             /* rows_affected = 1 */
+        0, 0, 0, 0,             /* rowid = 0 */
+        0, 0, 0, 0,             /* errd1 = 0 */
+        0, SQLI_SQ_DBOPEN_FLAGS,
+        0, 1                    /* flags = 1 */
+    };
+    send(write_fd, wire, sizeof(wire), 0);
+
+    sqli_conn_t *conn = calloc(1, sizeof(*conn));
+    sqli_result_t *result = calloc(1, sizeof(*result));
+    conn->socket_fd = read_fd;
+    conn->state = SQLI_CONN_READY;
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_receive_dispatch(read_fd, result, conn));
+    TEST_ASSERT_TRUE(result->saw_done);
+
+    /* Verify all bytes including SQ_DBOPEN_FLAGS were consumed */
+    uint8_t dummy;
+    ssize_t n = recv(read_fd, &dummy, 1, MSG_DONTWAIT);
+    TEST_ASSERT_TRUE(n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK));
+
+    sqli_result_cleanup(result);
+    free(result);
+    free(conn);
+    close(read_fd);
+    close(write_fd);
+}
+

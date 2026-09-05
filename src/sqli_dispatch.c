@@ -928,6 +928,13 @@ static sqli_status receive_done(int fd, sqli_result_t *r, sqli_conn_t *conn)
             if (drain_sq_info(conn, fd) != SQLI_OK) break;
             continue;
         }
+        if (next_op == SQLI_SQ_DBOPEN_FLAGS) {
+            uint16_t op = 0;
+            uint16_t flags = 0;
+            if (read_be16(conn, fd, &op) != SQLI_OK) break;
+            if (read_be16(conn, fd, &flags) != SQLI_OK) break;
+            continue;
+        }
         if (next_op == SQLI_SQ_EOT) {
             uint16_t op = 0;
             if (read_be16(conn, fd, &op) != SQLI_OK) break;

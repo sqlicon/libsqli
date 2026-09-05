@@ -430,7 +430,10 @@ ssize_t sqli_tcp_send(int fd, const unsigned char *buf, size_t count)
                 errno = ECONNRESET;
                 return -1;
             }
-            n = write(fd, buf + total, count - total);
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+            n = send(fd, buf + total, count - total, MSG_NOSIGNAL);
             if (n < 0) {
                 if (errno == EINTR)
                     continue;  /* retry on signal */

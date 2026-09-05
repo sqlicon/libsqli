@@ -34,6 +34,75 @@ static int append_text(char **buf, size_t *len, size_t *cap, const char *src, si
     return 0;
 }
 
+static char *find_statement_terminator(char *str)
+{
+    if (str == NULL)
+        return NULL;
+
+    bool in_single_quote = false;
+    bool in_double_quote = false;
+    bool in_line_comment = false;
+    bool in_block_comment = false;
+    bool in_curly_comment = false;
+
+    for (char *p = str; *p != '\0'; p++) {
+        if (in_single_quote) {
+            if (*p == '\'') {
+                if (*(p + 1) == '\'') {
+                    p++; /* Escaped single-quote '' */
+                } else {
+                    in_single_quote = false;
+                }
+            } else if (*p == '\\' && *(p + 1) != '\0') {
+                p++;
+            }
+        } else if (in_double_quote) {
+            if (*p == '"') {
+                if (*(p + 1) == '"') {
+                    p++; /* Escaped double-quote "" */
+                } else {
+                    in_double_quote = false;
+                }
+            } else if (*p == '\\' && *(p + 1) != '\0') {
+                p++;
+            }
+        } else if (in_line_comment) {
+            if (*p == '\n') {
+                in_line_comment = false;
+            }
+        } else if (in_block_comment) {
+            if (*p == '*' && *(p + 1) == '/') {
+                in_block_comment = false;
+                p++;
+            }
+        } else if (in_curly_comment) {
+            if (*p == '}') {
+                in_curly_comment = false;
+            }
+        } else {
+            /* Normal SQL lexical state */
+            if (*p == ';') {
+                return p;
+            }
+            if (*p == '\'') {
+                in_single_quote = true;
+            } else if (*p == '"') {
+                in_double_quote = true;
+            } else if (*p == '-' && *(p + 1) == '-') {
+                in_line_comment = true;
+                p++;
+            } else if (*p == '/' && *(p + 1) == '*') {
+                in_block_comment = true;
+                p++;
+            } else if (*p == '{') {
+                in_curly_comment = true;
+            }
+        }
+    }
+
+    return NULL;
+}
+
 /* ---------------------------------------------------------------- */
 /* Execute pending statements (split on ';')                        */
 /* ---------------------------------------------------------------- */
@@ -46,7 +115,7 @@ static sqlicon_exit_code execute_pending_statements(sqli_conn_t *conn, char **pe
         discard_leading_whitespace(*pending, pending_len);
 
     for (;;) {
-        char *semi = strchr(*pending, ';');
+        char *semi = find_statement_terminator(*pending);
         if (semi == NULL)
             return SQLICON_EXIT_OK;
 
@@ -97,7 +166,7 @@ static sqlicon_exit_code execute_inline_query(sqli_conn_t *conn, const char *sql
     sqlicon_exit_code rc = SQLICON_EXIT_OK;
     while (len > 0) {
         discard_leading_whitespace(buf, &len);
-        char *semi = strchr(buf, ';');
+        char *semi = find_statement_terminator(buf);
 
         if (semi == NULL) {
             /* No semicolon — execute remaining as a single statement. */

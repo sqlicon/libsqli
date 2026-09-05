@@ -233,7 +233,9 @@ static int result_has_extended_columns(const sqli_result_t *result)
         return 0;
     for (int i = 0; i < result->column_count; i++) {
         uint8_t t = (uint8_t)result->columns[i].type;
-        if (t == SQLI_TYPE_LVARCHAR || t == SQLI_TYPE_BLOB || t == SQLI_TYPE_CLOB)
+        if (t == SQLI_TYPE_LVARCHAR || t == SQLI_TYPE_BLOB || t == SQLI_TYPE_CLOB ||
+            t == SQLI_TYPE_BOOL || t == SQLI_TYPE_DBOOLEAN ||
+            (t > 18 && t != SQLI_TYPE_BIGINT && t != SQLI_TYPE_BIGSERIAL))
             return 1;
     }
     return 0;

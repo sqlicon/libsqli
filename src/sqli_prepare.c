@@ -1325,12 +1325,6 @@ static sqli_status sqli_stmt_execute_select(sqli_stmt_t *stmt)
         }
     }
 
-    if (stmt->conn->cursor_type != SQLI_CURSOR_SCROLL_INSENSITIVE) {
-        sqli_stmt_close_release(stmt->conn, stmt->stmt_id);
-        stmt->stmt_id = -1;
-        stmt->result.stmt_id = -1;
-    }
-
     stmt->result_valid = true;
     return SQLI_OK;
 }

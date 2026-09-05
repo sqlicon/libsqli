@@ -3,9 +3,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <signal.h>
+#endif
 
 int main(int argc, char **argv)
 {
+#ifndef _WIN32
+    signal(SIGPIPE, SIG_IGN);
+#endif
     sqlicon_cli_options opt;
     sqlicon_runtime rt;
     sqlicon_profile_override ov;

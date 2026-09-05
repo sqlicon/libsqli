@@ -88,9 +88,14 @@ void test_result_scroll_navigation(void);
 void test_result_first_scroll_refetches_with_sfetch_absolute(void);
 void test_result_get_string_cp1252_to_utf8_iconv(void);
 void test_result_destroy_skips_close_when_stmt_invalid(void);
+void test_send_fetch_with_varlen_and_bool_suppresses_ret_type(void);
+void test_receive_done_drains_dbopen_flags(void);
 #endif
 
 /* Phase 4 tests */
+void test_count_zero_decimal_decoding(void);
+void test_int8_zero_get_int(void);
+void test_interval_year_to_month_field_boundary(void);
 void test_encode_decode_date_epoch(void);
 void test_encode_decode_date_positive(void);
 void test_encode_decode_date_negative(void);
@@ -502,6 +507,8 @@ int main(void)
     RUN_TEST(test_result_first_scroll_refetches_with_sfetch_absolute);
     RUN_TEST(test_result_get_string_cp1252_to_utf8_iconv);
     RUN_TEST(test_result_destroy_skips_close_when_stmt_invalid);
+    RUN_TEST(test_send_fetch_with_varlen_and_bool_suppresses_ret_type);
+    RUN_TEST(test_receive_done_drains_dbopen_flags);
     }
 #endif
 
@@ -599,6 +606,9 @@ int main(void)
     RUN_TEST(test_dt_416_interval_null_semantic_object);
     RUN_TEST(test_dt_timestamp_retrieval);
     RUN_TEST(test_sqli_epoch_helpers);
+    RUN_TEST(test_count_zero_decimal_decoding);
+    RUN_TEST(test_int8_zero_get_int);
+    RUN_TEST(test_interval_year_to_month_field_boundary);
     section_checkpoint("phase4:end");
     }
 
@@ -794,7 +804,7 @@ int main(void)
     RUN_TEST(test_query_error_response);
     RUN_TEST(test_query_null_params);
     RUN_TEST(test_prepare_execute_select_returns_rows);
-//  RUN_TEST(test_prepare_execute_select_with_bind_returns_rows);
+    RUN_TEST(test_prepare_execute_select_with_bind_returns_rows);
     RUN_TEST(test_txn_begin_success);
     RUN_TEST(test_txn_commit_success);
     RUN_TEST(test_txn_rollback_success);
