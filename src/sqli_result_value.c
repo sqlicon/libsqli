@@ -830,25 +830,38 @@ static int sqli_parse_digits_to_int(const char *digits, size_t n)
 }
 
 static int sqli_extract_temporal_digits(const uint8_t *raw, size_t len,
+                                        uint32_t encoded_length,
                                         char *digits, size_t digits_cap,
                                         int *negative)
 {
     uint8_t b100[63];
     size_t ndgts = 0;
     int frac_digits = 0;
-    if (!sqli_base100_decode_parts(raw, len, b100, &ndgts, &frac_digits, negative))
+    int qlen = sqli_qual_length(encoded_length);
+    int qend = sqli_qual_end(encoded_length);
+    if (len < 2 || len - 1 > sizeof(b100) || qlen <= 0 ||
+        (size_t)qlen >= digits_cap ||
+        !sqli_base100_decode_parts(raw, len, b100, &ndgts, &frac_digits, negative))
         return 0;
-    (void)frac_digits;
 
-    size_t p = 0;
+    /* Temporal decimals are aligned to the qualifier's SECOND position.
+     * The wire omits leading zero pairs and adjusts its exponent. Restore
+     * those positions before splitting digits into calendar/time fields. */
+    int exponent = (int)ndgts - frac_digits / 2;
+    int expected_exponent = (qlen + 10 - qend + 1) / 2;
+    int leading_pairs = expected_exponent - exponent;
+    memset(digits, '0', (size_t)qlen);
     for (size_t i = 0; i < ndgts; i++) {
-        if (b100[i] > 99 || p + 2 >= digits_cap)
+        if (b100[i] > 99)
             return 0;
-        digits[p++] = (char)('0' + (b100[i] / 10));
-        digits[p++] = (char)('0' + (b100[i] % 10));
+        int pos = 2 * (leading_pairs + (int)i);
+        if (pos >= 0 && pos < qlen)
+            digits[pos] = (char)('0' + b100[i] / 10);
+        if (pos + 1 >= 0 && pos + 1 < qlen)
+            digits[pos + 1] = (char)('0' + b100[i] % 10);
     }
-    digits[p] = '\0';
-    return (int)p;
+    digits[qlen] = '\0';
+    return qlen;
 }
 
 static sqli_status sqli_get_temporal_payload(sqli_result_t *result, int col_index,
@@ -1013,31 +1026,50 @@ const char *sqli_result_get_date_string(sqli_result_t *result, int col_index)
     return out;
 }
 
+static bool sqli_format_temporal_fields(char *out, size_t capacity,
+                                        const int fields[6], int start, int end,
+                                        int fraction, int scale,
+                                        bool interval, bool negative)
+{
+    size_t used = 0;
+    bool started = false;
+    if (negative) {
+        if (capacity < 2)
+            return false;
+        out[used++] = '-';
+    }
+    for (int code = start; code <= end && code <= 10; code += 2) {
+        const char *separator = "";
+        if (started)
+            separator = code <= 4 ? "-" : code == 6 ? " " : ":";
+        int width = interval && !started ? 1 : code == 0 ? 4 : 2;
+        int n = snprintf(out + used, capacity - used, "%s%0*d",
+                         separator, width, fields[code / 2]);
+        if (n < 0 || (size_t)n >= capacity - used)
+            return false;
+        used += (size_t)n;
+        started = true;
+    }
+    if (scale > 0) {
+        int n = snprintf(out + used, capacity - used, ".%0*d", scale, fraction);
+        if (n < 0 || (size_t)n >= capacity - used)
+            return false;
+    }
+    return true;
+}
+
 const char *sqli_result_get_datetime_string(sqli_result_t *result, int col_index)
 {
     static _Thread_local char out[128];
     out[0] = '\0';
-
     sqli_datetime_value dt;
     if (sqli_result_get_datetime(result, col_index, &dt) != SQLI_OK || dt.is_null)
         return out;
-
-    if (dt.year >= 0) {
-        int n = snprintf(out, sizeof(out), "%04d", dt.year);
-        if (dt.month >= 0 && n > 0 && (size_t)n < sizeof(out))
-            n += snprintf(out + n, sizeof(out) - (size_t)n, "-%02d", dt.month);
-        if (dt.day >= 0 && n > 0 && (size_t)n < sizeof(out))
-            n += snprintf(out + n, sizeof(out) - (size_t)n, "-%02d", dt.day);
-        if (dt.hour >= 0 && n > 0 && (size_t)n < sizeof(out))
-            n += snprintf(out + n, sizeof(out) - (size_t)n, " %02d", dt.hour);
-        if (dt.minute >= 0 && n > 0 && (size_t)n < sizeof(out))
-            n += snprintf(out + n, sizeof(out) - (size_t)n, ":%02d", dt.minute);
-        if (dt.second >= 0 && n > 0 && (size_t)n < sizeof(out))
-            n += snprintf(out + n, sizeof(out) - (size_t)n, ":%02d", dt.second);
-        if (dt.fraction_scale > 0 && n > 0 && (size_t)n < sizeof(out))
-            (void)snprintf(out + n, sizeof(out) - (size_t)n, ".%0*d",
-                           dt.fraction_scale, dt.fraction);
-    }
+    const int fields[] = {dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second};
+    if (!sqli_format_temporal_fields(out, sizeof(out), fields,
+                                    dt.start_qualifier, dt.end_qualifier,
+                                    dt.fraction, dt.fraction_scale, false, false))
+        out[0] = '\0';
     return out;
 }
 
@@ -1045,67 +1077,14 @@ const char *sqli_result_get_interval_string(sqli_result_t *result, int col_index
 {
     static _Thread_local char out[128];
     out[0] = '\0';
-
     sqli_interval_value iv;
     if (sqli_result_get_interval(result, col_index, &iv) != SQLI_OK || iv.is_null)
         return out;
-
-    int n = 0;
-    if (iv.negative)
-        n += snprintf(out + n, sizeof(out) - (size_t)n, "-");
-
-    if (iv.start_qualifier <= 2 && iv.end_qualifier <= 2) {
-        if (iv.start_qualifier == 0 && iv.end_qualifier == 0) {
-            n += snprintf(out + n, sizeof(out) - (size_t)n, "%d", iv.year);
-        } else if (iv.start_qualifier == 2 && iv.end_qualifier == 2) {
-            n += snprintf(out + n, sizeof(out) - (size_t)n, "%d", iv.month);
-        } else {
-            n += snprintf(out + n, sizeof(out) - (size_t)n, "%d-%02d", iv.year, iv.month);
-        }
-    } else {
-        bool started = false;
-        if (iv.start_qualifier == 4) {
-            n += snprintf(out + n, sizeof(out) - (size_t)n, "%d", iv.day);
-            started = true;
-        }
-        if (iv.end_qualifier >= 6) {
-            if (started && n < (int)sizeof(out))
-                n += snprintf(out + n, sizeof(out) - (size_t)n, " ");
-            if (iv.start_qualifier <= 6) {
-                if (started)
-                    n += snprintf(out + n, sizeof(out) - (size_t)n, "%02d", iv.hour);
-                else
-                    n += snprintf(out + n, sizeof(out) - (size_t)n, "%d", iv.hour);
-                started = true;
-            }
-            if (iv.end_qualifier >= 8) {
-                if (started)
-                    n += snprintf(out + n, sizeof(out) - (size_t)n, ":%02d", iv.minute);
-                else {
-                    n += snprintf(out + n, sizeof(out) - (size_t)n, "%d", iv.minute);
-                    started = true;
-                }
-                if (iv.end_qualifier >= 10) {
-                    if (started)
-                        n += snprintf(out + n, sizeof(out) - (size_t)n, ":%02d", iv.second);
-                    else {
-                        n += snprintf(out + n, sizeof(out) - (size_t)n, "%d", iv.second);
-                        started = true;
-                    }
-                }
-            }
-        }
-        if (iv.fraction_scale > 0 && n < (int)sizeof(out)) {
-            if (!started)
-                n += snprintf(out + n, sizeof(out) - (size_t)n, "0");
-            n += snprintf(out + n, sizeof(out) - (size_t)n, ".%0*d",
-                          iv.fraction_scale, iv.fraction);
-        }
-    }
-
-    if (n == 0)
-        snprintf(out, sizeof(out), "0");
-
+    const int fields[] = {iv.year, iv.month, iv.day, iv.hour, iv.minute, iv.second};
+    if (!sqli_format_temporal_fields(out, sizeof(out), fields,
+                                    iv.start_qualifier, iv.end_qualifier,
+                                    iv.fraction, iv.fraction_scale, true, iv.negative))
+        out[0] = '\0';
     return out;
 }
 
@@ -1166,7 +1145,8 @@ sqli_status sqli_result_get_datetime(sqli_result_t *result, int col_index,
 
     char digits[160];
     int negative = 0;
-    int dlen = sqli_extract_temporal_digits(raw, raw_len, digits, sizeof(digits), &negative);
+    int dlen = sqli_extract_temporal_digits(raw, raw_len, col->encoded_length,
+                                                digits, sizeof(digits), &negative);
     if (dlen <= 0 || negative)
         return SQLI_PROTO_ERROR;
 

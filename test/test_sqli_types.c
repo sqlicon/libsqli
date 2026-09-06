@@ -1973,3 +1973,87 @@ void test_interval_odd_precision_fraction_preserves_next_column(void)
     TEST_ASSERT_EQUAL_INT(2, iv.month);
     sqli_result_destroy(result);
 }
+
+void test_datetime_exponent_restores_leading_fields(void)
+{
+    /* The normalized coefficient omits the leading 00 pair of year 0001.
+     * Its exponent is C6 instead of the qualifier's reference exponent C7. */
+    const uint8_t year[] = {0xC6, 1, 0};
+    sqli_result_t *r = make_single_row_result(SQLI_TYPE_DATETIME, 0x0400,
+                                             year, sizeof(year));
+    TEST_ASSERT_TRUE(sqli_result_next(r));
+    sqli_datetime_value value;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_datetime(r, 0, &value));
+    TEST_ASSERT_EQUAL_INT(1, value.year);
+    TEST_ASSERT_EQUAL_STRING("0001", sqli_result_get_datetime_string(r, 0));
+    sqli_result_destroy(r);
+
+    const uint8_t full[] = {0xC6, 1, 1, 1, 0, 0, 0, 0, 0, 10, 0};
+    r = make_single_row_result(SQLI_TYPE_DATETIME, 0x130f, full, sizeof(full));
+    TEST_ASSERT_TRUE(sqli_result_next(r));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_datetime(r, 0, &value));
+    TEST_ASSERT_EQUAL_INT(1, value.year);
+    TEST_ASSERT_EQUAL_INT(1, value.month);
+    TEST_ASSERT_EQUAL_INT(1, value.day);
+    TEST_ASSERT_EQUAL_INT(1, value.fraction);
+    TEST_ASSERT_EQUAL_INT(5, value.fraction_scale);
+    TEST_ASSERT_EQUAL_STRING("0001-01-01 00:00:00.00001", sqli_result_get_datetime_string(r, 0));
+    sqli_result_destroy(r);
+}
+
+void test_datetime_partial_qualifier_strings(void)
+{
+    static const struct {
+        uint32_t qualifier;
+        uint8_t wire[4];
+        size_t length;
+        const char *text;
+    } cases[] = {
+        {0x0222, {0xC5, 12}, 2, "12"},
+        {0x0244, {0xC4, 31}, 2, "31"},
+        {0x0468, {0xC3, 23, 59}, 3, "23:59"},
+        {0x048a, {0xC2, 59, 58}, 3, "59:58"},
+        {0x02aa, {0xC1, 7}, 2, "07"},
+        /* Leading fractional zero pairs are also omitted in normalized BCD. */
+        {0x05cf, {0xBE, 10, 0, 0}, 4, ".00001"},
+        {0x05cf, {0x80, 0, 0, 0}, 4, ".00000"},
+        {0x05cf, {0, 0, 0, 0}, 4, ""}
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        sqli_result_t *r = make_single_row_result(SQLI_TYPE_DATETIME, cases[i].qualifier,
+                                                 cases[i].wire, cases[i].length);
+        TEST_ASSERT_TRUE(sqli_result_next(r));
+        TEST_ASSERT_EQUAL_STRING(cases[i].text, sqli_result_get_datetime_string(r, 0));
+        if (cases[i].text[0] != '\0')
+            TEST_ASSERT_EQUAL_STRING(cases[i].text, sqli_result_get_string(r, 0));
+        sqli_result_destroy(r);
+    }
+}
+
+void test_interval_second_and_fraction_only_strings(void)
+{
+    static const struct {
+        uint32_t qualifier;
+        uint8_t wire[4];
+        size_t length;
+        const char *text;
+    } cases[] = {
+        {0x03aa, {0xC2, 9, 99}, 3, "999"},
+        {0x03aa, {0x3d, 90, 1}, 3, "-999"},
+        {0x05ac, {0xC2, 9, 99, 99}, 4, "999.99"},
+        {0x05ac, {0x3d, 90, 0, 1}, 4, "-999.99"},
+        {0x05cf, {0xBE, 10, 0, 0}, 4, ".00001"},
+        {0x05cf, {0x41, 90, 0, 0}, 4, "-.00001"},
+        {0x05cf, {0x80, 0, 0, 0}, 4, ".00000"},
+        {0x05cf, {0, 0, 0, 0}, 4, ""}
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        sqli_result_t *r = make_single_row_result(SQLI_TYPE_INTERVAL, cases[i].qualifier,
+                                                 cases[i].wire, cases[i].length);
+        TEST_ASSERT_TRUE(sqli_result_next(r));
+        TEST_ASSERT_EQUAL_STRING(cases[i].text, sqli_result_get_interval_string(r, 0));
+        if (cases[i].text[0] != '\0')
+            TEST_ASSERT_EQUAL_STRING(cases[i].text, sqli_result_get_string(r, 0));
+        sqli_result_destroy(r);
+    }
+}

@@ -242,3 +242,16 @@ tools/run_live_must_type_suite.sh
 - They connect to real databases and are therefore environment-dependent.
 - They are intended for maintainer validation and benchmarking, not for the
   normal unit-test path.
+
+## Temporal qualifier matrix
+
+`SQLI_BUILD_TESTS=ON` also builds `sqli_temporal_matrix`. Its offline generator
+check runs as `sqli_temporal_generator` in CTest. With
+`SQLI_ENABLE_LIVE_TESTS=ON`, CTest additionally registers `sqli_temporal_live`,
+which exercises 2,036 DATETIME/INTERVAL cases using `SQLI_TEST_*` credentials.
+Missing credentials skip only the live test; configured connection failures and
+value mismatches fail it. The live matrix is separate from `sqli_unit`.
+
+See [the qualifier matrix](doc/DATETIME_INTERVAL_QUALIFIER_MATRIX.md) for coverage,
+setup, seed-based reproduction and the decoder/formatter regressions exposed
+and corrected using these checks.

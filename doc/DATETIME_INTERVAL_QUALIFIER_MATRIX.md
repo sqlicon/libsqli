@@ -1,125 +1,182 @@
-# Informix DATETIME / INTERVAL — Complete Qualifier Matrix
+# DATETIME / INTERVAL qualifier matrix
 
-Reference for the type generator. Goal: hit every legal combination exactly once,
-with values at the boundaries. The "tested in libsqli?" column reflects the current
-state of the test/ suite (only 3 combinations present).
+The deterministic generator and live checks are implemented in
+[`test/test_temporal_matrix.c`](../test/test_temporal_matrix.c), adapted from the
+original `sqlicon/docs/test_temporal_matrix.c` sketch. The separate executable
+`sqli_temporal_matrix` is built when `SQLI_BUILD_TESTS=ON`.
 
-## Field levels (Informix TU codes)
+Current validation (2026-09-07, corrected working tree): **2,036/2,036 live cases
+pass** with seed `0xc0ffee` under ASan/UBSan. The historical failures below are
+fixed; the assertions and complete qualifier coverage remain enabled.
 
-Informix numbers the time fields internally. A type's qualifier is a pair
-(start, end) drawn from these levels. FRACTION additionally carries a scale of 1..5.
+## Coverage
 
-| Field    | TU code | Share in wire BCD |
-|----------|---------|-------------------|
-| YEAR     | 0       | 4 digits (first) or free |
-| MONTH    | 2       | 2 digits          |
-| DAY      | 4       | 2 digits (or first-field-width for INTERVAL) |
-| HOUR     | 6       | 2 digits          |
-| MINUTE   | 8       | 2 digits          |
-| SECOND   | 10      | 2 digits          |
-| FRACTION | 11..15  | scale = code-10, i.e. FRACTION(1)=11 … FRACTION(5)=15 |
+Every qualifier below is generated explicitly. FRACTION scale is 1 through 5;
+INTERVAL leading precision is 1 through 9. An omitted leading precision defaults
+to 2 and is represented by the explicit precision-2 qualifier, not an additional
+qualifier. YEAR/MONTH intervals never cross into DAY/time fields.
 
-The qualifier byte in the wire protocol is conventionally `(start<<4) | end`, or in
-Informix `(first_field_width_code, end_code)` — the library reads it via
-`sqli_qual_start/end/length`. For the generator the SQL level is enough: you write
-the type as text and the server assigns the qualifier.
+| Family | Qualifiers | Values per qualifier | Cases |
+| --- | ---: | ---: | ---: |
+| DATETIME: contiguous YEAR..SECOND spans | 21 | 4 | 84 |
+| DATETIME: YEAR/MONTH/DAY/HOUR/MINUTE/SECOND to FRACTION(1..5) | 30 | 4 | 120 |
+| DATETIME: FRACTION TO FRACTION(1..5) | 5 | 4 | 20 |
+| INTERVAL: YEAR TO YEAR, YEAR TO MONTH, MONTH TO MONTH, each precision 1..9 | 27 | 6 | 162 |
+| INTERVAL: contiguous DAY..SECOND spans, each precision 1..9 | 90 | 6 | 540 |
+| INTERVAL: DAY/HOUR/MINUTE/SECOND to FRACTION(1..5), each precision 1..9 | 180 | 6 | 1,080 |
+| INTERVAL: FRACTION TO FRACTION(1..5) | 5 | 6 | 30 |
+| **Total** | **358** | | **2,036** |
 
----
+DATETIME variants are minimum, maximum, seeded random and NULL. Maximum dates use
+December 31; random days are limited to 1..28 to remain valid for any month.
+INTERVAL variants are zero, positive maximum, negative maximum, positive random,
+negative random and NULL. Leading values stay within `0..10^precision-1`;
+subordinate month/hour/minute/second fields stay within their legal bounds.
+Fractions use exactly the declared scale. Negative zero is normalized to zero.
 
-## DATETIME — all legal start→end (start ≤ end, contiguous)
+This matrix covers valid values. Deliberately invalid dates, precision overflow,
+timestamp/epoch convenience bindings and temporal arithmetic are separate tests.
+The low-level fixed-format `sqli_encode_datetime()` helper is not the path tested
+here: the public `sqli_bind_datetime()` and `sqli_bind_interval()` APIs bind text
+and let the server convert it to the declared target type.
 
-DATETIME must cover a contiguous range from a coarser to a finer (or equal) field,
-YEAR..FRACTION.
+## What each live case verifies
 
-| # | Type                             | tested in libsqli? | bug risk |
-|---|----------------------------------|--------------------|----------|
-| 1 | DATETIME YEAR TO YEAR            | no                 | medium   |
-| 2 | DATETIME YEAR TO MONTH           | no                 | medium   |
-| 3 | DATETIME YEAR TO DAY             | no                 | medium   |
-| 4 | DATETIME YEAR TO HOUR            | no                 | medium   |
-| 5 | DATETIME YEAR TO MINUTE          | no                 | medium   |
-| 6 | DATETIME YEAR TO SECOND          | **yes**            | low      |
-| 7 | DATETIME YEAR TO FRACTION(1)     | no                 | **high** |
-| 8 | DATETIME YEAR TO FRACTION(2)     | no                 | **high** |
-| 9 | DATETIME YEAR TO FRACTION(3)     | no                 | **high** |
-|10 | DATETIME YEAR TO FRACTION(4)     | no                 | **high** |
-|11 | DATETIME YEAR TO FRACTION(5)     | no                 | **high** |
-|12 | DATETIME MONTH TO MONTH          | no                 | medium   |
-|13 | DATETIME MONTH TO DAY            | no                 | medium   |
-|14 | DATETIME MONTH TO HOUR           | no                 | medium   |
-|15 | DATETIME MONTH TO MINUTE         | no                 | medium   |
-|16 | DATETIME MONTH TO SECOND         | no                 | medium   |
-|17 | DATETIME DAY TO DAY              | no                 | medium   |
-|18 | DATETIME DAY TO HOUR             | no                 | medium   |
-|19 | DATETIME DAY TO MINUTE           | no                 | medium   |
-|20 | DATETIME DAY TO SECOND           | no                 | medium   |
-|21 | DATETIME DAY TO FRACTION(3)      | no                 | **high** |
-|22 | DATETIME HOUR TO HOUR            | no                 | medium   |
-|23 | DATETIME HOUR TO MINUTE          | no                 | medium   |
-|24 | DATETIME HOUR TO SECOND          | no                 | medium   |
-|25 | DATETIME HOUR TO FRACTION(5)     | no                 | **high** |
-|26 | DATETIME MINUTE TO MINUTE        | no                 | medium   |
-|27 | DATETIME MINUTE TO SECOND        | no                 | medium   |
-|28 | DATETIME MINUTE TO FRACTION(3)   | no                 | **high** |
-|29 | DATETIME SECOND TO SECOND        | no                 | medium   |
-|30 | DATETIME SECOND TO FRACTION(5)   | no                 | **high** |
-|31 | DATETIME FRACTION TO FRACTION    | no                 | **high** |
-|32 | DATETIME FRACTION(1) TO FRACTION(5) | no              | **high** |
+1. Create a session-local temporary table for the exact qualifier.
+2. Insert a typed SQL literal as the server reference.
+3. Insert the same value with a prepared statement and the public temporal bind
+   API (or `sqli_bind_null()` for NULL).
+4. Have the server compare both stored values against the independent literal.
+5. Decode both rows with the semantic getter and compare each present field,
+   fraction scale, sign and qualifier against values generated before querying.
+6. Compare the public temporal string getter with a server-side LVARCHAR cast.
+   Only outer padding and an optional zero before a fraction-only decimal point
+   are normalized; other digits and separators must agree.
+7. Verify integer sentinels and a negative YEAR(3) TO MONTH interval after the
+   tested value in a mixed projection, detecting tuple-width/offset mistakes.
+8. Check the result row count, destroy handles and drop the temporary table.
+   Session-local tables also disappear when the connection closes.
 
-Note: `sqli_encode_datetime()` writes a fixed 14 digits (YYYYMMDDHHMMSS) per its
-header and states "frac reserved". The **binary bind path** therefore likely does
-NOT cover #7–#11, #21, #25, #28, #30–#32. When binding as a string
-(`sqli_bind_datetime`) it may work — precisely this discrepancy is a test target.
+Comparing the literal and bound rows through the same decoder alone would miss a
+shared decoding defect. The independent generated fields and server comparisons
+make those errors observable. SQL failures, failed cleanup, incorrect values and
+configured-but-unreachable servers fail the test; they are not converted to skips.
 
----
+## Build and run
 
-## INTERVAL — two separate classes (must not overlap)
+```sh
+cmake -S . -B build -DSQLI_BUILD_TESTS=ON -DSQLI_ENABLE_LIVE_TESTS=ON
+cmake --build build --target sqli_temporal_matrix -j4
+ctest --test-dir build -R '^sqli_temporal_generator$' --output-on-failure
+./build/sqli_temporal_matrix --list
+```
 
-INTERVAL allows only two ranges. YEAR-MONTH and DAY-FRACTION cannot be mixed
-(no `MONTH TO DAY` for INTERVAL). The first field carries a precision (digit count),
-default 2.
+The offline CTest checks deterministic generation, qualifier uniqueness, exact
+coverage counts, value bounds and numeric option parsing. It needs no database.
 
-### Class A: YEAR-MONTH
-| # | Type                          | tested in libsqli? | bug risk |
-|---|-------------------------------|--------------------|----------|
-|33 | INTERVAL YEAR(p) TO YEAR       | no                 | medium   |
-|34 | INTERVAL YEAR(p) TO MONTH      | partial (3-2)      | low      |
-|35 | INTERVAL MONTH(p) TO MONTH     | no                 | medium   |
+For live checks, set `SQLI_TEST_HOST`, `SQLI_TEST_PORT`, `SQLI_TEST_DB`,
+`SQLI_TEST_USER` and `SQLI_TEST_PASS`. Optional settings are `SQLI_TEST_SERVER`,
+`SQLI_CLIENT_LOCALE` and `SQLI_DB_LOCALE`. Use a scratch database with permission
+to create temporary tables. Locale settings are taken from the environment,
+not hard-coded to UTF-8 for a potentially different database locale.
 
-### Class B: DAY-FRACTION
-| # | Type                             | tested in libsqli? | bug risk |
-|---|----------------------------------|--------------------|----------|
-|36 | INTERVAL DAY(p) TO DAY            | no                 | medium   |
-|37 | INTERVAL DAY(p) TO HOUR           | no                 | medium   |
-|38 | INTERVAL DAY(p) TO MINUTE         | no                 | medium   |
-|39 | INTERVAL DAY(p) TO SECOND         | **yes**            | low      |
-|40 | INTERVAL DAY(p) TO FRACTION(1..5) | no                | **high** |
-|41 | INTERVAL HOUR(p) TO HOUR          | no                 | medium   |
-|42 | INTERVAL HOUR(p) TO MINUTE        | no                 | medium   |
-|43 | INTERVAL HOUR(p) TO SECOND        | no                 | medium   |
-|44 | INTERVAL HOUR(p) TO FRACTION(3)   | no                 | **high** |
-|45 | INTERVAL MINUTE(p) TO MINUTE      | no                 | medium   |
-|46 | INTERVAL MINUTE(p) TO SECOND      | no                 | medium   |
-|47 | INTERVAL MINUTE(p) TO FRACTION(5) | no                | **high** |
-|48 | INTERVAL SECOND(p) TO SECOND      | no                 | medium   |
-|49 | INTERVAL SECOND(p) TO FRACTION(1..5) | no             | **high** |
-|50 | INTERVAL FRACTION TO FRACTION     | no                 | **high** |
-|51 | INTERVAL FRACTION(1..5)           | no                 | **high** |
+```sh
+ctest --test-dir build -R '^sqli_temporal_live$' --output-on-failure
+# Or run directly, even when live CTest registration is disabled:
+./build/sqli_temporal_matrix --live
+```
 
-First-field precision p: for DAY/HOUR/... typically 1..9. Test boundaries:
-p=1 (overflows easily), p=9 (max), default (omit).
+The live CTest is registered only with `SQLI_ENABLE_LIVE_TESTS=ON`, has labels
+`live;temporal`, and a 900-second timeout. Missing required settings return 77
+(CTest: skipped). Other failures return 1. Invalid invocation/options return 2.
+The existing `sqli_unit` executable does not run the matrix implicitly.
 
----
+## Reproduce a failure
 
-## Boundary values per field (for value generation)
+The default seed is `0xc0ffee`. Case IDs are zero-based and stable for this
+matrix definition. Random values can change with the seed; case order and
+qualifiers do not. Generate the entire sequence before selecting a case so that
+selection does not change its random values.
 
-- YEAR:     1, 9999  (Informix DATETIME year 1..9999)
-- MONTH:    1, 12
-- DAY:      1, 28/29/30/31 depending on month  → generator uses 28 as safe, 31 as edge
-- HOUR:     0, 23
-- MINUTE:   0, 59
-- SECOND:   0, 59  (Informix has no leap-second 60)
-- FRACTION: 0, and the maximum per scale (F1=9, F2=99, F3=999, F4=9999, F5=99999)
-- INTERVAL first-field width: 0, and 10^p - 1 (overflow candidate when p is too small)
-- Sign: INTERVAL can be negative → always test negative values as well
-- NULL:  each combination additionally as NULL (separate insert row)
+```sh
+SQLI_FUZZ_SEED=0xc0ffee SQLI_FUZZ_ONLY=0 ./build/sqli_temporal_matrix --live
+SQLI_FUZZ_SEED=12345 ./build/sqli_temporal_matrix --live
+```
+
+`--list` prints the case ID, type, value and variant. The old sketch's
+`SQLI_FUZZ_EDGE` switch is replaced by always including both boundary and random
+variants in the same run. No legal combinations are silently truncated by an
+undersized case array; a capacity/count mismatch is an error.
+
+## Initial findings on 2ca4062
+
+The semantic-only baseline tested all 2,036 cases: 2,025 passed and 11 failed.
+All 11 failures were the minimum-year DATETIME variants starting with YEAR
+(case IDs 0, 4, ..., 40). For example, YEAR TO YEAR decoded `0001` as `100`;
+YEAR TO MONTH decoded the year in `0001-01` as `101`. The decoder loses leading base-100
+positions when it ignores the packed value's exponent.
+
+The final suite additionally checks string getters. A focused reproduction is
+case 45, DATETIME MONTH TO MONTH: the server text is `12`, while the client
+string getter returns an empty string. These findings were recorded before the decoder and formatter corrections
+described below.
+
+
+### Baseline live result with string checks
+
+On 2026-09-07, the ASan/UBSan build against local Informix 14.10.FC13W10 with
+seed `0xc0ffee` completed all 2,036 cases: **1,595 passed, 441 failed**. No
+sanitizer diagnostics were reported. Failures remain ordinary nonzero test
+results; no expected-failure inversion or assertion suppression is applied.
+
+| Failure group | Failed cases | Example |
+| --- | ---: | --- |
+| Minimum DATETIME year loses leading positions | 11 | Case 0: `0001` becomes year 100 |
+| DATETIME string getter requires YEAR as its starting field | 135 | Case 45: MONTH TO MONTH, server `12`, client empty |
+| SECOND-leading INTERVAL string adds an absent minute field | 270 | Case 1803: SECOND(3) TO FRACTION(2), server `999.99`, client `0:999.99` |
+| FRACTION-only INTERVAL string adds absent minute/second fields | 25 | Case 2034: server `-.03008`, client `-0:00.03008` |
+
+The semantic-only baseline confirms that the latter three groups have correct
+semantic values on this seed and are exposed by the added string checks. Both
+insertion paths are tested for passing cases; a failing case stops at its first
+mismatch and continues with the next case after cleanup.
+
+At that baseline, the existing **357 unit/mock tests** and the new offline
+generator CTest passed.
+Live skip behavior without credentials and rejection of invalid case IDs were
+also verified. Local diagnostic logs are `/tmp/libsqli-temporal-live.log`
+(semantic baseline) and `/tmp/libsqli-temporal-final.log` (baseline with string checks).
+
+
+## Decoder and formatter corrections
+
+`sqli_result_get_datetime()` now reconstructs the fixed qualifier digit positions
+using the packed base-100 exponent. Omitted leading zero pairs are restored,
+including the leading year positions in `0001` and fractional positions in
+`.00001`. Packed input length and digit values are checked before reconstruction.
+
+Both temporal string getters use a shared formatter that iterates from the
+starting qualifier to the ending qualifier. Separators and zero padding follow
+the fields actually present. Partial DATETIME values no longer require a YEAR
+field; SECOND-only and FRACTION-only intervals no longer acquire extra minute
+or second fields. Fraction-only values are rendered as `.digits` (with a leading
+minus for negative intervals), matching the server's qualified representation.
+
+Offline regressions in `test/test_sqli_types.c` cover year 0001, a complete
+YEAR TO FRACTION(5) value, partial calendar/time fields, very small fractions,
+positive/negative intervals, zero and NULL. The **360 unit/mock tests** and the
+offline generator test pass under ASan/UBSan with no ignored unit tests.
+
+
+### Validation after corrections
+
+The complete matrix against Informix 14.10.FC13W10 now passes **2,036/2,036
+cases**, including both insertion paths and string/semantic checks, with seed
+`0xc0ffee` under ASan/UBSan. All 441 previously failing cases pass. No sanitizer
+diagnostics were reported. Log: `/tmp/libsqli-temporal-fixed.log`.
+
+The **360 unit/mock tests** and offline generator CTest pass (48.45 seconds),
+with zero ignored unit tests. The existing CSDK `temporal-edges` test additionally
+passes all **38 checks** using the corrected sanitizer build; its report is
+`/tmp/libsqli-temporal-fixed-adapter.json`. The normal workspace build also
+compiles successfully with the project's warnings-as-errors settings.

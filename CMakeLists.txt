@@ -186,8 +186,18 @@ if (SQLI_BUILD_TESTS)
 
     enable_testing()
     add_test(NAME sqli_unit COMMAND sqli_test)
+
+    add_executable(sqli_temporal_matrix ${SQLI_TEST_DIR}/test_temporal_matrix.c)
+    target_link_libraries(sqli_temporal_matrix PRIVATE sqli)
+    add_test(NAME sqli_temporal_generator COMMAND sqli_temporal_matrix --self-test)
+    if (SQLI_ENABLE_LIVE_TESTS)
+        add_test(NAME sqli_temporal_live COMMAND sqli_temporal_matrix --live)
+        set_tests_properties(sqli_temporal_live PROPERTIES
+            LABELS "live;temporal" SKIP_RETURN_CODE 77 TIMEOUT 900)
+    endif()
+
     if (SQLI_ENABLE_SANITIZERS AND NOT MSVC)
-        set_tests_properties(sqli_unit PROPERTIES
+        set_tests_properties(sqli_unit sqli_temporal_generator PROPERTIES
             ENVIRONMENT "LSAN_OPTIONS=detect_leaks=0")
     endif()
 endif()
