@@ -238,6 +238,10 @@ if (SQLI_BUILD_TOOLS)
     add_executable(sqli_blob_stress ${SQLI_TOOLS_DIR}/sqli_blob_stress.c)
     target_include_directories(sqli_blob_stress PRIVATE ${SQLI_INC_DIR})
     target_link_libraries(sqli_blob_stress PRIVATE sqli)
+
+    add_executable(sqli_bench_connect ${SQLI_TOOLS_DIR}/sqli_bench_connect.c)
+    target_include_directories(sqli_bench_connect PRIVATE ${SQLI_INC_DIR})
+    target_link_libraries(sqli_bench_connect PRIVATE sqli m)
 endif()
 
 if (SQLI_BUILD_CLI)

@@ -182,6 +182,9 @@ int sqli_tcp_connect(const char *hostname, const char *service)
         /* Disable Nagle's algorithm for lower latency */
         int flag = 1;
         setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+#ifdef TCP_QUICKACK
+        setsockopt(fd, IPPROTO_TCP, TCP_QUICKACK, &flag, sizeof(flag));
+#endif
 
         int connect_timeout = (ai->ai_next != NULL && multi_addr_timeout < io_timeout)
                                    ? multi_addr_timeout : io_timeout;
@@ -215,6 +218,12 @@ void sqli_tcp_close(int fd)
         return;
 
     sqli_tcp_tls_detach(fd);
+
+    const char *no_tw = getenv("SQLI_TCP_NO_TIMEWAIT");
+    if (no_tw && (no_tw[0] == '1' || no_tw[0] == 'y' || no_tw[0] == 'Y')) {
+        struct linger sl = { .l_onoff = 1, .l_linger = 0 };
+        setsockopt(fd, SOL_SOCKET, SO_LINGER, &sl, sizeof(sl));
+    }
 
     if (close(fd) != 0) {
         sqli_log(SQLI_LOG_WARN, "close(fd=%d) failed: %s", fd, strerror(errno));

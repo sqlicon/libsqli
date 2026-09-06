@@ -567,6 +567,14 @@ static sqli_status do_pam_handshake(sqli_conn_t *c)
             free(resp);
         }
     }
+    return SQLI_OK;
+}
+
+static inline double hs_time_now(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
+    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec * 1e-6;
 }
 
 /* ----------------------------------------------------------------
@@ -591,6 +599,11 @@ sqli_status sqli_connect(sqli_conn_t *c, const sqli_connect_params *params)
         set_error(c, "hostname and service are required");
         return SQLI_INVALID_STATE;
     }
+
+    double hs_t0 = 0.0, hs_t_sock = 0.0, hs_t_conacc = 0.0;
+    double hs_t_proto = 0.0, hs_t_info = 0.0, hs_t_dbopen = 0.0;
+    bool hs_timing = (getenv("SQLI_HANDSHAKE_TIMING") != NULL);
+    if (hs_timing) hs_t0 = hs_time_now();
 
     sqli_status rc = SQLI_OK;
     ssize_t sent;
@@ -656,6 +669,7 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
         goto out;
 
     sqli_log(SQLI_LOG_INFO, "connected, starting SQLI handshake");
+    if (hs_timing) hs_t_sock = hs_time_now();
 
     const char *transport = use_unix_socket ? "ipcstr" : "tlitcp";
 
@@ -876,6 +890,7 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
             sqli_log(SQLI_LOG_INFO, "CONACC parsed, cap_1=%d", c->caps.cap_1);
         }
     }
+    if (hs_timing) hs_t_conacc = hs_time_now();
 
     /* Step 5: SQ_PROTOCOLS capability exchange
      * Client sends: opcode(2) + len(2) + 9 capability bytes + 1 pad + SQ_EOT(2)
@@ -885,6 +900,7 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
     rc = do_sq_protocols(c);
     if (rc != SQLI_OK)
         goto out;
+    if (hs_timing) hs_t_proto = hs_time_now();
 
     /* Step 6: PAM handshake if required.
      *
@@ -1005,6 +1021,7 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
         }
     }
     sqli_log(SQLI_LOG_INFO, "SQ_INFO exchange complete");
+    if (hs_timing) hs_t_info = hs_time_now();
 
     /* Step 8: Send SQ_DBOPEN (Bug #9) */
     c->state = SQLI_CONN_DBOPEN;
@@ -1096,6 +1113,18 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
     c->state = SQLI_CONN_READY;
     c->database_open = 1;
     sqli_log(SQLI_LOG_INFO, "connection ready, database: %s", db_name);
+    if (hs_timing) {
+        hs_t_dbopen = hs_time_now();
+        fprintf(stderr,
+            "[HS_TIMING] proto=%-6s total=%5.2fms (sock=%5.2fms conacc=%5.2fms proto=%5.2fms info=%5.2fms dbopen=%5.2fms)\n",
+            transport,
+            hs_t_dbopen - hs_t0,
+            hs_t_sock - hs_t0,
+            hs_t_conacc - hs_t_sock,
+            hs_t_proto - hs_t_conacc,
+            hs_t_info - hs_t_proto,
+            hs_t_dbopen - hs_t_info);
+    }
     clear_error(c);
     rc = SQLI_OK;
 
@@ -1139,12 +1168,15 @@ void sqli_close(sqli_conn_t *conn)
 
     if (conn->socket_fd >= 0) {
         if (conn->state == SQLI_CONN_READY) {
+            uint8_t close_buf[4];
+            size_t cpos = 0;
             if (conn->database_open) {
-                uint8_t dbclose_msg[2] = {0, SQLI_SQ_DBCLOSE};
-                (void)sqli_tcp_send(conn->socket_fd, dbclose_msg, sizeof(dbclose_msg));
+                close_buf[cpos++] = 0;
+                close_buf[cpos++] = SQLI_SQ_DBCLOSE;
             }
-            uint8_t exit_msg[2] = {0, SQLI_SQ_EXIT};
-            sqli_tcp_send(conn->socket_fd, exit_msg, 2);
+            close_buf[cpos++] = 0;
+            close_buf[cpos++] = SQLI_SQ_EXIT;
+            (void)sqli_tcp_send(conn->socket_fd, close_buf, cpos);
 
             /* Drain until SQ_EXIT(56) or SQ_EOT(12) */
             for (;;) {
