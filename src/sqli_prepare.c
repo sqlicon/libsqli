@@ -224,6 +224,8 @@ sqli_status sqli_prepare(sqli_conn_t *conn, const char *sql,
     if (conn == NULL || sql == NULL || stmt == NULL)
         return SQLI_INVALID_STATE;
 
+    clear_error(conn);
+
     if (conn->state != SQLI_CONN_READY) {
         set_error_context(conn, "prepare/precheck", SQLI_SQ_PREPARE);
         set_error(conn, "connection not ready");
@@ -313,6 +315,7 @@ sqli_status sqli_prepare(sqli_conn_t *conn, const char *sql,
         }
     }
 
+    clear_error(conn);
     *stmt = s;
     return SQLI_OK;
 }
@@ -1056,6 +1059,7 @@ static void sqli_stmt_prepare_result_for_execute(sqli_stmt_t *stmt)
     stmt->result.eof = 0;
     stmt->result.saw_done = false;
     stmt->result.saw_error = false;
+    stmt->result.error_code = 0;
     stmt->result.ret_type_sent = false;
     stmt->result.last_was_null = false;
     stmt->result_valid = false;
@@ -1124,6 +1128,7 @@ static sqli_status sqli_stmt_receive_execute_result(sqli_stmt_t *stmt)
             }
         }
         stmt->result_valid = true;
+        clear_error(stmt->conn);
     } else if (!stmt->conn->error_info.has_error) {
         set_error(stmt->conn, "error receiving execute response");
     }
@@ -1325,6 +1330,7 @@ static sqli_status sqli_stmt_execute_select(sqli_stmt_t *stmt)
         }
     }
 
+    clear_error(stmt->conn);
     stmt->result_valid = true;
     return SQLI_OK;
 }
@@ -1337,6 +1343,9 @@ sqli_status sqli_execute(sqli_stmt_t *stmt)
 {
     if (stmt == NULL)
         return SQLI_INVALID_STATE;
+
+    if (stmt->conn != NULL)
+        clear_error(stmt->conn);
 
     if (stmt->read_only && stmt->result.statement_type == 2)
         return sqli_stmt_execute_select(stmt);
@@ -1421,6 +1430,9 @@ sqli_status sqli_stmt_batch_execute(sqli_stmt_t *stmt, sqli_batch_result_t **out
         return SQLI_INVALID_STATE;
     *out_batch = NULL;
 
+    if (stmt->conn != NULL)
+        clear_error(stmt->conn);
+
     if (stmt->read_only) {
         set_error_context(stmt->conn, "stmt_batch_execute/precheck", SQLI_SQ_EXECUTE);
         set_error(stmt->conn, "prepared batch execute is only supported for DML statements");
@@ -1469,6 +1481,8 @@ sqli_status sqli_stmt_batch_execute(sqli_stmt_t *stmt, sqli_batch_result_t **out
 
     *out_batch = batch;
     sqli_stmt_batch_reset_rows(stmt);
+    if (batch->error_count == 0 && stmt->conn != NULL)
+        clear_error(stmt->conn);
     return SQLI_OK;
 }
 

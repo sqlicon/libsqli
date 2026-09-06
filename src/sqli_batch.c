@@ -36,6 +36,8 @@ sqli_status sqli_batch_execute(sqli_conn_t *conn, const char **sql_list,
         return SQLI_INVALID_STATE;
     *out_batch = NULL;
 
+    clear_error(conn);
+
     if (conn->state != SQLI_CONN_READY) {
         set_error_context(conn, "batch_execute/precheck", 0);
         set_error(conn, "connection not ready");
@@ -94,6 +96,8 @@ sqli_status sqli_batch_execute(sqli_conn_t *conn, const char **sql_list,
     }
 
     *out_batch = batch;
+    if (batch->error_count == 0)
+        clear_error(conn);
     return SQLI_OK;
 }
 

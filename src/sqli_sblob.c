@@ -88,6 +88,8 @@ sqli_status sqli_sblob_read(sqli_conn_t *conn, int lofd, void *buf, size_t nbyte
     if (nbytes == 0)
         return SQLI_OK;
 
+    clear_error(conn);
+
     int fd = conn->socket_fd;
     if (fd < 0 || conn->state != SQLI_CONN_READY)
         return SQLI_INVALID_STATE;
@@ -223,6 +225,7 @@ sqli_status sqli_sblob_read(sqli_conn_t *conn, int lofd, void *buf, size_t nbyte
     }
 
     *bytes_read = total_copied;
+    clear_error(conn);
     return SQLI_OK;
 }
 
@@ -235,6 +238,8 @@ sqli_status sqli_sblob_read_seek(sqli_conn_t *conn, int lofd, int64_t offset,
     *bytes_read = 0;
     if (nbytes == 0)
         return SQLI_OK;
+
+    clear_error(conn);
 
     int fd = conn->socket_fd;
     if (fd < 0 || conn->state != SQLI_CONN_READY)
@@ -389,6 +394,7 @@ sqli_status sqli_sblob_read_seek(sqli_conn_t *conn, int lofd, int64_t offset,
     }
 
     *bytes_read = total_copied;
+    clear_error(conn);
     return SQLI_OK;
 }
 
@@ -400,6 +406,8 @@ sqli_status sqli_sblob_write(sqli_conn_t *conn, int lofd, const void *buf, size_
     *bytes_written = 0;
     if (nbytes == 0)
         return SQLI_OK;
+
+    clear_error(conn);
 
     int fd = conn->socket_fd;
     if (fd < 0 || conn->state != SQLI_CONN_READY)
@@ -511,6 +519,7 @@ sqli_status sqli_sblob_write(sqli_conn_t *conn, int lofd, const void *buf, size_
     }
 
     *bytes_written = nbytes;
+    clear_error(conn);
     return SQLI_OK;
 }
 
@@ -729,6 +738,8 @@ sqli_status sqli_sblob_create(sqli_conn_t *conn, sqli_sblob_type type,
 {
     if (conn == NULL || out == NULL)
         return SQLI_INVALID_STATE;
+
+    clear_error(conn);
 
     memset(out, 0, sizeof(*out));
     out->lofd = -1;
@@ -1087,6 +1098,7 @@ sqli_status sqli_sblob_create(sqli_conn_t *conn, sqli_sblob_type type,
     out->locator_len = created_loc_len;
     out->open = true;
 
+    clear_error(conn);
     return SQLI_OK;
 }
 

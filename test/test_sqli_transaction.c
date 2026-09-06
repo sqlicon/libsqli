@@ -682,3 +682,64 @@ void test_commit_success_with_done_eot(void)
     close(sv[1]);
     free(c);
 }
+
+void test_success_clears_previous_error_diagnostics(void)
+{
+    int sv[2] = {-1, -1};
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
+        TEST_IGNORE_MESSAGE("socketpair unavailable");
+        return;
+    }
+
+    sqli_conn_t *c = make_mock_conn();
+    if (c == NULL) {
+        close(sv[0]);
+        close(sv[1]);
+        TEST_IGNORE_MESSAGE("allocation failed");
+        return;
+    }
+    c->socket_fd = sv[0];
+    c->autocommit = 0;
+    c->in_transaction = 1;
+
+    /* Simulate a previous error condition on the connection */
+    set_error(c, "duplicate key");
+    c->error_info.has_error = true;
+    c->error_info.sqlcode = -268;
+    c->error_info.isamcode = -100;
+    TEST_ASSERT_TRUE(c->error_info.has_error);
+    TEST_ASSERT_EQUAL_INT(-268, c->error_info.sqlcode);
+    TEST_ASSERT_NOT_NULL(sqli_error(c));
+
+    /* A successful commit must reset the error state */
+    uint8_t reply[64];
+    size_t rn = build_done_eot(reply);
+    TEST_ASSERT_EQUAL_INT((int)rn, (int)write(sv[1], reply, rn));
+
+    sqli_status rc = sqli_commit(c);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, rc);
+    TEST_ASSERT_FALSE(c->error_info.has_error);
+    TEST_ASSERT_EQUAL_INT(0, c->error_info.sqlcode);
+    TEST_ASSERT_EQUAL_INT(0, c->error_info.isamcode);
+    TEST_ASSERT_NULL(sqli_error(c));
+
+    /* Simulate another error before begin */
+    set_error(c, "lock timeout");
+    c->error_info.has_error = true;
+    c->error_info.sqlcode = -243;
+    c->error_info.isamcode = -154;
+    TEST_ASSERT_TRUE(c->error_info.has_error);
+    TEST_ASSERT_EQUAL_INT(-243, c->error_info.sqlcode);
+
+    /* A successful begin must also reset the error state */
+    TEST_ASSERT_EQUAL_INT((int)rn, (int)write(sv[1], reply, rn));
+    rc = sqli_begin(c);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, rc);
+    TEST_ASSERT_FALSE(c->error_info.has_error);
+    TEST_ASSERT_EQUAL_INT(0, c->error_info.sqlcode);
+    TEST_ASSERT_NULL(sqli_error(c));
+
+    close(sv[0]);
+    close(sv[1]);
+    free(c);
+}

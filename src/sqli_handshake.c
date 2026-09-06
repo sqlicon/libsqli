@@ -578,6 +578,8 @@ sqli_status sqli_connect(sqli_conn_t *c, const sqli_connect_params *params)
     if (c == NULL || params == NULL)
         return SQLI_INVALID_STATE;
 
+    clear_error(c);
+
     if (c->state != SQLI_CONN_CLOSED) {
         set_error_context(c, "connect/precheck", 0);
         set_error(c, "connection already in use");
@@ -1094,6 +1096,7 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
     c->state = SQLI_CONN_READY;
     c->database_open = 1;
     sqli_log(SQLI_LOG_INFO, "connection ready, database: %s", db_name);
+    clear_error(c);
     rc = SQLI_OK;
 
 out:

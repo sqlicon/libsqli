@@ -309,6 +309,7 @@ void test_commit_loss_returns_io_error(void);
 void test_begin_loss_returns_io_error(void);
 void test_rollback_loss_returns_io_error(void);
 void test_commit_success_with_done_eot(void);
+void test_success_clears_previous_error_diagnostics(void);
 #endif
 
 #if SQLI_HAVE_POSIX_TESTS
@@ -745,6 +746,7 @@ int main(void)
     RUN_TEST(test_begin_loss_returns_io_error);
     RUN_TEST(test_rollback_loss_returns_io_error);
     RUN_TEST(test_commit_success_with_done_eot);
+    RUN_TEST(test_success_clears_previous_error_diagnostics);
     }
 #endif
 

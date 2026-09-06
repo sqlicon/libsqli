@@ -87,6 +87,7 @@ static sqli_status savepoint_send_core(sqli_conn_t *conn, uint8_t opcode,
                                        const char *name, bool include_unique_flag,
                                        bool unique_flag)
 {
+    clear_error(conn);
     sqli_status rc = verify_txn_ready(conn, "savepoint");
     if (rc != SQLI_OK)
         return rc;
@@ -145,6 +146,7 @@ static sqli_status savepoint_send_core(sqli_conn_t *conn, uint8_t opcode,
         }
         return rc;
     }
+    clear_error(conn);
     return SQLI_OK;
 }
 
@@ -154,6 +156,7 @@ static sqli_status savepoint_send_core(sqli_conn_t *conn, uint8_t opcode,
 
 sqli_status sqli_begin(sqli_conn_t *conn)
 {
+    clear_error(conn);
     sqli_status rc = verify_txn_ready(conn, "begin");
     if (rc != SQLI_OK)
         return rc;
@@ -185,6 +188,7 @@ sqli_status sqli_begin(sqli_conn_t *conn)
 
     conn->in_transaction = true;
     sqli_log(SQLI_LOG_INFO, "transaction started (isolation=%d)", conn->isolation);
+    clear_error(conn);
     return SQLI_OK;
 }
 
@@ -194,6 +198,7 @@ sqli_status sqli_begin(sqli_conn_t *conn)
 
 sqli_status sqli_commit(sqli_conn_t *conn)
 {
+    clear_error(conn);
     sqli_status rc = verify_txn_ready(conn, "commit");
     if (rc != SQLI_OK)
         return rc;
@@ -225,6 +230,7 @@ sqli_status sqli_commit(sqli_conn_t *conn)
 
     conn->in_transaction = false;
     sqli_log(SQLI_LOG_INFO, "transaction committed");
+    clear_error(conn);
     return SQLI_OK;
 }
 
@@ -235,6 +241,7 @@ sqli_status sqli_commit(sqli_conn_t *conn)
 
 sqli_status sqli_rollback(sqli_conn_t *conn)
 {
+    clear_error(conn);
     sqli_status rc = verify_txn_ready(conn, "rollback");
     if (rc != SQLI_OK)
         return rc;
@@ -268,6 +275,7 @@ sqli_status sqli_rollback(sqli_conn_t *conn)
 
     conn->in_transaction = false;
     sqli_log(SQLI_LOG_INFO, "transaction rolled back");
+    clear_error(conn);
     return SQLI_OK;
 }
 
@@ -306,6 +314,8 @@ sqli_status sqli_set_isolation_level(sqli_conn_t *conn, sqli_isolation_level lev
     if (conn == NULL)
         return SQLI_INVALID_STATE;
 
+    clear_error(conn);
+
     if ((int)level < 0 || (int)level > 4)
         return SQLI_INVALID_STATE;
 
@@ -340,6 +350,7 @@ sqli_status sqli_set_isolation_level(sqli_conn_t *conn, sqli_isolation_level lev
 
     conn->isolation = level;
     sqli_log(SQLI_LOG_DEBUG, "isolation level set to %d", level);
+    clear_error(conn);
     return SQLI_OK;
 }
 
@@ -363,6 +374,7 @@ bool sqli_in_transaction(sqli_conn_t *conn)
 
 sqli_status sqli_set_lock_wait(sqli_conn_t *conn, int seconds)
 {
+    clear_error(conn);
     sqli_status rc = verify_txn_ready(conn, "lock_wait");
     if (rc != SQLI_OK)
         return rc;
@@ -374,8 +386,11 @@ sqli_status sqli_set_lock_wait(sqli_conn_t *conn, int seconds)
         snprintf(sql, sizeof(sql), "set lock mode to wait %d", seconds);
     }
     rc = apply_session_sql(conn, sql);
-    if (rc != SQLI_OK)
+    if (rc != SQLI_OK) {
         set_error_context(conn, "lock_wait", SQLI_SQ_LOCKWAIT);
+    } else {
+        clear_error(conn);
+    }
     return rc;
 }
 
@@ -400,6 +415,7 @@ sqli_status sqli_savepoint_rollback(sqli_conn_t *conn, const char *name)
 
 sqli_status sqli_batch_begin(sqli_conn_t *conn)
 {
+    clear_error(conn);
     sqli_status rc = verify_txn_ready(conn, "batch_begin");
     if (rc != SQLI_OK)
         return rc;
@@ -419,11 +435,13 @@ sqli_status sqli_batch_begin(sqli_conn_t *conn)
 
     conn->in_batch = true;
     sqli_log(SQLI_LOG_DEBUG, "batch started");
+    clear_error(conn);
     return SQLI_OK;
 }
 
 sqli_status sqli_batch_end(sqli_conn_t *conn)
 {
+    clear_error(conn);
     sqli_status rc = verify_txn_ready(conn, "batch_end");
     if (rc != SQLI_OK)
         return rc;
@@ -443,6 +461,7 @@ sqli_status sqli_batch_end(sqli_conn_t *conn)
 
     conn->in_batch = false;
     sqli_log(SQLI_LOG_DEBUG, "batch ended");
+    clear_error(conn);
     return SQLI_OK;
 }
 

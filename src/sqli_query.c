@@ -51,6 +51,8 @@ sqli_status sqli_query_ex(sqli_conn_t *conn, const char *sql,
     if (conn == NULL || sql == NULL || result == NULL)
         return SQLI_INVALID_STATE;
 
+    clear_error(conn);
+
     if (conn->state != SQLI_CONN_READY) {
         set_error_context(conn, "query/precheck", 0);
         set_error(conn, "connection not ready");
@@ -278,6 +280,7 @@ sqli_status sqli_query_ex(sqli_conn_t *conn, const char *sql,
         }
     }
 
+    clear_error(conn);
     *result = r;
     return SQLI_OK;
 }
@@ -316,6 +319,8 @@ sqli_status sqli_query_stream(sqli_conn_t *conn, const char *sql,
         return SQLI_INVALID_STATE;
     if (out_rows != NULL)
         *out_rows = 0;
+
+    clear_error(conn);
 
     if (conn->state != SQLI_CONN_READY) {
         set_error_context(conn, "query_stream/precheck", 0);
@@ -452,6 +457,7 @@ sqli_status sqli_query_stream(sqli_conn_t *conn, const char *sql,
     if (out_rows != NULL)
         *out_rows = delivered;
     sqli_result_destroy(r);
+    clear_error(conn);
     return SQLI_OK;
 }
 
