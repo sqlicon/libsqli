@@ -300,9 +300,14 @@ sqli_status sqli_prepare(sqli_conn_t *conn, const char *sql,
     s->result.owner_conn = conn;
     s->result.cursor_type = conn->cursor_type;
     s->result.holdability = conn->holdability;
+    s->result.commit_epoch = conn ? conn->commit_epoch : 0;
+    s->result.rollback_epoch = conn ? conn->rollback_epoch : 0;
     s->result.stmt_id = (int)stmt_id;
     s->result.cursor = -1;
     s->result.current_row = -1;
+    s->result.absolute_row_num = 0;
+    s->result.at_before_first = true;
+    s->result.at_after_last = false;
     s->result.tuple_buffer = NULL;
     s->result.tuple_len = 0;
     s->result.cur_cache_row = -1;
@@ -1060,6 +1065,8 @@ static void sqli_stmt_prepare_result_for_execute(sqli_stmt_t *stmt)
     stmt->result.owner_conn = stmt->conn;
     stmt->result.cursor_type = stmt->conn->cursor_type;
     stmt->result.holdability = stmt->conn->holdability;
+    stmt->result.commit_epoch = stmt->conn ? stmt->conn->commit_epoch : 0;
+    stmt->result.rollback_epoch = stmt->conn ? stmt->conn->rollback_epoch : 0;
     stmt->result.stmt_id = stmt->stmt_id;
     stmt->result.eof = 0;
     stmt->result.saw_done = false;
@@ -1067,6 +1074,9 @@ static void sqli_stmt_prepare_result_for_execute(sqli_stmt_t *stmt)
     stmt->result.error_code = 0;
     stmt->result.ret_type_sent = false;
     stmt->result.last_was_null = false;
+    stmt->result.absolute_row_num = 0;
+    stmt->result.at_before_first = true;
+    stmt->result.at_after_last = false;
     stmt->result_valid = false;
     stmt->executed = true;
 }

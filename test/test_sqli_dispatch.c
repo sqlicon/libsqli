@@ -1476,3 +1476,350 @@ void test_receive_done_drains_dbopen_flags(void)
     close(write_fd);
 }
 
+void test_result_scroll_navigation_local_buffer_transitions(void)
+{
+    sqli_result_t result;
+    memset(&result, 0, sizeof(result));
+
+    uint8_t r1[] = {1, 'a'};
+    uint8_t r2[] = {1, 'b'};
+    uint8_t r3[] = {1, 'c'};
+    uint8_t r4[] = {1, 'd'};
+    uint8_t r5[] = {1, 'e'};
+    uint8_t *rows[] = {r1, r2, r3, r4, r5};
+    size_t lens[] = {sizeof(r1), sizeof(r2), sizeof(r3), sizeof(r4), sizeof(r5)};
+
+    result.rows = rows;
+    result.row_lens = lens;
+    result.row_count = 5;
+    result.column_count = 1;
+    result.columns = calloc(1, sizeof(*result.columns));
+    TEST_ASSERT_NOT_NULL(result.columns);
+    result.columns[0].type = SQLI_TYPE_VARCHAR;
+    result.columns[0].col_start_pos = 0;
+    result.columns[0].encoded_length = 8;
+    result.cursor = -1;
+    result.current_row = -1;
+    result.absolute_row_num = 0;
+    result.at_before_first = true;
+    result.at_after_last = false;
+
+    /* Initially before first row */
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_row_number(&result));
+
+    /* FIRST -> 1 */
+    TEST_ASSERT_TRUE(sqli_result_first(&result));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_row_number(&result));
+    TEST_ASSERT_EQUAL_STRING("a", sqli_result_get_string(&result, 0));
+
+    /* LAST -> 5 */
+    TEST_ASSERT_TRUE(sqli_result_last(&result));
+    TEST_ASSERT_EQUAL_INT(5, sqli_result_row_number(&result));
+    TEST_ASSERT_EQUAL_STRING("e", sqli_result_get_string(&result, 0));
+
+    /* PREVIOUS -> 4 */
+    TEST_ASSERT_TRUE(sqli_result_previous(&result));
+    TEST_ASSERT_EQUAL_INT(4, sqli_result_row_number(&result));
+    TEST_ASSERT_EQUAL_STRING("d", sqli_result_get_string(&result, 0));
+
+    /* ABSOLUTE 2 -> 2 */
+    TEST_ASSERT_TRUE(sqli_result_absolute(&result, 2));
+    TEST_ASSERT_EQUAL_INT(2, sqli_result_row_number(&result));
+    TEST_ASSERT_EQUAL_STRING("b", sqli_result_get_string(&result, 0));
+
+    /* RELATIVE 2 -> 4 */
+    TEST_ASSERT_TRUE(sqli_result_relative(&result, 2));
+    TEST_ASSERT_EQUAL_INT(4, sqli_result_row_number(&result));
+    TEST_ASSERT_EQUAL_STRING("d", sqli_result_get_string(&result, 0));
+
+    /* ABSOLUTE 4 -> 4 */
+    TEST_ASSERT_TRUE(sqli_result_absolute(&result, 4));
+    TEST_ASSERT_EQUAL_INT(4, sqli_result_row_number(&result));
+
+    /* RELATIVE -2 -> 2 */
+    TEST_ASSERT_TRUE(sqli_result_relative(&result, -2));
+    TEST_ASSERT_EQUAL_INT(2, sqli_result_row_number(&result));
+    TEST_ASSERT_EQUAL_STRING("b", sqli_result_get_string(&result, 0));
+
+    /* ABSOLUTE 6 -> out of range (returns false, row 0) */
+    TEST_ASSERT_FALSE(sqli_result_absolute(&result, 6));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_row_number(&result));
+
+    /* PREVIOUS from after-last -> moves to LAST (5) */
+    TEST_ASSERT_TRUE(sqli_result_previous(&result));
+    TEST_ASSERT_EQUAL_INT(5, sqli_result_row_number(&result));
+    TEST_ASSERT_EQUAL_STRING("e", sqli_result_get_string(&result, 0));
+
+    /* FIRST -> 1 */
+    TEST_ASSERT_TRUE(sqli_result_first(&result));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_row_number(&result));
+
+    /* PREVIOUS from row 1 -> moves before-first (returns false, row 0) */
+    TEST_ASSERT_FALSE(sqli_result_previous(&result));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_row_number(&result));
+
+    /* NEXT from before-first -> moves to row 1 */
+    TEST_ASSERT_TRUE(sqli_result_next(&result));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_row_number(&result));
+    TEST_ASSERT_EQUAL_STRING("a", sqli_result_get_string(&result, 0));
+
+    result.rows = NULL;
+    result.row_lens = NULL;
+    sqli_result_cleanup(&result);
+}
+
+void test_result_scroll_navigation_empty_result(void)
+{
+    sqli_result_t result;
+    memset(&result, 0, sizeof(result));
+    result.row_count = 0;
+    result.cursor = -1;
+    result.current_row = -1;
+    result.absolute_row_num = 0;
+    result.at_before_first = true;
+    result.at_after_last = false;
+
+    TEST_ASSERT_FALSE(sqli_result_first(&result));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_row_number(&result));
+
+    TEST_ASSERT_FALSE(sqli_result_last(&result));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_row_number(&result));
+
+    TEST_ASSERT_FALSE(sqli_result_next(&result));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_row_number(&result));
+
+    TEST_ASSERT_FALSE(sqli_result_previous(&result));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_row_number(&result));
+
+    sqli_result_cleanup(&result);
+}
+
+void test_result_scroll_navigation_server_cursor(void)
+{
+    int read_fd = -1, write_fd = -1;
+    if (create_socket_pair(&read_fd, &write_fd) != 0)
+        TEST_IGNORE_MESSAGE("socketpair unavailable for dispatch test");
+
+    sqli_conn_t conn;
+    memset(&conn, 0, sizeof(conn));
+    conn.socket_fd = write_fd;
+    conn.state = SQLI_CONN_READY;
+
+    sqli_result_t result;
+    memset(&result, 0, sizeof(result));
+    result.owner_conn = &conn;
+    result.cursor_type = SQLI_CURSOR_SCROLL_INSENSITIVE;
+    result.statement_type = 2; /* SELECT */
+    result.stmt_id = 0x42;
+    result.column_count = 1;
+    result.columns = calloc(1, sizeof(*result.columns));
+    TEST_ASSERT_NOT_NULL(result.columns);
+    result.columns[0].type = SQLI_TYPE_VARCHAR;
+    result.columns[0].encoded_length = 8;
+    result.columns[0].col_start_pos = 0;
+
+    /* 1. Preload LAST response: VARCHAR(1) "5" + DONE (rows_affected = 5) */
+    uint8_t resp_last[] = {
+        0, SQLI_SQ_TUPLE,
+        0, 0,              /* warnings */
+        0, 0, 0, 2,        /* tuple_size */
+        1, '5',
+        0, SQLI_SQ_DONE,
+        0, 0,              /* warnings */
+        0, 0, 0, 5,        /* rows_affected = 5 */
+        0, 0, 0, 5,        /* rowid */
+        0, 0, 0, 0         /* sqlerrd1 */
+    };
+    TEST_ASSERT_EQUAL_INT((int)sizeof(resp_last),
+                          (int)write(read_fd, resp_last, sizeof(resp_last)));
+
+    TEST_ASSERT_TRUE(sqli_result_last(&result));
+    TEST_ASSERT_EQUAL_INT(5, sqli_result_row_number(&result));
+    TEST_ASSERT_EQUAL_STRING("5", sqli_result_get_string(&result, 0));
+
+    /* Drain SFETCH request from client socket */
+    uint8_t req[128];
+    ssize_t n = recv(read_fd, req, sizeof(req), 0);
+    TEST_ASSERT_GREATER_THAN_INT(0, n);
+
+    /* 2. Preload PREVIOUS response: target is 4 -> VARCHAR(1) "4" + DONE (rows_affected = 4) */
+    uint8_t resp_prev[] = {
+        0, SQLI_SQ_TUPLE,
+        0, 0,              /* warnings */
+        0, 0, 0, 2,        /* tuple_size */
+        1, '4',
+        0, SQLI_SQ_DONE,
+        0, 0,              /* warnings */
+        0, 0, 0, 4,        /* rows_affected = 4 */
+        0, 0, 0, 4,        /* rowid */
+        0, 0, 0, 0         /* sqlerrd1 */
+    };
+    TEST_ASSERT_EQUAL_INT((int)sizeof(resp_prev),
+                          (int)write(read_fd, resp_prev, sizeof(resp_prev)));
+
+    TEST_ASSERT_TRUE(sqli_result_previous(&result));
+    TEST_ASSERT_EQUAL_INT(4, sqli_result_row_number(&result));
+    TEST_ASSERT_EQUAL_STRING("4", sqli_result_get_string(&result, 0));
+
+    n = recv(read_fd, req, sizeof(req), 0);
+    TEST_ASSERT_GREATER_THAN_INT(0, n);
+
+    sqli_result_cleanup(&result);
+    close(read_fd);
+    close(write_fd);
+}
+
+void test_result_holdability_close_at_commit(void)
+{
+    sqli_conn_t conn;
+    memset(&conn, 0, sizeof(conn));
+    conn.commit_epoch = 0;
+    conn.rollback_epoch = 0;
+    conn.in_transaction = true;
+
+    sqli_result_t result;
+    memset(&result, 0, sizeof(result));
+    result.owner_conn = &conn;
+    result.holdability = SQLI_CURSOR_CLOSE_AT_COMMIT;
+    result.commit_epoch = conn.commit_epoch;
+    result.rollback_epoch = conn.rollback_epoch;
+
+    uint8_t r1[] = {1, 'x'};
+    uint8_t r2[] = {1, 'y'};
+    uint8_t *rows[] = {r1, r2};
+    size_t lens[] = {sizeof(r1), sizeof(r2)};
+    result.rows = rows;
+    result.row_lens = lens;
+    result.row_count = 2;
+    result.column_count = 1;
+    result.columns = calloc(1, sizeof(*result.columns));
+    TEST_ASSERT_NOT_NULL(result.columns);
+    result.columns[0].type = SQLI_TYPE_VARCHAR;
+    result.columns[0].encoded_length = 8;
+    result.cursor = -1;
+    result.current_row = -1;
+    result.absolute_row_num = 0;
+    result.at_before_first = true;
+
+    /* Before commit: first row is accessible */
+    TEST_ASSERT_TRUE(sqli_result_next(&result));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_row_number(&result));
+    TEST_ASSERT_EQUAL_STRING("x", sqli_result_get_string(&result, 0));
+
+    /* Transaction commit simulates connection epoch bump */
+    conn.commit_epoch++;
+    conn.in_transaction = false;
+
+    /* After commit: close-at-commit cursor MUST invalidate and return false */
+    TEST_ASSERT_FALSE(sqli_result_next(&result));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_row_number(&result));
+    TEST_ASSERT_FALSE(sqli_result_first(&result));
+    TEST_ASSERT_FALSE(sqli_result_last(&result));
+    TEST_ASSERT_FALSE(sqli_result_previous(&result));
+    TEST_ASSERT_FALSE(sqli_result_absolute(&result, 1));
+    TEST_ASSERT_FALSE(sqli_result_relative(&result, 1));
+
+    result.rows = NULL;
+    result.row_lens = NULL;
+    sqli_result_cleanup(&result);
+}
+
+void test_result_holdability_hold_over_commit(void)
+{
+    sqli_conn_t conn;
+    memset(&conn, 0, sizeof(conn));
+    conn.commit_epoch = 0;
+    conn.rollback_epoch = 0;
+    conn.in_transaction = true;
+
+    sqli_result_t result;
+    memset(&result, 0, sizeof(result));
+    result.owner_conn = &conn;
+    result.holdability = SQLI_CURSOR_HOLD_OVER_COMMIT;
+    result.commit_epoch = conn.commit_epoch;
+    result.rollback_epoch = conn.rollback_epoch;
+
+    uint8_t r1[] = {1, 'x'};
+    uint8_t r2[] = {1, 'y'};
+    uint8_t *rows[] = {r1, r2};
+    size_t lens[] = {sizeof(r1), sizeof(r2)};
+    result.rows = rows;
+    result.row_lens = lens;
+    result.row_count = 2;
+    result.column_count = 1;
+    result.columns = calloc(1, sizeof(*result.columns));
+    TEST_ASSERT_NOT_NULL(result.columns);
+    result.columns[0].type = SQLI_TYPE_VARCHAR;
+    result.columns[0].encoded_length = 8;
+    result.cursor = -1;
+    result.current_row = -1;
+    result.absolute_row_num = 0;
+    result.at_before_first = true;
+
+    /* Before commit: first row is accessible */
+    TEST_ASSERT_TRUE(sqli_result_next(&result));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_row_number(&result));
+    TEST_ASSERT_EQUAL_STRING("x", sqli_result_get_string(&result, 0));
+
+    /* Transaction commit simulates connection epoch bump */
+    conn.commit_epoch++;
+    conn.in_transaction = false;
+
+    /* After commit: hold-over-commit cursor remains usable and yields row 2 */
+    TEST_ASSERT_TRUE(sqli_result_next(&result));
+    TEST_ASSERT_EQUAL_INT(2, sqli_result_row_number(&result));
+    TEST_ASSERT_EQUAL_STRING("y", sqli_result_get_string(&result, 0));
+
+    result.rows = NULL;
+    result.row_lens = NULL;
+    sqli_result_cleanup(&result);
+}
+
+void test_result_holdability_rollback_closes_all(void)
+{
+    sqli_conn_t conn;
+    memset(&conn, 0, sizeof(conn));
+    conn.commit_epoch = 0;
+    conn.rollback_epoch = 0;
+    conn.in_transaction = true;
+
+    sqli_result_t result;
+    memset(&result, 0, sizeof(result));
+    result.owner_conn = &conn;
+    result.holdability = SQLI_CURSOR_HOLD_OVER_COMMIT;
+    result.commit_epoch = conn.commit_epoch;
+    result.rollback_epoch = conn.rollback_epoch;
+
+    uint8_t r1[] = {1, 'x'};
+    uint8_t r2[] = {1, 'y'};
+    uint8_t *rows[] = {r1, r2};
+    size_t lens[] = {sizeof(r1), sizeof(r2)};
+    result.rows = rows;
+    result.row_lens = lens;
+    result.row_count = 2;
+    result.column_count = 1;
+    result.columns = calloc(1, sizeof(*result.columns));
+    TEST_ASSERT_NOT_NULL(result.columns);
+    result.columns[0].type = SQLI_TYPE_VARCHAR;
+    result.columns[0].encoded_length = 8;
+    result.cursor = -1;
+    result.current_row = -1;
+    result.absolute_row_num = 0;
+    result.at_before_first = true;
+
+    TEST_ASSERT_TRUE(sqli_result_next(&result));
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_row_number(&result));
+
+    /* Rollback closes even hold-over-commit cursors */
+    conn.rollback_epoch++;
+    conn.in_transaction = false;
+
+    TEST_ASSERT_FALSE(sqli_result_next(&result));
+    TEST_ASSERT_EQUAL_INT(0, sqli_result_row_number(&result));
+
+    result.rows = NULL;
+    result.row_lens = NULL;
+    sqli_result_cleanup(&result);
+}
+
+

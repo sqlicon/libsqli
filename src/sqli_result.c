@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include "sqli_log.h"
 
-/* Client-compatible SQ_SFETCH direction codes used by IfxResultSet. */
+/* SQ_SFETCH direction codes used by the reference driver. */
 enum {
     SQLI_SFETCH_LAST = 4,
     SQLI_SFETCH_ABSOLUTE = 6
@@ -37,6 +37,9 @@ void sqli_result_clear_rows(sqli_result_t *result)
     result->tuple_buffer = NULL;
     result->tuple_len = 0;
     result->cur_cache_row = -1;
+    result->absolute_row_num = 0;
+    result->at_before_first = true;
+    result->at_after_last = false;
 }
 
 static size_t sqli_fixed_width_for_type(uint8_t type)
@@ -615,20 +618,32 @@ bool sqli_result_is_null_internal(sqli_result_t *result, int col_index)
     return 0;
 }
 
-bool sqli_result_next(sqli_result_t *result)
+static inline bool sqli_result_is_closed_by_commit(const sqli_result_t *result)
 {
     if (result == NULL)
         return false;
-    int next = result->cursor + 1;
-    if (next >= result->row_count)
-        return false;
-    result->cursor = next;
-    result->tuple_buffer = result->rows[next];
-    result->tuple_len = result->row_lens[next];
-    result->current_row = next;
-    result->cur_cache_row = -1;
-    sqli_result_prepare_row_cache(result);
-    return true;
+    if (result->owner_conn != NULL) {
+        if (result->owner_conn->rollback_epoch != result->rollback_epoch)
+            return true;
+        if (result->holdability == SQLI_CURSOR_CLOSE_AT_COMMIT &&
+            result->owner_conn->commit_epoch != result->commit_epoch)
+            return true;
+    }
+    return false;
+}
+
+static void sqli_result_mark_closed(sqli_result_t *result)
+{
+    if (result == NULL)
+        return;
+    result->eof = 1;
+    result->cursor = -1;
+    result->current_row = -1;
+    result->tuple_buffer = NULL;
+    result->tuple_len = 0;
+    result->absolute_row_num = 0;
+    result->at_before_first = false;
+    result->at_after_last = true;
 }
 
 static bool sqli_result_move_to_index(sqli_result_t *result, int row_index)
@@ -643,6 +658,8 @@ static bool sqli_result_move_to_index(sqli_result_t *result, int row_index)
     result->tuple_len = result->row_lens[row_index];
     result->current_row = row_index;
     result->cur_cache_row = -1;
+    result->at_before_first = false;
+    result->at_after_last = false;
     sqli_result_prepare_row_cache(result);
     return true;
 }
@@ -669,69 +686,261 @@ static bool sqli_result_server_refetch(sqli_result_t *result, uint16_t scroll_ty
     result->eof = 0;
     sqli_status rc = sqli_send_scroll_fetch(result->owner_conn->socket_fd, result->stmt_id,
                                             result, scroll_type, index);
-    if (rc != SQLI_OK)
+    if (rc != SQLI_OK) {
+        result->at_after_last = true;
+        result->at_before_first = false;
+        result->absolute_row_num = 0;
         return false;
+    }
 
     set_error_context(result->owner_conn, "query/fetch_recv", SQLI_SQ_NFETCH);
     rc = sqli_receive_dispatch(result->owner_conn->socket_fd, result, result->owner_conn);
-    if (rc != SQLI_OK || result->row_count <= 0)
+    if (rc != SQLI_OK || result->row_count <= 0) {
+        result->at_after_last = true;
+        result->at_before_first = false;
+        result->absolute_row_num = 0;
         return false;
+    }
 
+    if (scroll_type == SQLI_SFETCH_ABSOLUTE) {
+        result->absolute_row_num = (result->rows_affected > 0) ?
+            (int32_t)result->rows_affected : index;
+    } else if (scroll_type == SQLI_SFETCH_LAST) {
+        result->absolute_row_num = (result->rows_affected > 0) ?
+            (int32_t)result->rows_affected : (int32_t)result->row_count;
+    }
+    result->at_before_first = false;
+    result->at_after_last = false;
     return sqli_result_move_to_index(result, 0);
-}
-
-bool sqli_result_previous(sqli_result_t *result)
-{
-    if (result == NULL)
-        return false;
-    return sqli_result_move_to_index(result, result->cursor - 1);
 }
 
 bool sqli_result_first(sqli_result_t *result)
 {
-    if (sqli_result_server_refetch(result, SQLI_SFETCH_ABSOLUTE, 1))
+    if (result == NULL)
+        return false;
+    if (sqli_result_is_closed_by_commit(result)) {
+        sqli_result_mark_closed(result);
+        return false;
+    }
+    if (sqli_result_is_server_scrollable(result)) {
+        if (sqli_result_server_refetch(result, SQLI_SFETCH_ABSOLUTE, 1))
+            return true;
+        result->absolute_row_num = 0;
+        result->at_before_first = true;
+        result->at_after_last = true;
+        return false;
+    }
+    if (result->row_count > 0 && sqli_result_move_to_index(result, 0)) {
+        result->absolute_row_num = 1;
+        result->at_before_first = false;
+        result->at_after_last = false;
         return true;
-    return sqli_result_move_to_index(result, 0);
+    }
+    result->absolute_row_num = 0;
+    result->at_before_first = true;
+    result->at_after_last = true;
+    return false;
 }
 
 bool sqli_result_last(sqli_result_t *result)
 {
-    if (sqli_result_server_refetch(result, SQLI_SFETCH_LAST, 0))
-        return true;
-    if (result == NULL || result->row_count <= 0)
+    if (result == NULL)
         return false;
-    return sqli_result_move_to_index(result, result->row_count - 1);
+    if (sqli_result_is_closed_by_commit(result)) {
+        sqli_result_mark_closed(result);
+        return false;
+    }
+    if (sqli_result_is_server_scrollable(result)) {
+        if (sqli_result_server_refetch(result, SQLI_SFETCH_LAST, 0))
+            return true;
+        result->absolute_row_num = 0;
+        result->at_before_first = true;
+        result->at_after_last = true;
+        return false;
+    }
+    if (result->row_count > 0 && sqli_result_move_to_index(result, result->row_count - 1)) {
+        result->absolute_row_num = result->row_count;
+        result->at_before_first = false;
+        result->at_after_last = false;
+        return true;
+    }
+    result->absolute_row_num = 0;
+    result->at_before_first = true;
+    result->at_after_last = true;
+    return false;
 }
 
 bool sqli_result_absolute(sqli_result_t *result, int row_1based)
 {
     if (result == NULL)
         return false;
+    if (sqli_result_is_closed_by_commit(result)) {
+        sqli_result_mark_closed(result);
+        return false;
+    }
     if (row_1based <= 0)
         return false;
-    if (sqli_result_server_refetch(result, SQLI_SFETCH_ABSOLUTE, row_1based))
-        return true;
-    return sqli_result_move_to_index(result, row_1based - 1);
+
+    if (sqli_result_is_server_scrollable(result)) {
+        if (sqli_result_server_refetch(result, SQLI_SFETCH_ABSOLUTE, row_1based))
+            return true;
+        result->at_after_last = true;
+        result->at_before_first = false;
+        result->absolute_row_num = 0;
+        result->cursor = -1;
+        result->current_row = -1;
+        result->tuple_buffer = NULL;
+        result->tuple_len = 0;
+        return false;
+    }
+
+    if (row_1based <= result->row_count) {
+        if (sqli_result_move_to_index(result, row_1based - 1)) {
+            result->absolute_row_num = row_1based;
+            result->at_before_first = false;
+            result->at_after_last = false;
+            return true;
+        }
+    }
+
+    result->at_after_last = true;
+    result->at_before_first = false;
+    result->absolute_row_num = 0;
+    result->cursor = -1;
+    result->current_row = -1;
+    result->tuple_buffer = NULL;
+    result->tuple_len = 0;
+    return false;
 }
 
 bool sqli_result_relative(sqli_result_t *result, int offset)
 {
     if (result == NULL)
         return false;
-    if (result->cursor_type == SQLI_CURSOR_SCROLL_INSENSITIVE) {
-        int row = sqli_result_row_number(result);
-        if (row > 0) {
-            int target = row + offset;
-            if (target > 0 && sqli_result_server_refetch(result, SQLI_SFETCH_ABSOLUTE, target))
-                return true;
+    if (sqli_result_is_closed_by_commit(result)) {
+        sqli_result_mark_closed(result);
+        return false;
+    }
+    if (offset == 0)
+        return (result->cursor >= 0 && result->tuple_buffer != NULL);
+
+    int current_pos = sqli_result_row_number(result);
+    if (current_pos <= 0) {
+        if (result->at_before_first && offset > 0)
+            current_pos = 0;
+        else
+            return false;
+    }
+
+    int target = current_pos + offset;
+    if (target <= 0) {
+        result->at_before_first = true;
+        result->at_after_last = false;
+        result->absolute_row_num = 0;
+        result->cursor = -1;
+        result->current_row = -1;
+        result->tuple_buffer = NULL;
+        result->tuple_len = 0;
+        return false;
+    }
+
+    return sqli_result_absolute(result, target);
+}
+
+bool sqli_result_previous(sqli_result_t *result)
+{
+    if (result == NULL)
+        return false;
+    if (sqli_result_is_closed_by_commit(result)) {
+        sqli_result_mark_closed(result);
+        return false;
+    }
+    if (result->at_after_last)
+        return sqli_result_last(result);
+
+    int current_pos = sqli_result_row_number(result);
+    if (current_pos <= 1) {
+        result->at_before_first = true;
+        result->at_after_last = false;
+        result->absolute_row_num = 0;
+        result->cursor = -1;
+        result->current_row = -1;
+        result->tuple_buffer = NULL;
+        result->tuple_len = 0;
+        return false;
+    }
+
+    int target = current_pos - 1;
+    if (!sqli_result_is_server_scrollable(result) ||
+        (result->cursor > 0 && result->cursor < result->row_count)) {
+        if (sqli_result_move_to_index(result, result->cursor - 1)) {
+            result->absolute_row_num = target;
+            result->at_before_first = false;
+            result->at_after_last = false;
+            return true;
         }
     }
-    return sqli_result_move_to_index(result, result->cursor + offset);
+
+    return sqli_result_absolute(result, target);
+}
+
+bool sqli_result_next(sqli_result_t *result)
+{
+    if (result == NULL)
+        return false;
+    if (sqli_result_is_closed_by_commit(result)) {
+        sqli_result_mark_closed(result);
+        return false;
+    }
+    if (result->at_after_last)
+        return false;
+
+    if (result->at_before_first) {
+        result->at_before_first = false;
+        if (result->cursor < 0 && result->row_count > 0 && result->absolute_row_num == 0) {
+            if (sqli_result_move_to_index(result, 0)) {
+                result->absolute_row_num = 1;
+                return true;
+            }
+        }
+        return sqli_result_first(result);
+    }
+
+    int next_idx = result->cursor + 1;
+    if (next_idx < result->row_count) {
+        if (sqli_result_move_to_index(result, next_idx)) {
+            if (result->absolute_row_num > 0)
+                result->absolute_row_num++;
+            else
+                result->absolute_row_num = next_idx + 1;
+            result->at_before_first = false;
+            result->at_after_last = false;
+            return true;
+        }
+    }
+
+    if (sqli_result_is_server_scrollable(result) && result->absolute_row_num > 0)
+        return sqli_result_absolute(result, result->absolute_row_num + 1);
+
+    result->at_after_last = true;
+    result->at_before_first = false;
+    result->absolute_row_num = 0;
+    result->cursor = -1;
+    result->current_row = -1;
+    result->tuple_buffer = NULL;
+    result->tuple_len = 0;
+    return false;
 }
 
 int sqli_result_row_number(sqli_result_t *result)
 {
-    if (result == NULL || result->cursor < 0)
+    if (result == NULL)
+        return 0;
+    if (result->at_before_first || result->at_after_last)
+        return 0;
+    if (result->absolute_row_num > 0)
+        return result->absolute_row_num;
+    if (result->cursor < 0 || result->cursor >= result->row_count)
         return 0;
     return result->cursor + 1;
 }

@@ -71,10 +71,15 @@ sqli_status sqli_query_ex(sqli_conn_t *conn, const char *sql,
         return SQLI_ALLOC_FAIL;
     }
     r->owner_conn = conn;
-    r->cursor_type = conn->cursor_type;
-    r->holdability = conn->holdability;
     r->cursor_type = resolved_options.cursor_type;
     r->holdability = resolved_options.holdability;
+    r->commit_epoch = conn ? conn->commit_epoch : 0;
+    r->rollback_epoch = conn ? conn->rollback_epoch : 0;
+    r->cursor = -1;
+    r->current_row = -1;
+    r->absolute_row_num = 0;
+    r->at_before_first = true;
+    r->at_after_last = false;
 
     /* Phase 1: PREPARE — server returns DESCRIBE + DONE */
     rc = sqli_send_prepare(conn, sql);
@@ -278,6 +283,17 @@ sqli_status sqli_query_ex(sqli_conn_t *conn, const char *sql,
                 return rc;
             }
         }
+        if (sql != NULL && conn != NULL) {
+            const char *p = sql;
+            while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+            if (strncasecmp(p, "commit", 6) == 0) {
+                conn->in_transaction = false;
+                conn->commit_epoch++;
+            } else if (strncasecmp(p, "rollback", 8) == 0) {
+                conn->in_transaction = false;
+                conn->rollback_epoch++;
+            }
+        }
     }
 
     clear_error(conn);
@@ -335,6 +351,15 @@ sqli_status sqli_query_stream(sqli_conn_t *conn, const char *sql,
         return SQLI_ALLOC_FAIL;
     }
     r->owner_conn = conn;
+    r->cursor_type = conn ? conn->cursor_type : SQLI_CURSOR_FORWARD_ONLY;
+    r->holdability = conn ? conn->holdability : SQLI_CURSOR_CLOSE_AT_COMMIT;
+    r->commit_epoch = conn ? conn->commit_epoch : 0;
+    r->rollback_epoch = conn ? conn->rollback_epoch : 0;
+    r->cursor = -1;
+    r->current_row = -1;
+    r->absolute_row_num = 0;
+    r->at_before_first = true;
+    r->at_after_last = false;
 
     sqli_status rc = sqli_send_prepare(conn, sql);
     if (rc != SQLI_OK) {

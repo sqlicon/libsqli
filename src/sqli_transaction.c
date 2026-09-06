@@ -229,6 +229,7 @@ sqli_status sqli_commit(sqli_conn_t *conn)
     }
 
     conn->in_transaction = false;
+    conn->commit_epoch++;
     sqli_log(SQLI_LOG_INFO, "transaction committed");
     clear_error(conn);
     return SQLI_OK;
@@ -274,6 +275,7 @@ sqli_status sqli_rollback(sqli_conn_t *conn)
     }
 
     conn->in_transaction = false;
+    conn->rollback_epoch++;
     sqli_log(SQLI_LOG_INFO, "transaction rolled back");
     clear_error(conn);
     return SQLI_OK;
@@ -290,6 +292,7 @@ sqli_status sqli_set_autocommit(sqli_conn_t *conn, bool on)
 
     if (!on && conn->in_transaction) {
         conn->in_transaction = false;
+        conn->rollback_epoch++;
         sqli_log(SQLI_LOG_WARN, "autocommit off: ended pending transaction");
     }
 

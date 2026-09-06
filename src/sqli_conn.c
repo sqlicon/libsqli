@@ -315,6 +315,8 @@ sqli_status sqli_create(sqli_conn_t **conn)
         parse_bool_env_default(getenv("IFX_TRIMTRAILINGSPACES"), c->trim_trailing_spaces);
     c->cursor_type = SQLI_CURSOR_FORWARD_ONLY;
     c->holdability = SQLI_CURSOR_CLOSE_AT_COMMIT;
+    c->commit_epoch = 0;
+    c->rollback_epoch = 0;
     c->fetch_buf_size = 4194304u;
     c->lo_create_fphandle = -1;
     c->lo_create_dbname[0] = '\0';

@@ -92,6 +92,12 @@ void test_result_get_string_cp1252_to_utf8_iconv(void);
 void test_result_destroy_skips_close_when_stmt_invalid(void);
 void test_send_fetch_with_varlen_and_bool_suppresses_ret_type(void);
 void test_receive_done_drains_dbopen_flags(void);
+void test_result_scroll_navigation_local_buffer_transitions(void);
+void test_result_scroll_navigation_empty_result(void);
+void test_result_scroll_navigation_server_cursor(void);
+void test_result_holdability_close_at_commit(void);
+void test_result_holdability_hold_over_commit(void);
+void test_result_holdability_rollback_closes_all(void);
 #endif
 
 /* Phase 4 tests */
@@ -522,6 +528,12 @@ int main(void)
     RUN_TEST(test_result_destroy_skips_close_when_stmt_invalid);
     RUN_TEST(test_send_fetch_with_varlen_and_bool_suppresses_ret_type);
     RUN_TEST(test_receive_done_drains_dbopen_flags);
+    RUN_TEST(test_result_scroll_navigation_local_buffer_transitions);
+    RUN_TEST(test_result_scroll_navigation_empty_result);
+    RUN_TEST(test_result_scroll_navigation_server_cursor);
+    RUN_TEST(test_result_holdability_close_at_commit);
+    RUN_TEST(test_result_holdability_hold_over_commit);
+    RUN_TEST(test_result_holdability_rollback_closes_all);
     }
 #endif
 

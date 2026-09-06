@@ -726,6 +726,9 @@ static sqli_status receive_describe(int fd, sqli_result_t *r, sqli_conn_t *conn)
     r->cursor = -1;
     r->current_row = -1;
     r->eof = 0;
+    r->absolute_row_num = 0;
+    r->at_before_first = true;
+    r->at_after_last = false;
 
     sqli_log(SQLI_LOG_DEBUG, "DESCRIBE: %u columns", nfields);
     return SQLI_OK;

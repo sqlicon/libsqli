@@ -188,6 +188,8 @@ struct sqli_conn {
     bool in_batch;             /* true if batch protocol block is active */
     bool autocommit;           /* true = autocommit on, false = manual tx */
     sqli_isolation_level isolation; /* current transaction isolation level */
+    uint64_t commit_epoch;     /* increments on transaction commit */
+    uint64_t rollback_epoch;   /* increments on transaction rollback */
 
     /* --- I/O buffers --- */
     uint8_t *read_buf;
@@ -395,6 +397,8 @@ struct sqli_result {
     bool ret_type_sent;     /* SQ_RET_TYPE already sent for this result/statement */
     sqli_cursor_type cursor_type;
     sqli_cursor_holdability holdability;
+    uint64_t commit_epoch;     /* connection commit epoch when result was created */
+    uint64_t rollback_epoch;   /* connection rollback epoch when result was created */
 
     /* --- Row storage --- */
     uint8_t **rows;         /* array of per-row data buffers */
@@ -406,6 +410,9 @@ struct sqli_result {
     int row_count;          /* number of rows received */
     int row_capacity;       /* allocated capacity of rows/row_lens arrays */
     int cursor;             /* current position: -1 = before first row */
+    int32_t absolute_row_num; /* 1-based server row number, 0 if not on a valid row */
+    bool at_before_first;   /* positioned before first row */
+    bool at_after_last;     /* positioned after last row */
     uint64_t adaptive_tuple_bytes_total; /* observed tuple payload bytes */
     uint32_t adaptive_tuple_count;       /* observed tuple payload count */
     uint32_t adaptive_fetch_buf_size;    /* last selected fetch buffer size */
@@ -478,6 +485,9 @@ static inline void sqli_result_cleanup(sqli_result_t *r)
     r->row_count = 0;
     r->row_capacity = 0;
     r->cursor = -1;
+    r->absolute_row_num = 0;
+    r->at_before_first = true;
+    r->at_after_last = false;
     r->adaptive_tuple_bytes_total = 0;
     r->adaptive_tuple_count = 0;
     r->adaptive_fetch_buf_size = 0;
