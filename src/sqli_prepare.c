@@ -281,8 +281,11 @@ sqli_status sqli_prepare(sqli_conn_t *conn, const char *sql,
 
     /* Create statement object */
     sqli_stmt_t *s = calloc(1, sizeof(*s));
-    if (s == NULL)
+    if (s == NULL) {
+        free(server_param_types);
+        sqli_result_cleanup(&prep_result);
         return SQLI_ALLOC_FAIL;
+    }
 
     s->socket_fd   = conn->socket_fd;
     s->conn        = conn;
@@ -673,8 +676,10 @@ static size_t estimate_bind_msg_size(const sqli_stmt_t *stmt, const sqli_bound_p
         }
         switch (par->type) {
         case SQLI_BIND_INT: n += 4; break;
-        case SQLI_BIND_BIGINT: n += 8; break;
-        case SQLI_BIND_FLOAT: n += 8; break;
+        case SQLI_BIND_BIGINT:
+        case SQLI_BIND_FLOAT:
+            n += 8;
+            break;
         case SQLI_BIND_STRING: {
             size_t slen = (par->sval ? strlen(par->sval) : 0);
             size_t dlen = 2 + (slen * 8u) + 32u; /* worst-case locale conversion growth */
@@ -1341,11 +1346,10 @@ static sqli_status sqli_stmt_execute_select(sqli_stmt_t *stmt)
 
 sqli_status sqli_execute(sqli_stmt_t *stmt)
 {
-    if (stmt == NULL)
+    if (stmt == NULL || stmt->conn == NULL)
         return SQLI_INVALID_STATE;
 
-    if (stmt->conn != NULL)
-        clear_error(stmt->conn);
+    clear_error(stmt->conn);
 
     if (stmt->read_only && stmt->result.statement_type == 2)
         return sqli_stmt_execute_select(stmt);

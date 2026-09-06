@@ -708,6 +708,14 @@ void test_prepare_execute_null_stmt(void)
     TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_execute(NULL));
 }
 
+void test_prepare_execute_null_conn(void)
+{
+    sqli_stmt_t *s = mock_stmt(0);
+    s->conn = NULL;
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_execute(s));
+    sqli_stmt_destroy(s);
+}
+
 /* ----------------------------------------------------------------
  * sqli_execute_with_retry null stmt / null conn
  * ---------------------------------------------------------------- */

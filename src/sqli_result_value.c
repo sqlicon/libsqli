@@ -760,7 +760,7 @@ const char *sqli_result_get_decimal_string(sqli_result_t *result, int col_index)
         scale = raw_scale;
     }
 
-    char digits[192];
+    char digits[192] = {0};
     size_t digits_len = 0;
     int is_zero = 1;
     for (size_t i = 0; i < ndgts; i++) {
@@ -866,7 +866,7 @@ const char *sqli_result_get_datetime_string(sqli_result_t *result, int col_index
         if (dt.second >= 0 && n > 0 && (size_t)n < sizeof(out))
             n += snprintf(out + n, sizeof(out) - (size_t)n, ":%02d", dt.second);
         if (dt.fraction_scale > 0 && n > 0 && (size_t)n < sizeof(out))
-            (void)snprintf(out + n, sizeof(out) - (size_t)n, ".%0*u",
+            (void)snprintf(out + n, sizeof(out) - (size_t)n, ".%0*d",
                            dt.fraction_scale, dt.fraction);
     }
     return out;
@@ -929,7 +929,7 @@ const char *sqli_result_get_interval_string(sqli_result_t *result, int col_index
         if (iv.fraction_scale > 0 && n < (int)sizeof(out)) {
             if (!started)
                 n += snprintf(out + n, sizeof(out) - (size_t)n, "0");
-            n += snprintf(out + n, sizeof(out) - (size_t)n, ".%0*u",
+            n += snprintf(out + n, sizeof(out) - (size_t)n, ".%0*d",
                           iv.fraction_scale, iv.fraction);
         }
     }

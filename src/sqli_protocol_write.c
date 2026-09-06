@@ -402,9 +402,10 @@ sqli_status sqli_send_fetch(int fd, int stmt_id, sqli_result_t *result)
     if (sqli_tcp_send(fd, id_msg, 4) != 4)
         return SQLI_IO_ERROR;
 
-    if (result_has_variable_columns(result) &&
+    if (result != NULL &&
+        result_has_variable_columns(result) &&
         !result_has_extended_columns(result) &&
-        (result == NULL || !result->ret_type_sent)) {
+        !result->ret_type_sent) {
         uint8_t hdr[6] = {
             0, SQLI_SQ_RET_TYPE,
             0, 1, /* direction = FETCH */
@@ -426,8 +427,7 @@ sqli_status sqli_send_fetch(int fd, int stmt_id, sqli_result_t *result)
             if (sqli_tcp_send(fd, colmsg, sizeof(colmsg)) != (ssize_t)sizeof(colmsg))
                 return SQLI_IO_ERROR;
         }
-        if (result != NULL)
-            result->ret_type_sent = true;
+        result->ret_type_sent = true;
     }
 
     /* FETCH: SQ_NFETCH + bufsize + array_size(0) + EOT */
@@ -463,9 +463,10 @@ sqli_status sqli_send_scroll_fetch(int fd, int stmt_id, sqli_result_t *result,
     if (sqli_tcp_send(fd, id_msg, 4) != 4)
         return SQLI_IO_ERROR;
 
-    if (result_has_variable_columns(result) &&
+    if (result != NULL &&
+        result_has_variable_columns(result) &&
         !result_has_extended_columns(result) &&
-        (result == NULL || !result->ret_type_sent)) {
+        !result->ret_type_sent) {
         uint8_t hdr[6] = {
             0, SQLI_SQ_RET_TYPE,
             0, 1, /* direction = FETCH */
@@ -487,8 +488,7 @@ sqli_status sqli_send_scroll_fetch(int fd, int stmt_id, sqli_result_t *result,
             if (sqli_tcp_send(fd, colmsg, sizeof(colmsg)) != (ssize_t)sizeof(colmsg))
                 return SQLI_IO_ERROR;
         }
-        if (result != NULL)
-            result->ret_type_sent = true;
+        result->ret_type_sent = true;
     }
 
     uint32_t fetch_bufsize = sqli_choose_fetch_bufsize(result);

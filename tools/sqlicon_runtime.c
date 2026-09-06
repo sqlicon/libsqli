@@ -70,8 +70,8 @@ static char *build_effective_conn_uri(const sqlicon_cli_options *opt)
         sep = '&';
     }
     if (need_db) {
-        out += snprintf(out, cap - (size_t)(out - uri),
-                        "%cDB_LOCALE=%s", sep, db_locale);
+        (void)snprintf(out, cap - (size_t)(out - uri),
+                       "%cDB_LOCALE=%s", sep, db_locale);
     }
 
     return uri;

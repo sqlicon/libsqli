@@ -111,8 +111,10 @@ static sqlicon_exit_code execute_pending_statements(sqli_conn_t *conn, char **pe
                                                     size_t *pending_len, bool interactive,
                                                     sqlicon_runtime *rt)
 {
-    if (*pending != NULL && *pending_len > 0)
-        discard_leading_whitespace(*pending, pending_len);
+    if (pending == NULL || *pending == NULL || pending_len == NULL || *pending_len == 0)
+        return SQLICON_EXIT_OK;
+
+    discard_leading_whitespace(*pending, pending_len);
 
     for (;;) {
         char *semi = find_statement_terminator(*pending);
@@ -253,13 +255,8 @@ sqlicon_exit_code execute_stream(sqli_conn_t *conn, FILE *in, bool interactive,
         } else {
             /* Non-interactive: read from FILE* */
             char buf[4096];
-            if (fgets(buf, sizeof(buf), in) == NULL) {
-                if (ferror(in) != 0 && errno == EINTR) {
-                    clearerr(in);
-                    continue;
-                }
+            if (fgets(buf, sizeof(buf), in) == NULL)
                 break;
-            }
             line = sqlicon_strdup(buf);
             if (line == NULL) {
                 rc = SQLICON_EXIT_SQL_ERROR;
@@ -280,12 +277,16 @@ sqlicon_exit_code execute_stream(sqli_conn_t *conn, FILE *in, bool interactive,
                 bool should_break = false;
                 rc = handle_dot_command(conn, rt, trimmed, &should_break);
                 if (rc != SQLICON_EXIT_OK) {
-                    if (rt->bail_on_error)
+                    if (rt->bail_on_error) {
+                        free(line);
                         break;
+                    }
                     rc = SQLICON_EXIT_OK;
                 }
-                if (should_break)
+                if (should_break) {
+                    free(line);
                     break;
+                }
                 free(line);
                 continue;
             }

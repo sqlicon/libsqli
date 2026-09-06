@@ -578,8 +578,9 @@ static void write_long_sign_mag(uint8_t *dest, int64_t val)
     dest[5] = (uint8_t)((high32 >> 16) & 0xFF);
     dest[6] = (uint8_t)((high32 >> 8) & 0xFF);
     dest[7] = (uint8_t)(high32 & 0xFF);
-    dest[8] = (uint8_t)((sign >> 8) & 0xFF);
-    dest[9] = (uint8_t)(sign & 0xFF);
+    uint16_t usign = (uint16_t)sign;
+    dest[8] = (uint8_t)((usign >> 8) & 0xFF);
+    dest[9] = (uint8_t)(usign & 0xFF);
     dest[10] = 0;
     dest[11] = 0;
 }
@@ -821,10 +822,11 @@ sqli_status sqli_sblob_create(sqli_conn_t *conn, sqli_sblob_type type,
     write_long_sign_mag(spec + 24, max_bytes);
 
     int32_t ext_size = (options && options->extent_kib >= 0) ? options->extent_kib : -1;
-    spec[36] = (uint8_t)((ext_size >> 24) & 0xFF);
-    spec[37] = (uint8_t)((ext_size >> 16) & 0xFF);
-    spec[38] = (uint8_t)((ext_size >> 8) & 0xFF);
-    spec[39] = (uint8_t)(ext_size & 0xFF);
+    uint32_t uext = (uint32_t)ext_size;
+    spec[36] = (uint8_t)((uext >> 24) & 0xFF);
+    spec[37] = (uint8_t)((uext >> 16) & 0xFF);
+    spec[38] = (uint8_t)((uext >> 8) & 0xFF);
+    spec[39] = (uint8_t)(uext & 0xFF);
 
     if (options && options->sbspace && options->sbspace[0] != '\0') {
         size_t slen = strlen(options->sbspace);

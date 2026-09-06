@@ -612,7 +612,9 @@ static int save_profile_store(const sqlicon_profile_store *store)
 #undef WRITE_PROFILE_FIELD
     }
 
-    if (fflush(fp) != 0 || fclose(fp) != 0)
+    int flush_rc = fflush(fp);
+    int close_rc = fclose(fp);
+    if (flush_rc != 0 || close_rc != 0)
         return -1;
     if (sqlicon_platform_restrict_file(tmp_path) != 0)
         return -1;

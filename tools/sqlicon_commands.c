@@ -1097,8 +1097,7 @@ sqlicon_exit_code command_import_csv(sqli_conn_t *conn, const char *arg)
         if (stage_res != NULL)
             sqli_result_destroy(stage_res);
         use_stage = true;
-    }
-    if (!tx_active) {
+
         if (data_start_pos >= 0 && fseek(fp, data_start_pos, SEEK_SET) == 0) {
             sqlicon_exit_code vrc = validate_import_rows(fp, col_count, 1);
             if (vrc != SQLICON_EXIT_OK) {

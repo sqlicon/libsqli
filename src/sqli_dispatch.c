@@ -328,7 +328,7 @@ static sqli_status append_dynamic_bytes(uint8_t **buf, size_t *len, size_t *cap,
         return SQLI_ALLOC_FAIL;
 
     size_t need = *len + src_len;
-    if (need > *cap) {
+    if (need > *cap || *buf == NULL) {
         size_t new_cap = (*cap == 0) ? 256u : *cap;
         while (new_cap < need) {
             if (new_cap > SIZE_MAX / 2u)
@@ -1221,10 +1221,13 @@ static sqli_status receive_command(sqli_conn_t *conn, int fd)
 
 sqli_status sqli_receive_dispatch(int fd, sqli_result_t *result, sqli_conn_t *conn)
 {
-    sqli_status rc = SQLI_OK;
-    int start_rows = result ? result->row_count : 0;
+    if (result == NULL)
+        return SQLI_INVALID_STATE;
 
-    if (conn != NULL && result != NULL && result->owner_conn == NULL)
+    sqli_status rc = SQLI_OK;
+    int start_rows = result->row_count;
+
+    if (conn != NULL && result->owner_conn == NULL)
         result->owner_conn = conn;
     while (!result->eof) {
         uint16_t opcode;
@@ -1310,8 +1313,8 @@ sqli_status sqli_receive_dispatch(int fd, sqli_result_t *result, sqli_conn_t *co
                     } else if (strncmp(conn->error_context, "query/fetch_recv", 16) == 0 ||
                                strncmp(conn->error_context, "query_stream/fetch_recv", 23) == 0 ||
                                strncmp(conn->error_context, "execute/fetch_recv", 18) == 0) {
-                        int new_tuples = (result != NULL) ? (result->row_count - start_rows) : 0;
-                        if (result != NULL && !result->saw_done && new_tuples == 0) {
+                        int new_tuples = result->row_count - start_rows;
+                        if (!result->saw_done && new_tuples == 0) {
                             can_end_group = 0;
                         }
                     }

@@ -107,15 +107,20 @@ sqli_status sqli_parse_sqlhosts(const char *filepath,
 
         /* Trim parsed fields */
         char *p;
-        if ((p = trim(server_name)) != s)
+        p = trim(server_name);
+        if (p != server_name)
             memmove(server_name, p, strlen(p) + 1);
-        if ((p = trim(protocol)) != s)
+        p = trim(protocol);
+        if (p != protocol)
             memmove(protocol, p, strlen(p) + 1);
-        if ((p = trim(hostname)) != s)
+        p = trim(hostname);
+        if (p != hostname)
             memmove(hostname, p, strlen(p) + 1);
-        if ((p = trim(service)) != s)
+        p = trim(service);
+        if (p != service)
             memmove(service, p, strlen(p) + 1);
-        if ((p = trim(options)) != s)
+        p = trim(options);
+        if (p != options)
             memmove(options, p, strlen(p) + 1);
 
         /* Clear and copy */
@@ -132,8 +137,11 @@ sqli_status sqli_parse_sqlhosts(const char *filepath,
 
     fclose(fp);
 
-    /* If we read fewer than MAX_ENTRIES, shrink */
-    if (n < MAX_ENTRIES) {
+    /* If no entries found or fewer than MAX_ENTRIES, adjust buffer */
+    if (n == 0) {
+        free(arr);
+        arr = NULL;
+    } else if (n < MAX_ENTRIES) {
         sqli_sqlhosts_entry *tmp = realloc(arr, (size_t)n * sizeof(sqli_sqlhosts_entry));
         if (tmp != NULL)
             arr = tmp;

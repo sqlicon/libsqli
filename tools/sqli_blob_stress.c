@@ -621,6 +621,13 @@ int main(int argc, char **argv)
 
     pthread_t *tids = calloc(threads, sizeof(*tids));
     blob_worker_task_t *tasks = calloc(threads, sizeof(*tasks));
+    if (tids == NULL || tasks == NULL) {
+        fprintf(stderr, "FATAL: Failed to allocate worker memory\n");
+        free(tids);
+        free(tasks);
+        sqli_pool_destroy(pool);
+        return 1;
+    }
 
     /* PHASE 2: Legacy LOB Stress (BYTE & TEXT) */
     printf("\n[PHASE 2] Running Legacy LOB (BYTE & TEXT) Concurrent Stress...\n");

@@ -49,7 +49,7 @@ static const char *log_level_name[] = {
 static void format_timestamp(char *buf, size_t buf_size)
 {
     struct timespec ts;
-    struct tm tm_buf;
+    struct tm tm_buf = {0};
 
     if (buf_size < 13 || clock_gettime(CLOCK_REALTIME, &ts) != 0) {
         if (buf_size > 0)

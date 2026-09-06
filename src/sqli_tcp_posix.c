@@ -252,11 +252,6 @@ ssize_t sqli_tcp_read(int fd, unsigned char *buf, size_t count)
             n = SSL_read((SSL *)ssl_ptr, buf + total, (int)(count - total));
             if (n <= 0) {
                 ssl_err = SSL_get_error((SSL *)ssl_ptr, (int)n);
-            }
-        }
-
-        if (use_tls) {
-            if (n <= 0) {
                 if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE) {
                     struct pollfd pfd;
                     pfd.fd = fd;
@@ -328,11 +323,6 @@ ssize_t sqli_tcp_read_some(int fd, unsigned char *buf, size_t count)
             n = SSL_read((SSL *)ssl_ptr, buf, (int)count);
             if (n <= 0) {
                 ssl_err = SSL_get_error((SSL *)ssl_ptr, (int)n);
-            }
-        }
-
-        if (use_tls) {
-            if (n <= 0) {
                 if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE) {
                     struct pollfd pfd;
                     pfd.fd = fd;
@@ -404,11 +394,6 @@ ssize_t sqli_tcp_send(int fd, const unsigned char *buf, size_t count)
             n = SSL_write((SSL *)ssl_ptr, buf + total, (int)(count - total));
             if (n <= 0) {
                 ssl_err = SSL_get_error((SSL *)ssl_ptr, (int)n);
-            }
-        }
-
-        if (use_tls) {
-            if (n <= 0) {
                 if (ssl_err == SSL_ERROR_WANT_READ || ssl_err == SSL_ERROR_WANT_WRITE) {
                     struct pollfd pfd;
                     pfd.fd = fd;

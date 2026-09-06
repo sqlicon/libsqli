@@ -235,7 +235,7 @@ static void *worker_thread_tx(void *arg)
         char insert_sql[512];
         snprintf(insert_sql, sizeof(insert_sql),
                  "INSERT INTO %s (id, c_smallint, c_int, c_bool, c_varchar) "
-                 "VALUES (%d, 99, %d, 't', 'tx_temp_%d')",
+                 "VALUES (%d, 99, %d, 't', 'tx_temp_%u')",
                  task->table_name, temp_id, temp_id, iter);
         rc = sqli_query(conn, insert_sql, &res);
         if (res) { sqli_result_destroy(res); res = NULL; }
@@ -464,6 +464,13 @@ int main(int argc, char **argv)
 
     pthread_t *tids = calloc(threads, sizeof(*tids));
     worker_task_t *tasks = calloc(threads, sizeof(*tasks));
+    if (tids == NULL || tasks == NULL) {
+        fprintf(stderr, "FATAL: Failed to allocate worker memory\n");
+        free(tids);
+        free(tasks);
+        sqli_pool_destroy(pool);
+        return 1;
+    }
 
     uint64_t t_read_start = now_us();
     for (unsigned i = 0; i < threads; i++) {

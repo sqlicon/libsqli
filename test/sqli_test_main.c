@@ -266,6 +266,7 @@ void test_bind_decimal_negative(void);
 void test_bind_datetime_success(void);
 void test_bind_interval_success(void);
 void test_prepare_execute_null_stmt(void);
+void test_prepare_execute_null_conn(void);
 void test_prepare_execute_with_retry_null_stmt(void);
 void test_prepare_execute_with_retry_null_conn(void);
 void test_prepare_stmt_next_null_stmt(void);
@@ -702,6 +703,7 @@ int main(void)
     RUN_TEST(test_bind_datetime_success);
     RUN_TEST(test_bind_interval_success);
     RUN_TEST(test_prepare_execute_null_stmt);
+    RUN_TEST(test_prepare_execute_null_conn);
     RUN_TEST(test_prepare_execute_with_retry_null_stmt);
     RUN_TEST(test_prepare_execute_with_retry_null_conn);
     RUN_TEST(test_prepare_stmt_next_null_stmt);

@@ -91,9 +91,9 @@ void table_buffer_collect(sqlicon_table_buffer *tb, sqli_result_t *result,
 
     while (sqli_result_next(result)) {
         char **cells = calloc((size_t)tb->cols, sizeof(char *));
-        bool *is_null = calloc((size_t)tb->cols, sizeof(bool));
         if (cells == NULL)
             break;
+        bool *is_null = calloc((size_t)tb->cols, sizeof(bool));
         if (is_null == NULL) {
             free(cells);
             break;

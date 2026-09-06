@@ -203,7 +203,8 @@ static const char *find_query_value(const uri_query_entry *entries, int count,
  * ---------------------------------------------------------------- */
 
 typedef enum {
-    URI_PROTO_ONSOCTCP,
+    URI_PROTO_UNKNOWN = -1,
+    URI_PROTO_ONSOCTCP = 0,
     URI_PROTO_ONSOCSSL,
     URI_PROTO_ONIPCSTR
 } uri_protocol;
@@ -221,7 +222,7 @@ static uri_protocol detect_protocol(const char *scheme, size_t scheme_len)
         if (proto_len == 8 && strncmp(proto, "onipcstr", 8) == 0)
             return URI_PROTO_ONIPCSTR;
     }
-    return (uri_protocol)-1;
+    return URI_PROTO_UNKNOWN;
 }
 
 /* ----------------------------------------------------------------
@@ -258,7 +259,7 @@ sqli_status sqli_connect_uri(sqli_conn_t *conn, const char *uri,
     copy_range(comps.scheme, comps.scheme_len, scheme_buf, sizeof(scheme_buf));
 
     uri_protocol proto = detect_protocol(scheme_buf, strlen(scheme_buf));
-    if (proto == (uri_protocol)-1) {
+    if (proto == URI_PROTO_UNKNOWN) {
         set_error(conn, "unsupported URI scheme: use informix+onsoctcp, informix+onsocssl, or informix+onipcstr");
         return SQLI_INVALID_STATE;
     }
