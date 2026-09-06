@@ -306,6 +306,7 @@ sqli_status sqli_create(sqli_conn_t **conn)
 
     clear_error(c);
     c->socket_fd = -1;
+    c->autocommit = true;
     c->state = SQLI_CONN_CLOSED;
     c->strict_protocol = parse_bool_env(getenv("SQLI_STRICT_PROTOCOL"));
     c->trim_trailing_spaces = true;

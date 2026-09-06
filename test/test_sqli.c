@@ -42,6 +42,7 @@ void test_sqli_create_destroy(void)
     TEST_ASSERT_NULL(sqli_error(conn));
 
     /* Destroy does not crash */
+    TEST_ASSERT_TRUE(sqli_get_autocommit(conn));
     sqli_destroy(conn);
     conn = NULL;
 }

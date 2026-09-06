@@ -89,7 +89,17 @@ static size_t sqli_temporal_packed_width_from_encoded(uint8_t type, uint32_t enc
     uint8_t qlen = (uint8_t)((encoded_length >> 8) & 0xFFu);
     if (qlen == 0)
         return 0;
-    return 1u + (size_t)((qlen + 1u) / 2u);
+    /* Base-100 groups preserve the leading INTERVAL field boundary.
+     * An odd leading precision consumes an extra half-pair, independently
+     * of trailing fractional digits (e.g. DAY(3) TO FRACTION(5)). */
+    unsigned leading_pad = 0;
+    if (type == SQLI_TYPE_INTERVAL) {
+        unsigned start = (encoded_length >> 4) & 0xFu;
+        unsigned end = encoded_length & 0xFu;
+        if (end >= start && qlen >= end - start)
+            leading_pad = (qlen - (end - start)) & 1u;
+    }
+    return 1u + (size_t)((qlen + leading_pad + 1u) / 2u);
 }
 
 void sqli_base100_complement(uint8_t *digits, size_t ndgts)
@@ -703,8 +713,8 @@ static bool sqli_result_server_refetch(sqli_result_t *result, uint16_t scroll_ty
     }
 
     if (scroll_type == SQLI_SFETCH_ABSOLUTE) {
-        result->absolute_row_num = (result->rows_affected > 0) ?
-            (int32_t)result->rows_affected : index;
+        /* DONE reports a count, not the position requested by ABSOLUTE. */
+        result->absolute_row_num = index;
     } else if (scroll_type == SQLI_SFETCH_LAST) {
         result->absolute_row_num = (result->rows_affected > 0) ?
             (int32_t)result->rows_affected : (int32_t)result->row_count;

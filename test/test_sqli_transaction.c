@@ -180,8 +180,12 @@ void test_autocommit_off_with_active_txn(void)
     c->in_transaction = 1;
     sqli_set_autocommit(c, 0);
 
-    /* Transaction should be ended when autocommit is turned off */
-    TEST_ASSERT_EQUAL_INT(0, c->in_transaction);
+    /* Disabling (including repeated OFF) must preserve server state. */
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_set_autocommit(c, false));
+    TEST_ASSERT_TRUE(c->in_transaction);
+    TEST_ASSERT_EQUAL_UINT64(0, c->rollback_epoch);
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_set_autocommit(c, true));
+    TEST_ASSERT_TRUE(c->in_transaction);
     TEST_ASSERT_EQUAL_INT(0, sqli_get_autocommit(c));
 
     free(c);
@@ -742,4 +746,44 @@ void test_success_clears_previous_error_diagnostics(void)
     close(sv[0]);
     close(sv[1]);
     free(c);
+}
+
+void test_autocommit_lazy_begin_and_transaction_boundaries(void)
+{
+    int sv[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0)
+        TEST_IGNORE_MESSAGE("socketpair unavailable for autocommit regression");
+    sqli_conn_t *conn = make_mock_conn();
+    TEST_ASSERT_NOT_NULL(conn);
+    conn->socket_fd = sv[0];
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_set_autocommit(conn, false));
+    /* Session settings and DDL must not prevent a later explicit BEGIN. */
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_autobegin(conn, 48));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_autobegin(conn, 14));
+    TEST_ASSERT_FALSE(conn->in_transaction);
+    const uint8_t done[] = {0, SQLI_SQ_DONE, 0, 0, 0, 0, 0, 0,
+                           0, 0, 0, 0, 0, 0, 0, 0};
+    TEST_ASSERT_EQUAL_INT(sizeof(done), write(sv[1], done, sizeof(done)));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_autobegin(conn, 4));
+    TEST_ASSERT_TRUE(conn->in_transaction);
+    uint8_t request[4];
+    TEST_ASSERT_EQUAL_INT(sizeof(request), read(sv[1], request, sizeof(request)));
+    const uint8_t begin[] = {0, SQLI_SQ_EOT, 0, SQLI_SQ_BEGIN};
+    TEST_ASSERT_EQUAL_MEMORY(begin, request, sizeof(begin));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_autobegin(conn, 2));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_set_autocommit(conn, false));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_set_autocommit(conn, true));
+    TEST_ASSERT_TRUE(conn->in_transaction);
+    TEST_ASSERT_FALSE(conn->autocommit);
+    TEST_ASSERT_EQUAL_INT(sizeof(done), write(sv[1], done, sizeof(done)));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_commit(conn));
+    TEST_ASSERT_FALSE(conn->in_transaction);
+    TEST_ASSERT_FALSE(conn->autocommit);
+    TEST_ASSERT_EQUAL_INT(sizeof(request), read(sv[1], request, sizeof(request)));
+    TEST_ASSERT_EQUAL_INT(SQLI_SQ_CMMTWORK, request[3]);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_set_autocommit(conn, true));
+    TEST_ASSERT_FALSE(conn->error_info.has_error);
+    close(sv[0]);
+    close(sv[1]);
+    free(conn);
 }

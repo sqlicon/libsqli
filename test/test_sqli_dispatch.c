@@ -16,6 +16,7 @@
 #include <sys/time.h>
 #include <errno.h>
 #include <poll.h>
+#include <pthread.h>
 
 static int create_socket_pair(int *read_fd, int *write_fd)
 {
@@ -969,6 +970,7 @@ void test_query_select_closes_once_and_destroy_sends_nothing(void)
     sqli_conn_t conn;
     memset(&conn, 0, sizeof(conn));
     conn.state = SQLI_CONN_READY;
+    conn.autocommit = true; /* Same default as sqli_create(). */
     conn.socket_fd = write_fd;
     conn.cursor_type = SQLI_CURSOR_FORWARD_ONLY;
     conn.holdability = SQLI_CURSOR_CLOSE_AT_COMMIT;
@@ -1642,7 +1644,7 @@ void test_result_scroll_navigation_server_cursor(void)
     ssize_t n = recv(read_fd, req, sizeof(req), 0);
     TEST_ASSERT_GREATER_THAN_INT(0, n);
 
-    /* 2. Preload PREVIOUS response: target is 4 -> VARCHAR(1) "4" + DONE (rows_affected = 4) */
+    /* PREVIOUS targets 4; DONE still reports the total count 5. */
     uint8_t resp_prev[] = {
         0, SQLI_SQ_TUPLE,
         0, 0,              /* warnings */
@@ -1650,7 +1652,7 @@ void test_result_scroll_navigation_server_cursor(void)
         1, '4',
         0, SQLI_SQ_DONE,
         0, 0,              /* warnings */
-        0, 0, 0, 4,        /* rows_affected = 4 */
+        0, 0, 0, 5,        /* total count, not absolute position */
         0, 0, 0, 4,        /* rowid */
         0, 0, 0, 0         /* sqlerrd1 */
     };
@@ -1823,3 +1825,195 @@ void test_result_holdability_rollback_closes_all(void)
 }
 
 
+
+/* Stateful server: an exception leaves its cursor open until SQ_CLOSE.
+ * Reopening without closing returns -285, matching the live SPL failure. */
+typedef struct {
+    int fd;
+    int opens;
+    int closes;
+    int executes;
+    int begins;
+    bool fail_open;
+    bool bad_request;
+} routine_server_ctx;
+
+static void *routine_server(void *arg)
+{
+    routine_server_ctx *ctx = arg;
+    bool open = false;
+    int fetches = 0;
+    for (;;) {
+        uint8_t req[256], resp[256];
+        size_t n = 0, p = 0;
+        while (n < sizeof(req)) {
+            if (recv(ctx->fd, req + n, 1, 0) != 1)
+                return NULL;
+            n++;
+            if (n >= 2 && req[n-2] == 0 && req[n-1] == SQLI_SQ_EOT)
+                break;
+        }
+        if (n == 2 && req[1] == SQLI_SQ_EOT) {
+            if (recv(ctx->fd, req + 2, 2, MSG_WAITALL) != 2 ||
+                req[2] != 0 || req[3] != SQLI_SQ_BEGIN) {
+                ctx->bad_request = true;
+                return NULL;
+            }
+            ctx->begins++;
+            p = build_done_response(resp, 0);
+            if (send(ctx->fd, resp, p, 0) != (ssize_t)p)
+                return NULL;
+            continue;
+        }
+        if (n < 8 || req[1] != SQLI_SQ_ID) {
+            ctx->bad_request = true;
+            return NULL;
+        }
+        int command = req[5];
+        if (command == 3) { /* CURNAME ... OPEN */
+            ctx->opens++;
+            if (open) {
+                p = build_error_response(resp, -285, 0);
+            } else {
+                open = true;
+                fetches = 0;
+                if (ctx->fail_open && ctx->opens == 2)
+                    p = build_error_response(resp, -746, 0);
+                else
+                    p = build_done_response(resp, 0);
+            }
+        } else if (command == SQLI_SQ_NFETCH) {
+            if (!open) {
+                ctx->bad_request = true;
+                p = build_error_response(resp, -285, 0);
+            } else if (ctx->opens == 2) {
+                p = build_error_response(resp, -746, 0);
+            } else {
+                if (fetches++ == 0)
+                    p = build_tuple_response_2int(resp, 42, 43);
+                p += build_done_response(resp + p, 1);
+            }
+        } else if (command == SQLI_SQ_CLOSE) {
+            ctx->closes++;
+            open = false;
+            p = build_done_response(resp, 0);
+        } else if (command == SQLI_SQ_RELEASE) {
+            p = build_done_response(resp, 0);
+        } else if (command == SQLI_SQ_EXECUTE) {
+            ctx->executes++;
+            p = build_done_response(resp, 1);
+        } else {
+            ctx->bad_request = true;
+            return NULL;
+        }
+        /* This fixture uses the short DONE format. */
+        if (send(ctx->fd, resp, p, 0) != (ssize_t)p)
+            return NULL;
+        if (command == SQLI_SQ_RELEASE)
+            return NULL;
+    }
+}
+
+static void run_returning_routine_recovery(bool fail_open)
+{
+    int server_fd, client_fd;
+    if (create_socket_pair(&server_fd, &client_fd) != 0)
+        TEST_IGNORE_MESSAGE("socketpair unavailable for routine regression");
+    struct timeval timeout = {3, 0};
+    setsockopt(server_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    routine_server_ctx ctx = {.fd = server_fd, .fail_open = fail_open};
+    pthread_t thread;
+    TEST_ASSERT_EQUAL_INT(0, pthread_create(&thread, NULL, routine_server, &ctx));
+    sqli_conn_t conn = {0};
+    conn.state = SQLI_CONN_READY;
+    conn.socket_fd = client_fd;
+    conn.autocommit = true;
+    sqli_stmt_t stmt = {0};
+    stmt.conn = &conn;
+    stmt.socket_fd = client_fd;
+    stmt.stmt_id = 0x42;
+    stmt.result.statement_type = 56; /* SQ_EXECPROC, not read-only SQL */
+    stmt.result.column_count = 2;
+    stmt.result.columns = calloc(2, sizeof(*stmt.result.columns));
+    TEST_ASSERT_NOT_NULL(stmt.result.columns);
+    for (int i = 0; i < 2; i++) {
+        stmt.result.columns[i].type = SQLI_TYPE_INT;
+        stmt.result.columns[i].encoded_length = 4;
+    }
+    sqli_status first = sqli_execute(&stmt);
+    bool first_row = sqli_stmt_next(&stmt);
+    int first_value = first_row ? sqli_result_get_int(sqli_stmt_result(&stmt), 0) : 0;
+    /* Reexecute without exhausting the previous client result. */
+    sqli_status failed = sqli_execute(&stmt);
+    int sqlcode = conn.error_info.sqlcode;
+    bool stale_row = sqli_stmt_next(&stmt);
+    bool stale_result = sqli_stmt_result(&stmt) != NULL;
+    sqli_status recovered = sqli_execute(&stmt);
+    bool row = sqli_stmt_next(&stmt);
+    int value = row ? sqli_result_get_int(sqli_stmt_result(&stmt), 1) : 0;
+    bool has_error = conn.error_info.has_error;
+    sqli_stmt_close(&stmt);
+    pthread_join(thread, NULL);
+    close(server_fd);
+    close(client_fd);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, first);
+    TEST_ASSERT_TRUE(first_row);
+    TEST_ASSERT_EQUAL_INT(42, first_value);
+    TEST_ASSERT_NOT_EQUAL(SQLI_OK, failed);
+    TEST_ASSERT_EQUAL_INT(-746, sqlcode);
+    TEST_ASSERT_FALSE(stale_row);
+    TEST_ASSERT_FALSE(stale_result);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, recovered);
+    TEST_ASSERT_TRUE(row);
+    TEST_ASSERT_EQUAL_INT(43, value);
+    TEST_ASSERT_FALSE(has_error);
+    TEST_ASSERT_EQUAL_INT(3, ctx.opens);
+    TEST_ASSERT_EQUAL_INT(3, ctx.closes);
+    TEST_ASSERT_EQUAL_INT(0, ctx.executes);
+    TEST_ASSERT_FALSE(ctx.bad_request);
+}
+
+void test_returning_routine_recovers_after_fetch_exception(void)
+{
+    run_returning_routine_recovery(false);
+}
+
+void test_returning_routine_recovers_after_open_exception(void)
+{
+    run_returning_routine_recovery(true);
+}
+
+void test_dml_describe_columns_do_not_open_cursor(void)
+{
+    int server_fd, client_fd;
+    if (create_socket_pair(&server_fd, &client_fd) != 0)
+        TEST_IGNORE_MESSAGE("socketpair unavailable for DML regression");
+    routine_server_ctx ctx = {.fd = server_fd};
+    pthread_t thread;
+    TEST_ASSERT_EQUAL_INT(0, pthread_create(&thread, NULL, routine_server, &ctx));
+    sqli_conn_t conn = {0};
+    conn.socket_fd = client_fd;
+    conn.state = SQLI_CONN_READY;
+    conn.autocommit = false;
+    sqli_stmt_t stmt = {0};
+    stmt.conn = &conn;
+    stmt.socket_fd = client_fd;
+    stmt.stmt_id = 0x42;
+    stmt.result.statement_type = 6; /* INSERT metadata can describe inputs */
+    stmt.result.column_count = 1;
+    stmt.result.columns = calloc(1, sizeof(*stmt.result.columns));
+    TEST_ASSERT_NOT_NULL(stmt.result.columns);
+    stmt.result.columns[0].type = SQLI_TYPE_INT;
+    sqli_status rc = sqli_execute(&stmt);
+    sqli_stmt_close(&stmt);
+    pthread_join(thread, NULL);
+    close(server_fd);
+    close(client_fd);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, rc);
+    TEST_ASSERT_EQUAL_INT(1, ctx.executes);
+    TEST_ASSERT_EQUAL_INT(1, ctx.begins);
+    TEST_ASSERT_TRUE(conn.in_transaction);
+    TEST_ASSERT_EQUAL_INT(0, ctx.opens);
+    TEST_ASSERT_FALSE(ctx.bad_request);
+}

@@ -101,6 +101,12 @@ sqli_status sqli_query_ex(sqli_conn_t *conn, const char *sql,
         return rc;
     }
 
+    rc = sqli_autobegin(conn, r->statement_type);
+    if (rc != SQLI_OK) {
+        sqli_result_destroy(r);
+        return rc;
+    }
+
     int stmt_id = r->stmt_id;
     /* stmt_id == 0 is valid; only -1 (or negative) means "no statement" */
     if (stmt_id < 0) {
@@ -283,17 +289,7 @@ sqli_status sqli_query_ex(sqli_conn_t *conn, const char *sql,
                 return rc;
             }
         }
-        if (sql != NULL && conn != NULL) {
-            const char *p = sql;
-            while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
-            if (strncasecmp(p, "commit", 6) == 0) {
-                conn->in_transaction = false;
-                conn->commit_epoch++;
-            } else if (strncasecmp(p, "rollback", 8) == 0) {
-                conn->in_transaction = false;
-                conn->rollback_epoch++;
-            }
-        }
+        sqli_track_transaction_statement(conn, r->statement_type);
     }
 
     clear_error(conn);
@@ -374,6 +370,12 @@ sqli_status sqli_query_stream(sqli_conn_t *conn, const char *sql,
     if (rc != SQLI_OK) {
         if (!conn->error_info.has_error)
             set_error(conn, "error receiving prepare response");
+        sqli_result_destroy(r);
+        return rc;
+    }
+
+    rc = sqli_autobegin(conn, r->statement_type);
+    if (rc != SQLI_OK) {
         sqli_result_destroy(r);
         return rc;
     }
@@ -487,6 +489,7 @@ sqli_status sqli_query_stream(sqli_conn_t *conn, const char *sql,
         }
     }
 
+    sqli_track_transaction_statement(conn, r->statement_type);
     if (out_rows != NULL)
         *out_rows = delivered;
     sqli_result_destroy(r);

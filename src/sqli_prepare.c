@@ -180,6 +180,51 @@ static void sqli_stmt_best_effort_control(sqli_stmt_t *stmt, uint8_t opcode)
     (void)sqli_tcp_send(stmt->socket_fd, msg, sizeof(msg));
 }
 
+static sqli_status sqli_stmt_close_cursor_if_open(sqli_stmt_t *stmt)
+{
+    if (stmt == NULL || !stmt->cursor_open)
+        return SQLI_OK;
+    if (stmt->conn != NULL &&
+        (stmt->result.rollback_epoch != stmt->conn->rollback_epoch ||
+         (stmt->result.holdability == SQLI_CURSOR_CLOSE_AT_COMMIT &&
+          stmt->result.commit_epoch != stmt->conn->commit_epoch))) {
+        stmt->cursor_open = false;
+        return SQLI_OK;
+    }
+
+    sqli_status rc = SQLI_OK;
+    if (stmt->conn != NULL && stmt->conn->socket_fd > 0 &&
+        stmt->conn->state == SQLI_CONN_READY && stmt->stmt_id >= 0) {
+        /* Preserve any active error info on connection across SQ_CLOSE */
+        sqli_error_info saved_info;
+        char saved_errmsg[sizeof(stmt->conn->errmsg)];
+        char saved_ctx[sizeof(stmt->conn->error_context)];
+        uint16_t saved_op = stmt->conn->error_opcode;
+        bool has_err = stmt->conn->error_info.has_error;
+
+        if (has_err) {
+            saved_info = stmt->conn->error_info;
+            memcpy(saved_errmsg, stmt->conn->errmsg, sizeof(saved_errmsg));
+            memcpy(saved_ctx, stmt->conn->error_context, sizeof(saved_ctx));
+        }
+
+        rc = sqli_send_stmt_close_cursor(stmt->conn, stmt->stmt_id);
+
+        if (has_err) {
+            stmt->conn->error_info = saved_info;
+            memcpy(stmt->conn->errmsg, saved_errmsg, sizeof(saved_errmsg));
+            memcpy(stmt->conn->error_context, saved_ctx, sizeof(saved_ctx));
+            stmt->conn->error_opcode = saved_op;
+        }
+    } else if (stmt->socket_fd > 0 && stmt->stmt_id >= 0) {
+        sqli_stmt_best_effort_control(stmt, 10); /* SQ_CLOSE */
+    }
+
+    if (rc == SQLI_OK)
+        stmt->cursor_open = false;
+    return rc;
+}
+
 static int sqli_sql_is_read_only(const char *sql)
 {
     if (sql == NULL)
@@ -1154,6 +1199,9 @@ static sqli_status sqli_stmt_receive_execute_result(sqli_stmt_t *stmt)
 static sqli_status sqli_stmt_execute_bound_params(sqli_stmt_t *stmt,
                                                   const sqli_bound_param *params)
 {
+    sqli_status txn_rc = sqli_autobegin(stmt->conn, stmt->result.statement_type);
+    if (txn_rc != SQLI_OK)
+        return txn_rc;
     int fd = stmt->socket_fd;
     uint16_t sid = (uint16_t)stmt->stmt_id;
 
@@ -1261,12 +1309,18 @@ static sqli_status sqli_stmt_execute_bound_params(sqli_stmt_t *stmt,
     }
 
     sqli_stmt_prepare_result_for_execute(stmt);
-    return sqli_stmt_receive_execute_result(stmt);
+    sqli_status rc = sqli_stmt_receive_execute_result(stmt);
+    if (rc == SQLI_OK)
+        sqli_track_transaction_statement(stmt->conn, stmt->result.statement_type);
+    return rc;
 }
 
 static sqli_status sqli_stmt_execute_select(sqli_stmt_t *stmt)
 {
-    sqli_status rc = sqli_stmt_send_bind_if_needed(stmt, stmt->params, true);
+    sqli_status rc = sqli_autobegin(stmt->conn, stmt->result.statement_type);
+    if (rc != SQLI_OK)
+        return rc;
+    rc = sqli_stmt_send_bind_if_needed(stmt, stmt->params, true);
     if (rc != SQLI_OK)
         return rc;
 
@@ -1296,6 +1350,7 @@ static sqli_status sqli_stmt_execute_select(sqli_stmt_t *stmt)
         return rc;
     }
 
+    stmt->cursor_open = true;
     set_error_context(stmt->conn, "execute/open_recv", SQLI_SQ_PREPARE);
     rc = sqli_receive_dispatch(stmt->socket_fd, &stmt->result, stmt->conn);
     if (rc != SQLI_OK) {
@@ -1361,8 +1416,21 @@ sqli_status sqli_execute(sqli_stmt_t *stmt)
 
     clear_error(stmt->conn);
 
-    if (stmt->read_only && stmt->result.statement_type == 2)
-        return sqli_stmt_execute_select(stmt);
+    stmt->result_valid = false;
+    sqli_status close_rc = sqli_stmt_close_cursor_if_open(stmt);
+    if (close_rc != SQLI_OK)
+        return close_rc;
+    clear_error(stmt->conn);
+
+    /* DESCRIBE for DML can describe input parameters. Only SELECT and
+     * returning EXECUTE PROCEDURE/FUNCTION (statement type 56) open cursors. */
+    if (stmt->result.statement_type == 2 ||
+        (stmt->result.statement_type == 56 && stmt->result.column_count > 0)) {
+        sqli_status rc = sqli_stmt_execute_select(stmt);
+        if (rc != SQLI_OK)
+            (void)sqli_stmt_close_cursor_if_open(stmt);
+        return rc;
+    }
 
     return sqli_stmt_execute_bound_params(stmt, stmt->params);
 }
@@ -1447,7 +1515,8 @@ sqli_status sqli_stmt_batch_execute(sqli_stmt_t *stmt, sqli_batch_result_t **out
     if (stmt->conn != NULL)
         clear_error(stmt->conn);
 
-    if (stmt->read_only) {
+    if (stmt->read_only || stmt->result.statement_type == 2 ||
+        (stmt->result.statement_type == 56 && stmt->result.column_count > 0)) {
         set_error_context(stmt->conn, "stmt_batch_execute/precheck", SQLI_SQ_EXECUTE);
         set_error(stmt->conn, "prepared batch execute is only supported for DML statements");
         return SQLI_INVALID_STATE;
@@ -1552,6 +1621,7 @@ void sqli_stmt_close(sqli_stmt_t *stmt)
     sqli_result_cleanup(&stmt->result);
 
     stmt->stmt_id = -1;
+    stmt->cursor_open = false;
     stmt->executed = false;
     stmt->result_valid = false;
 }

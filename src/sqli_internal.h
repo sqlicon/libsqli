@@ -556,6 +556,9 @@ typedef struct {
 } sqli_stmt_batch_row;
 
 /* Prepared statement */
+sqli_status sqli_autobegin(sqli_conn_t *conn, int statement_type);
+void sqli_track_transaction_statement(sqli_conn_t *conn, int statement_type);
+
 struct sqli_stmt {
     int socket_fd;            /* connected socket fd */
     sqli_conn_t *conn;        /* owning connection (for capabilities) */
@@ -567,6 +570,7 @@ struct sqli_stmt {
     uint8_t *param_server_types; /* server-described types per parameter */
     int param_server_type_count; /* number of entries in param_server_types */
     bool executed;            /* true after sqli_execute() */
+    bool cursor_open;         /* true while server-side cursor is open */
 
     /* Result from execution */
     sqli_result_t result;     /* result from last execution */

@@ -543,9 +543,14 @@ static sqli_status sqli_send_stmt_control(sqli_conn_t *conn, int stmt_id, uint8_
     return rc;
 }
 
+sqli_status sqli_send_stmt_close_cursor(sqli_conn_t *conn, int stmt_id)
+{
+    return sqli_send_stmt_control(conn, stmt_id, 10); /* SQ_CLOSE */
+}
+
 void sqli_stmt_close_release(sqli_conn_t *conn, int stmt_id)
 {
-    sqli_status rc = sqli_send_stmt_control(conn, stmt_id, 10); /* SQ_CLOSE */
+    sqli_status rc = sqli_send_stmt_close_cursor(conn, stmt_id);
     if (rc != SQLI_OK)
         sqli_log(SQLI_LOG_DEBUG, "close stmt failed rc=%d", rc);
     rc = sqli_send_stmt_control(conn, stmt_id, SQLI_SQ_RELEASE);

@@ -956,7 +956,7 @@ sqli_status sqli_begin(sqli_conn_t *conn);
 /*
  * Commit the current transaction.
  *
- * Sends COMMIT WORK to the server. The connection returns to autocommit mode.
+ * Sends COMMIT WORK to the server. The configured autocommit mode is unchanged.
  *
  * Returns SQLI_OK on success, or an error status (e.g. SQLI_IO_ERROR,
  * SQLI_PROTO_ERROR, SQLI_TIMEOUT) if the commit request could not be sent
@@ -972,7 +972,7 @@ sqli_status sqli_commit(sqli_conn_t *conn);
 /*
  * Roll back the current transaction.
  *
- * Sends ROLLBACK WORK to the server. The connection returns to autocommit mode.
+ * Sends ROLLBACK WORK to the server. The configured autocommit mode is unchanged.
  *
  * Returns SQLI_OK on success, or an error status (e.g. SQLI_IO_ERROR,
  * SQLI_PROTO_ERROR, SQLI_TIMEOUT) if sending or receiving the response fails.
@@ -985,6 +985,13 @@ sqli_status sqli_rollback(sqli_conn_t *conn);
  * When autocommit is enabled (on == true), each individual SQL statement
  * is automatically committed after execution. When disabled, the
  * application must explicitly call sqli_commit() or sqli_rollback().
+ * New connections default to enabled. In disabled mode, executing SELECT,
+ * DML or a routine starts a transaction lazily if none is active; preparing
+ * alone, session settings and DDL do not start one. Explicit BEGIN remains
+ * supported in either mode. COMMIT/ROLLBACK leave the configured mode intact.
+ * Repeating a mode or disabling it preserves any active transaction.
+ * Enabling it from disabled mode during a transaction returns
+ * SQLI_INVALID_STATE; commit or roll back first.
  *
  * Returns SQLI_OK on success.
  */

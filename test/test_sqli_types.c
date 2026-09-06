@@ -1923,3 +1923,53 @@ void test_result_get_string_len_typed_columns(void)
 
 
 
+
+void test_interval_odd_precision_fraction_preserves_next_column(void)
+{
+    /* Live row layout is fixed-width decimal payload without len16 prefixes. */
+    const uint8_t tuple[] = {
+        /* DAY(3) TO FRACTION(5): 9 bytes, including the leading half-pair. */
+        0xC4, 3, 3, 27, 1, 12, 34, 50, 0,
+        /* YEAR(3) TO MONTH: 3 years, 2 months. */
+        0xC6, 3, 2, 0
+    };
+
+    sqli_result_t *result = NULL;
+    uint8_t types[] = {SQLI_TYPE_INTERVAL, SQLI_TYPE_INTERVAL};
+    uint32_t offsets[] = {0, 0};
+    setup_mock_result_heap(&result, 2, types, offsets);
+    TEST_ASSERT_NOT_NULL(result);
+    result->columns[0].encoded_length = 0x00000E4Fu;
+    result->columns[1].encoded_length = 0x00000502u;
+
+    result->rows = malloc(sizeof(uint8_t *));
+    result->row_lens = malloc(sizeof(size_t));
+    TEST_ASSERT_NOT_NULL(result->rows);
+    TEST_ASSERT_NOT_NULL(result->row_lens);
+    result->rows[0] = malloc(sizeof(tuple));
+    TEST_ASSERT_NOT_NULL(result->rows[0]);
+    memcpy(result->rows[0], tuple, sizeof(tuple));
+    result->row_lens[0] = sizeof(tuple);
+    result->row_count = 1;
+    result->row_capacity = 1;
+    result->cursor = -1;
+    result->current_row = -1;
+    result->tuple_buffer = NULL;
+    result->tuple_len = 0;
+
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+    TEST_ASSERT_EQUAL_INT(0, (int)result->columns[0].col_start_pos);
+    TEST_ASSERT_EQUAL_INT(9, (int)result->columns[1].col_start_pos);
+
+    sqli_interval_value dt;
+    sqli_interval_value iv;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_interval(result, 0, &dt));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_interval(result, 1, &iv));
+    TEST_ASSERT_EQUAL_INT(0, dt.is_null);
+    TEST_ASSERT_EQUAL_INT(0, iv.is_null);
+    TEST_ASSERT_EQUAL_INT(3, dt.day);
+    TEST_ASSERT_EQUAL_INT(12345, dt.fraction);
+    TEST_ASSERT_EQUAL_INT(3, iv.year);
+    TEST_ASSERT_EQUAL_INT(2, iv.month);
+    sqli_result_destroy(result);
+}

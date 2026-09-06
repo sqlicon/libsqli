@@ -290,10 +290,12 @@ sqli_status sqli_set_autocommit(sqli_conn_t *conn, bool on)
     if (conn == NULL)
         return SQLI_INVALID_STATE;
 
-    if (!on && conn->in_transaction) {
-        conn->in_transaction = false;
-        conn->rollback_epoch++;
-        sqli_log(SQLI_LOG_WARN, "autocommit off: ended pending transaction");
+    clear_error(conn);
+    if (on && !conn->autocommit && conn->in_transaction) {
+        /* Do not implicitly commit application work when changing a mode. */
+        set_error_context(conn, "autocommit", 0);
+        set_error(conn, "commit or roll back the active transaction before enabling autocommit");
+        return SQLI_INVALID_STATE;
     }
 
     conn->autocommit = on;
@@ -473,4 +475,32 @@ bool sqli_in_batch(sqli_conn_t *conn)
     if (conn == NULL)
         return false;
     return conn->in_batch;
+}
+
+/* Informix DESCRIBE statement types (sqlstype.h), not protocol opcodes.
+ * Session settings, DDL and transaction commands do not start an implicit
+ * transaction. Data access does, when manual transaction mode is selected. */
+sqli_status sqli_autobegin(sqli_conn_t *conn, int statement_type)
+{
+    if (conn == NULL)
+        return SQLI_INVALID_STATE;
+    if (conn->autocommit || conn->in_transaction)
+        return SQLI_OK;
+    if ((statement_type >= 2 && statement_type <= 8) ||
+        statement_type == 32 || statement_type == 33 || statement_type == 56)
+        return sqli_begin(conn);
+    return SQLI_OK;
+}
+
+void sqli_track_transaction_statement(sqli_conn_t *conn, int statement_type)
+{
+    if (statement_type == 34) {
+        conn->in_transaction = true;
+    } else if (statement_type == 35) {
+        conn->in_transaction = false;
+        conn->commit_epoch++;
+    } else if (statement_type == 36) {
+        conn->in_transaction = false;
+        conn->rollback_epoch++;
+    }
 }

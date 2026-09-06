@@ -4,6 +4,7 @@
 #include "sqli_internal.h"
 
 bool sqli_protocol_has_buffered_data(sqli_conn_t *conn, int fd);
+sqli_status sqli_send_stmt_close_cursor(sqli_conn_t *conn, int stmt_id);
 void sqli_stmt_close_release(sqli_conn_t *conn, int stmt_id);
 int64_t sqli_decode_ifx_int8(const uint8_t *buf, bool *is_null);
 sqli_status sqli_fetchblob_materialize(sqli_result_t *result, int col_index,
