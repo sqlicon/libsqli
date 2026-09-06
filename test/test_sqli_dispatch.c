@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #include <sys/time.h>
 #include <errno.h>
+#include <poll.h>
 
 static int create_socket_pair(int *read_fd, int *write_fd)
 {
@@ -366,6 +367,187 @@ void test_get_bytes_fetchblob_roundtrip(void)
     TEST_ASSERT_EQUAL_UINT8(7, wire[3]);
     TEST_ASSERT_EQUAL_UINT8(0, wire[4]);
     TEST_ASSERT_EQUAL_UINT8(SQLI_SQ_FETCHBLOB, wire[5]);
+
+    free(result->tuple_buffer);
+    sqli_result_destroy(result);
+    free(conn->read_buf);
+    free(conn);
+    close(read_fd);
+    close(write_fd);
+}
+
+static int test_empty_blob_stream_cb(const uint8_t *chunk, size_t chunk_len, void *ctx)
+{
+    (void)chunk;
+    (void)chunk_len;
+    int *invocations = (int *)ctx;
+    if (invocations != NULL)
+        (*invocations)++;
+    return 0;
+}
+
+static ssize_t test_drain_socket(int fd, void *buf, size_t max_len, int timeout_ms)
+{
+    struct pollfd pfd = { .fd = fd, .events = POLLIN, .revents = 0 };
+    if (poll(&pfd, 1, timeout_ms) > 0 && (pfd.revents & POLLIN))
+        return read(fd, buf, max_len);
+    return 0;
+}
+
+void test_get_bytes_empty_blob_returns_zero(void)
+{
+    int read_fd = -1, write_fd = -1;
+    if (create_socket_pair(&read_fd, &write_fd) != 0)
+        TEST_IGNORE_MESSAGE("socketpair unavailable for dispatch test");
+
+    sqli_conn_t *conn = calloc(1, sizeof(*conn));
+    sqli_result_t *result = calloc(1, sizeof(*result));
+    TEST_ASSERT_NOT_NULL(conn);
+    TEST_ASSERT_NOT_NULL(result);
+
+    conn->state = SQLI_CONN_READY;
+    conn->socket_fd = write_fd;
+    conn->read_buf_cap = 4096;
+    conn->read_buf = malloc(conn->read_buf_cap);
+    TEST_ASSERT_NOT_NULL(conn->read_buf);
+
+    result->owner_conn = conn;
+    result->stmt_id = 9;
+    result->column_count = 1;
+    result->columns = calloc(1, sizeof(*result->columns));
+    TEST_ASSERT_NOT_NULL(result->columns);
+    result->columns[0].type = SQLI_TYPE_BLOB;
+    result->columns[0].col_start_pos = 0;
+    result->columns[0].encoded_length = 16;
+    result->row_count = 1;
+    result->cursor = 0;
+    result->current_row = 0;
+    result->tuple_len = 7;
+    result->tuple_buffer = malloc(result->tuple_len);
+    TEST_ASSERT_NOT_NULL(result->tuple_buffer);
+    /* 5-byte locator payload */
+    result->tuple_buffer[0] = 0;
+    result->tuple_buffer[1] = 5;
+    result->tuple_buffer[2] = 0xAA;
+    result->tuple_buffer[3] = 0xBB;
+    result->tuple_buffer[4] = 0xCC;
+    result->tuple_buffer[5] = 0xDD;
+    result->tuple_buffer[6] = 0xEE;
+
+    /* Preload server response: SQ_DONE with 0 bytes + SQ_EOT (empty LOB, no SQ_BLOB chunks) */
+    uint8_t resp[128];
+    size_t p = 0;
+    p += build_done_response(resp + p, 0);
+    resp[p++] = 0; resp[p++] = SQLI_SQ_EOT;
+    TEST_ASSERT_EQUAL_INT((int)p, (int)write(read_fd, resp, p));
+
+    /* 1. sqli_result_get_bytes with 1-byte buffer must return 0 bytes, not locator bytes */
+    uint8_t out[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+    size_t out_len = 1;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_bytes(result, 0, out, &out_len));
+    TEST_ASSERT_EQUAL_UINT32(0u, (uint32_t)out_len);
+    TEST_ASSERT_EQUAL_UINT8(0xFF, out[0]);
+
+    /* Drain FETCHBLOB request sent on the wire */
+    uint8_t wire[64] = {0};
+    TEST_ASSERT_TRUE(test_drain_socket(read_fd, wire, sizeof(wire), 500) > 0);
+
+    /* 2. sqli_result_get_string_len on empty legacy TEXT */
+    p = 0;
+    p += build_done_response(resp + p, 0);
+    resp[p++] = 0; resp[p++] = SQLI_SQ_EOT;
+    TEST_ASSERT_EQUAL_INT((int)p, (int)write(read_fd, resp, p));
+
+    result->columns[0].type = SQLI_TYPE_TEXT;
+    result->columns[0].encoded_length = 56;
+    free(result->tuple_buffer);
+    result->tuple_len = 56;
+    result->tuple_buffer = calloc(1, 56);
+    TEST_ASSERT_NOT_NULL(result->tuple_buffer);
+
+    char str_out[16];
+    memset(str_out, 'X', sizeof(str_out));
+    size_t str_len = sizeof(str_out);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(result, 0, str_out, &str_len));
+    TEST_ASSERT_EQUAL_UINT32(0u, (uint32_t)str_len);
+    TEST_ASSERT_EQUAL_INT('\0', str_out[0]);
+
+    TEST_ASSERT_TRUE(test_drain_socket(read_fd, wire, sizeof(wire), 500) > 0);
+
+    /* 3. sqli_result_get_string on empty LOB */
+    p = 0;
+    p += build_done_response(resp + p, 0);
+    resp[p++] = 0; resp[p++] = SQLI_SQ_EOT;
+    TEST_ASSERT_EQUAL_INT((int)p, (int)write(read_fd, resp, p));
+
+    const char *s = sqli_result_get_string(result, 0);
+    TEST_ASSERT_NOT_NULL(s);
+    TEST_ASSERT_EQUAL_STRING("", s);
+
+    TEST_ASSERT_TRUE(test_drain_socket(read_fd, wire, sizeof(wire), 500) > 0);
+
+    free(result->tuple_buffer);
+    sqli_result_destroy(result);
+    free(conn->read_buf);
+    free(conn);
+    close(read_fd);
+    close(write_fd);
+}
+
+void test_stream_bytes_empty_blob_no_callback(void)
+{
+    int read_fd = -1, write_fd = -1;
+    if (create_socket_pair(&read_fd, &write_fd) != 0)
+        TEST_IGNORE_MESSAGE("socketpair unavailable for dispatch test");
+
+    sqli_conn_t *conn = calloc(1, sizeof(*conn));
+    sqli_result_t *result = calloc(1, sizeof(*result));
+    TEST_ASSERT_NOT_NULL(conn);
+    TEST_ASSERT_NOT_NULL(result);
+
+    conn->state = SQLI_CONN_READY;
+    conn->socket_fd = write_fd;
+    conn->read_buf_cap = 4096;
+    conn->read_buf = malloc(conn->read_buf_cap);
+    TEST_ASSERT_NOT_NULL(conn->read_buf);
+
+    result->owner_conn = conn;
+    result->stmt_id = 11;
+    result->column_count = 1;
+    result->columns = calloc(1, sizeof(*result->columns));
+    TEST_ASSERT_NOT_NULL(result->columns);
+    result->columns[0].type = SQLI_TYPE_BLOB;
+    result->columns[0].col_start_pos = 0;
+    result->columns[0].encoded_length = 16;
+    result->row_count = 1;
+    result->cursor = 0;
+    result->current_row = 0;
+    result->tuple_len = 7;
+    result->tuple_buffer = malloc(result->tuple_len);
+    TEST_ASSERT_NOT_NULL(result->tuple_buffer);
+    result->tuple_buffer[0] = 0;
+    result->tuple_buffer[1] = 5;
+    result->tuple_buffer[2] = 1;
+    result->tuple_buffer[3] = 2;
+    result->tuple_buffer[4] = 3;
+    result->tuple_buffer[5] = 4;
+    result->tuple_buffer[6] = 5;
+
+    /* Preload server response: SQ_DONE + SQ_EOT */
+    uint8_t resp[128];
+    size_t p = 0;
+    p += build_done_response(resp + p, 0);
+    resp[p++] = 0; resp[p++] = SQLI_SQ_EOT;
+    TEST_ASSERT_EQUAL_INT((int)p, (int)write(read_fd, resp, p));
+
+    int callback_count = 0;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_stream_bytes(result, 0, 1024,
+                                                           test_empty_blob_stream_cb,
+                                                           &callback_count));
+    TEST_ASSERT_EQUAL_INT(0, callback_count);
+
+    uint8_t wire[64] = {0};
+    TEST_ASSERT_TRUE(test_drain_socket(read_fd, wire, sizeof(wire), 500) > 0);
 
     free(result->tuple_buffer);
     sqli_result_destroy(result);

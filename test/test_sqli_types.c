@@ -1836,4 +1836,90 @@ void test_interval_year_to_month_field_boundary(void)
     sqli_result_destroy(result);
 }
 
+void test_result_get_string_len_charset_conversion_utf8(void)
+{
+    sqli_conn_t conn;
+    memset(&conn, 0, sizeof(conn));
+    conn.client_locale = "en_US.utf8";
+    conn.db_locale = "en_US.819";
+    conn.trim_trailing_spaces = false;
+
+    /* Single row containing VARCHAR "Grüße " in ISO-8859-1:
+     * 6 bytes payload: 'G', 'r', 0xFC, 0xDF, 'e', ' ' */
+    const uint8_t tuple[] = {
+        6,                                    /* 1-byte length prefix */
+        'G', 'r', 0xFC, 0xDF, 'e', ' '
+    };
+
+    sqli_result_t *result = make_single_row_result(SQLI_TYPE_VARCHAR, 0, tuple, sizeof(tuple));
+    TEST_ASSERT_NOT_NULL(result);
+    result->owner_conn = &conn;
+
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
+
+    /* Case 1: Ample buffer with guards */
+    enum { GUARD_BYTE = 0xA5 };
+    unsigned char buf1[32];
+    memset(buf1, GUARD_BYTE, sizeof(buf1));
+    size_t len1 = 20;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(result, 0, (char *)buf1 + 1, &len1));
+    TEST_ASSERT_EQUAL_UINT32(8u, (uint32_t)len1); /* "Grüße " is 8 UTF-8 bytes */
+    TEST_ASSERT_EQUAL_UINT8(GUARD_BYTE, buf1[0]);
+    TEST_ASSERT_EQUAL_UINT8(GUARD_BYTE, buf1[21]);
+    TEST_ASSERT_EQUAL_STRING("Gr\xC3\xBC\xC3\x9F" "e ", (char *)buf1 + 1);
+
+    /* Case 2: Tight capacity = sizeof("Grü") = 5 bytes (4 string bytes + NUL) */
+    unsigned char buf2[16];
+    memset(buf2, GUARD_BYTE, sizeof(buf2));
+    size_t cap2 = sizeof("Gr\xC3\xBC"); /* 5 bytes: 'G', 'r', 0xC3, 0xBC, '\0' */
+    size_t len2 = cap2;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(result, 0, (char *)buf2 + 1, &len2));
+    TEST_ASSERT_EQUAL_UINT32(4u, (uint32_t)len2);
+    TEST_ASSERT_EQUAL_UINT8(GUARD_BYTE, buf2[0]);
+    TEST_ASSERT_EQUAL_UINT8(GUARD_BYTE, buf2[cap2 + 1]);
+    TEST_ASSERT_EQUAL_UINT8('\0', buf2[len2 + 1]);
+    TEST_ASSERT_EQUAL_MEMORY("Gr\xC3\xBC", buf2 + 1, 4);
+
+    /* Case 3: Trimming enabled */
+    conn.trim_trailing_spaces = true;
+    char buf3[32];
+    size_t len3 = sizeof(buf3);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(result, 0, buf3, &len3));
+    TEST_ASSERT_EQUAL_UINT32(7u, (uint32_t)len3); /* "Grüße" without trailing space */
+    TEST_ASSERT_EQUAL_STRING("Gr\xC3\xBC\xC3\x9F" "e", buf3);
+
+    sqli_charset_decoder_close(&conn.decode_cs);
+    sqli_result_destroy(result);
+}
+
+void test_result_get_string_len_typed_columns(void)
+{
+    /* DECIMAL(12,4) with value 12345.6789 */
+    const uint8_t dec_tuple[] = {0xC3, 0x01, 0x17, 0x2D, 0x43, 0x59, 0x00};
+    sqli_result_t *res_dec = make_single_row_result(SQLI_TYPE_DECIMAL, 0x00000C04u,
+                                                     dec_tuple, sizeof(dec_tuple));
+    TEST_ASSERT_NOT_NULL(res_dec);
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(res_dec));
+    char dec_out[32];
+    size_t dec_len = sizeof(dec_out);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(res_dec, 0, dec_out, &dec_len));
+    TEST_ASSERT_EQUAL_STRING("12345.6789", dec_out);
+    TEST_ASSERT_EQUAL_UINT32(10u, (uint32_t)dec_len);
+    sqli_result_destroy(res_dec);
+
+    /* INTERVAL YEAR TO MONTH with value "3-02" */
+    const uint8_t iv_tuple[] = {0xC6, 0x03, 0x02, 0x00};
+    sqli_result_t *res_iv = make_single_row_result(SQLI_TYPE_INTERVAL, 0x00000602u,
+                                                    iv_tuple, sizeof(iv_tuple));
+    TEST_ASSERT_NOT_NULL(res_iv);
+    TEST_ASSERT_EQUAL_INT(1, sqli_result_next(res_iv));
+    char iv_out[32];
+    size_t iv_len = sizeof(iv_out);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(res_iv, 0, iv_out, &iv_len));
+    TEST_ASSERT_EQUAL_STRING("3-02", iv_out);
+    TEST_ASSERT_EQUAL_UINT32(4u, (uint32_t)iv_len);
+    sqli_result_destroy(res_iv);
+}
+
+
 

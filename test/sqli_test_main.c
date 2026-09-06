@@ -59,6 +59,8 @@ void test_dispatch_error_response(void);
 void test_dispatch_error_response_sets_error_info(void);
 void test_dispatch_error_response_drains_truncated_string(void);
 void test_get_bytes_fetchblob_roundtrip(void);
+void test_get_bytes_empty_blob_returns_zero(void);
+void test_stream_bytes_empty_blob_no_callback(void);
 void test_dispatch_unknown_opcode_sets_diagnostics(void);
 void test_dispatch_reassoc_is_ignored(void);
 void test_dispatch_unknown_opcode_strict_mode_fails(void);
@@ -96,6 +98,8 @@ void test_receive_done_drains_dbopen_flags(void);
 void test_count_zero_decimal_decoding(void);
 void test_int8_zero_get_int(void);
 void test_interval_year_to_month_field_boundary(void);
+void test_result_get_string_len_charset_conversion_utf8(void);
+void test_result_get_string_len_typed_columns(void);
 void test_encode_decode_date_epoch(void);
 void test_encode_decode_date_positive(void);
 void test_encode_decode_date_negative(void);
@@ -485,6 +489,8 @@ int main(void)
     RUN_TEST(test_dispatch_error_response_sets_error_info);
     RUN_TEST(test_dispatch_error_response_drains_truncated_string);
     RUN_TEST(test_get_bytes_fetchblob_roundtrip);
+    RUN_TEST(test_get_bytes_empty_blob_returns_zero);
+    RUN_TEST(test_stream_bytes_empty_blob_no_callback);
     RUN_TEST(test_dispatch_unknown_opcode_sets_diagnostics);
     RUN_TEST(test_dispatch_reassoc_is_ignored);
     RUN_TEST(test_dispatch_unknown_opcode_strict_mode_fails);
@@ -616,6 +622,8 @@ int main(void)
     RUN_TEST(test_count_zero_decimal_decoding);
     RUN_TEST(test_int8_zero_get_int);
     RUN_TEST(test_interval_year_to_month_field_boundary);
+    RUN_TEST(test_result_get_string_len_charset_conversion_utf8);
+    RUN_TEST(test_result_get_string_len_typed_columns);
     section_checkpoint("phase4:end");
     }
 

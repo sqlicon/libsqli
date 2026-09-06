@@ -435,11 +435,36 @@ const char *sqli_result_get_string(sqli_result_t *result, int col_index)
         uint8_t *lob = NULL;
         size_t lob_len = 0;
         sqli_status frc = sqli_fetchblob_materialize(result, col_index, &lob, &lob_len);
-        if (frc == SQLI_OK && lob != NULL) {
+        if (frc == SQLI_OK) {
+            if (lob_len == 0 || lob == NULL) {
+                free(lob);
+                str_buf[0] = '\0';
+                return str_buf;
+            }
             size_t copy = lob_len < SQLI_STR_BUF_SIZE - 1 ? lob_len : SQLI_STR_BUF_SIZE - 1;
             memcpy(str_buf, lob, copy);
             str_buf[copy] = '\0';
             free(lob);
+
+            if (col->type == SQLI_TYPE_TEXT) {
+                sqli_conn_t *conn = result->owner_conn;
+                if (conn != NULL && !conn->decode_locale_checked) {
+                    sqli_charset_decoder_close(&conn->decode_cs);
+                    conn->decode_cs_ready = false;
+                    conn->decode_locale_checked = true;
+                    if (conn->client_locale != NULL && conn->db_locale != NULL &&
+                        sqli_charset_decoder_open_locales(&conn->decode_cs,
+                                                          conn->client_locale,
+                                                          conn->db_locale))
+                        conn->decode_cs_ready = true;
+                }
+                if (conn != NULL && conn->decode_cs_ready) {
+                    size_t utf8_len = SQLI_UTF8_BUF_SIZE;
+                    if (sqli_charset_decoder_convert(&conn->decode_cs, str_buf, copy,
+                                                     utf8_buf, &utf8_len))
+                        return utf8_buf;
+                }
+            }
             return str_buf;
         }
         free(lob);
@@ -531,6 +556,105 @@ sqli_status sqli_result_get_string_len(sqli_result_t *result, int col_index,
         return SQLI_OK;
     }
 
+    if (sqli_is_legacy_lob_type((uint8_t)col->type)) {
+        uint8_t *lob = NULL;
+        size_t lob_len = 0;
+        sqli_status frc = sqli_fetchblob_materialize(result, col_index, &lob, &lob_len);
+        if (frc == SQLI_OK) {
+            if (lob_len == 0 || lob == NULL) {
+                out[0] = '\0';
+                *out_len = 0;
+                free(lob);
+                return SQLI_OK;
+            }
+            sqli_conn_t *conn = result->owner_conn;
+            if (conn != NULL && !conn->decode_locale_checked) {
+                sqli_charset_decoder_close(&conn->decode_cs);
+                conn->decode_cs_ready = false;
+                conn->decode_locale_checked = true;
+                if (conn->client_locale != NULL && conn->db_locale != NULL &&
+                    sqli_charset_decoder_open_locales(&conn->decode_cs,
+                                                      conn->client_locale,
+                                                      conn->db_locale))
+                    conn->decode_cs_ready = true;
+            }
+            if (col->type == SQLI_TYPE_TEXT && conn != NULL && conn->decode_cs_ready) {
+                char stack_buf[512];
+                char *conv_buf = stack_buf;
+                size_t conv_cap = sizeof(stack_buf);
+                bool allocated = false;
+                if (lob_len * 4 + 1 > conv_cap) {
+                    conv_cap = lob_len * 4 + 1;
+                    conv_buf = malloc(conv_cap);
+                    if (conv_buf == NULL) {
+                        free(lob);
+                        return SQLI_ALLOC_FAIL;
+                    }
+                    allocated = true;
+                }
+                size_t conv_len = conv_cap;
+                if (sqli_charset_decoder_convert(&conn->decode_cs, (const char *)lob, lob_len,
+                                                 conv_buf, &conv_len)) {
+                    size_t avail = *out_len - 1;
+                    size_t copy = conv_len < avail ? conv_len : avail;
+                    memcpy(out, conv_buf, copy);
+                    out[copy] = '\0';
+                    *out_len = copy;
+                    if (allocated)
+                        free(conv_buf);
+                    free(lob);
+                    return SQLI_OK;
+                }
+                if (allocated)
+                    free(conv_buf);
+            }
+            size_t avail = *out_len - 1;
+            size_t copy = lob_len < avail ? lob_len : avail;
+            memcpy(out, lob, copy);
+            out[copy] = '\0';
+            *out_len = copy;
+            free(lob);
+            return SQLI_OK;
+        }
+        free(lob);
+        out[0] = '\0';
+        *out_len = 0;
+        return SQLI_OK;
+    }
+
+    if (col->type == SQLI_TYPE_DECIMAL || col->type == SQLI_TYPE_MONEY) {
+        const char *dec_str = sqli_result_get_decimal_string(result, col_index);
+        size_t dlen = strlen(dec_str);
+        size_t avail = *out_len - 1;
+        size_t copy = dlen < avail ? dlen : avail;
+        memcpy(out, dec_str, copy);
+        out[copy] = '\0';
+        *out_len = copy;
+        return SQLI_OK;
+    }
+
+    if (col->type == SQLI_TYPE_DATETIME) {
+        const char *dt_str = sqli_result_get_datetime_string(result, col_index);
+        size_t dlen = strlen(dt_str);
+        size_t avail = *out_len - 1;
+        size_t copy = dlen < avail ? dlen : avail;
+        memcpy(out, dt_str, copy);
+        out[copy] = '\0';
+        *out_len = copy;
+        return SQLI_OK;
+    }
+
+    if (col->type == SQLI_TYPE_INTERVAL) {
+        const char *iv_str = sqli_result_get_interval_string(result, col_index);
+        size_t ilen = strlen(iv_str);
+        size_t avail = *out_len - 1;
+        size_t copy = ilen < avail ? ilen : avail;
+        memcpy(out, iv_str, copy);
+        out[copy] = '\0';
+        *out_len = copy;
+        return SQLI_OK;
+    }
+
     size_t data_start = result->cur_col_data_start[col_index];
     size_t data_len = result->cur_col_data_len[col_index];
     if (data_len == 0 || data_start > result->tuple_len || data_start + data_len > result->tuple_len) {
@@ -539,18 +663,58 @@ sqli_status sqli_result_get_string_len(sqli_result_t *result, int col_index,
         return SQLI_OK;
     }
 
-    size_t avail = *out_len - 1;
-    size_t copy = data_len < avail ? data_len : avail;
-    memcpy(out, result->tuple_buffer + data_start, copy);
-    out[copy] = '\0';
-
+    const char *raw = (const char *)(result->tuple_buffer + data_start);
+    size_t raw_len = data_len;
     sqli_conn_t *conn = result->owner_conn;
     bool trim_trailing_spaces = (conn == NULL) ? true : conn->trim_trailing_spaces;
     if (trim_trailing_spaces && sqli_is_stringy_type((uint8_t)col->type)) {
-        while (copy > 0 && out[copy - 1] == ' ')
-            copy--;
-        out[copy] = '\0';
+        while (raw_len > 0 && raw[raw_len - 1] == ' ')
+            raw_len--;
     }
+
+    if (conn != NULL && !conn->decode_locale_checked) {
+        sqli_charset_decoder_close(&conn->decode_cs);
+        conn->decode_cs_ready = false;
+        conn->decode_locale_checked = true;
+        if (conn->client_locale != NULL && conn->db_locale != NULL &&
+            sqli_charset_decoder_open_locales(&conn->decode_cs,
+                                              conn->client_locale,
+                                              conn->db_locale))
+            conn->decode_cs_ready = true;
+    }
+
+    if (conn != NULL && conn->decode_cs_ready) {
+        char stack_buf[512];
+        char *conv_buf = stack_buf;
+        size_t conv_cap = sizeof(stack_buf);
+        bool allocated = false;
+        if (raw_len * 4 + 1 > conv_cap) {
+            conv_cap = raw_len * 4 + 1;
+            conv_buf = malloc(conv_cap);
+            if (conv_buf == NULL)
+                return SQLI_ALLOC_FAIL;
+            allocated = true;
+        }
+        size_t conv_len = conv_cap;
+        if (sqli_charset_decoder_convert(&conn->decode_cs, raw, raw_len,
+                                         conv_buf, &conv_len)) {
+            size_t avail = *out_len - 1;
+            size_t copy = conv_len < avail ? conv_len : avail;
+            memcpy(out, conv_buf, copy);
+            out[copy] = '\0';
+            *out_len = copy;
+            if (allocated)
+                free(conv_buf);
+            return SQLI_OK;
+        }
+        if (allocated)
+            free(conv_buf);
+    }
+
+    size_t avail = *out_len - 1;
+    size_t copy = raw_len < avail ? raw_len : avail;
+    memcpy(out, raw, copy);
+    out[copy] = '\0';
     *out_len = copy;
     return SQLI_OK;
 }
@@ -576,7 +740,12 @@ sqli_status sqli_result_get_bytes(sqli_result_t *result, int col_index,
             uint8_t *lob = NULL;
             size_t lob_len = 0;
             sqli_status frc = sqli_fetchblob_materialize(result, col_index, &lob, &lob_len);
-            if (frc == SQLI_OK && lob != NULL) {
+            if (frc == SQLI_OK) {
+                if (lob_len == 0 || lob == NULL) {
+                    *out_len = 0;
+                    free(lob);
+                    return SQLI_OK;
+                }
                 size_t copy_len = *out_len < lob_len ? *out_len : lob_len;
                 memcpy(out, lob, copy_len);
                 *out_len = copy_len;
@@ -1170,7 +1339,11 @@ sqli_status sqli_result_stream_bytes(sqli_result_t *result, int col_index,
         uint8_t *lob = NULL;
         size_t lob_len = 0;
         sqli_status frc = sqli_fetchblob_materialize(result, col_index, &lob, &lob_len);
-        if (frc == SQLI_OK && lob != NULL) {
+        if (frc == SQLI_OK) {
+            if (lob_len == 0 || lob == NULL) {
+                free(lob);
+                return SQLI_OK;
+            }
             size_t off = 0;
             while (off < lob_len) {
                 size_t n = lob_len - off;
