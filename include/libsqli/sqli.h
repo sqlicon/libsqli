@@ -358,7 +358,8 @@ typedef int (*sqli_row_callback)(sqli_result_t *row_result, void *ctx);
 
 /*
  * Execute SQL and stream rows to callback without retaining full result sets.
- * out_rows (optional) receives the number of delivered rows.
+ * out_rows (optional) receives the number of delivered rows. On callback abort
+ * or error, it receives the count of rows delivered before the failure.
  */
 sqli_status sqli_query_stream(sqli_conn_t *conn, const char *sql,
                               sqli_row_callback on_row, void *ctx,

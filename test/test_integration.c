@@ -1349,6 +1349,64 @@ void test_query_null_params(void)
     sqli_destroy(conn);
 }
 
+typedef struct {
+    int calls;
+    int abort_at;
+} stream_abort_test_ctx;
+
+static int stream_abort_test_cb(sqli_result_t *row_result, void *ctx)
+{
+    (void)row_result;
+    stream_abort_test_ctx *actx = (stream_abort_test_ctx *)ctx;
+    actx->calls++;
+    if (actx->calls == actx->abort_at)
+        return 1;
+    return 0;
+}
+
+void test_query_stream_abort_reports_delivered_count(void)
+{
+    mock_srv_ctx *ctx = calloc(1, sizeof(*ctx));
+    TEST_ASSERT_NOT_NULL(ctx);
+    mock_srv_ctx_init(ctx);
+
+    require_test_listener_or_skip(ctx);
+
+    ctx->nfields = 2;
+    ctx->ntuple = 5;
+    ctx->stmt_type = 2; /* SELECT */
+
+    pthread_t thread;
+    pthread_create(&thread, NULL, mock_server_query_test, ctx);
+
+    wait_for_server(ctx);
+
+    sqli_conn_t *conn = NULL;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_create(&conn));
+
+    sqli_connect_params params = {0};
+    fill_connect_params(ctx, &params);
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_connect(conn, &params));
+
+    stream_abort_test_ctx sctx = { .calls = 0, .abort_at = 3 };
+    int64_t out_rows = -1;
+
+    sqli_status rc = sqli_query_stream(conn, "SELECT id, name FROM t",
+                                       stream_abort_test_cb, &sctx, &out_rows);
+    TEST_ASSERT_EQUAL_INT(SQLI_ERR, rc);
+    TEST_ASSERT_EQUAL_INT(3, sctx.calls);
+    TEST_ASSERT_EQUAL_INT64(2, out_rows);
+
+    sqli_close(conn);
+    sqli_destroy(conn);
+
+    pthread_join(thread, NULL);
+    close(ctx->listener_fd);
+    mock_srv_ctx_destroy(ctx);
+    free(ctx);
+}
+
 void test_prepare_execute_select_returns_rows(void)
 {
     mock_srv_ctx *ctx = calloc(1, sizeof(*ctx));

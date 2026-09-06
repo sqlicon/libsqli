@@ -400,6 +400,8 @@ sqli_status sqli_query_stream(sqli_conn_t *conn, const char *sql,
             if (rc != SQLI_OK) {
                 if (!conn->error_info.has_error)
                     set_error(conn, "error receiving fetch response");
+                if (out_rows != NULL)
+                    *out_rows = delivered;
                 sqli_result_destroy(r);
                 return rc;
             }
@@ -407,6 +409,8 @@ sqli_status sqli_query_stream(sqli_conn_t *conn, const char *sql,
             int got = r->row_count;
             rc = sqli_stream_deliver_rows(conn, r, on_row, ctx, &delivered);
             if (rc != SQLI_OK) {
+                if (out_rows != NULL)
+                    *out_rows = delivered;
                 sqli_result_destroy(r);
                 return rc;
             }
@@ -425,6 +429,8 @@ sqli_status sqli_query_stream(sqli_conn_t *conn, const char *sql,
             if (rc != SQLI_OK) {
                 set_error_context(conn, "query_stream/fetch_send", SQLI_SQ_NFETCH);
                 set_error(conn, "failed to send fetch");
+                if (out_rows != NULL)
+                    *out_rows = delivered;
                 sqli_result_destroy(r);
                 return rc;
             }
@@ -449,6 +455,8 @@ sqli_status sqli_query_stream(sqli_conn_t *conn, const char *sql,
         }
         rc = sqli_stream_deliver_rows(conn, r, on_row, ctx, &delivered);
         if (rc != SQLI_OK) {
+            if (out_rows != NULL)
+                *out_rows = delivered;
             sqli_result_destroy(r);
             return rc;
         }

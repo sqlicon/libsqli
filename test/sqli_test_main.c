@@ -366,6 +366,7 @@ void test_query_success_multi_row(void);
 void test_query_success_ddl(void);
 void test_query_error_response(void);
 void test_query_null_params(void);
+void test_query_stream_abort_reports_delivered_count(void);
 void test_prepare_execute_select_returns_rows(void);
 void test_prepare_execute_select_with_bind_returns_rows(void);
 void test_txn_begin_success(void);
@@ -813,6 +814,7 @@ int main(void)
     RUN_TEST(test_query_success_ddl);
     RUN_TEST(test_query_error_response);
     RUN_TEST(test_query_null_params);
+    RUN_TEST(test_query_stream_abort_reports_delivered_count);
     RUN_TEST(test_prepare_execute_select_returns_rows);
     RUN_TEST(test_prepare_execute_select_with_bind_returns_rows);
     RUN_TEST(test_txn_begin_success);
