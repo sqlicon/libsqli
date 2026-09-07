@@ -11,7 +11,9 @@ remains pending. Subsequent [temporal value objects](NATIVE_TEMPORAL_API.md)
 and [checked temporal tuple codecs](NATIVE_TEMPORAL_CODECS.md) implement the
 standalone temporal layers. The codec document records how the live native probe
 now uses production temporal encoders; the evidence below records the initial
-wire-audit iteration.
+wire-audit iteration. The later [decimal codec iteration](NATIVE_DECIMAL_CODECS.md)
+extends precision/scale and exponent evidence and switches the decimal native
+probe to production encoding.
 
 ## Evidence and scope
 

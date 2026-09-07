@@ -4,8 +4,9 @@ The internal `src/sqli_temporal_codec.h` API converts fixed-width SQLI tuple
 payloads to and from the [native temporal values](NATIVE_TEMPORAL_API.md).
 The implementation lives in `src/sqli_temporal_codec.c` and has no allocation,
 text conversion, connection access or external dependencies. Public statement
-getters and binders still use their previous paths; their migration and the
-DECIMAL codec are separate steps. Catalog implementation remains deferred.
+getters and binders still use their previous paths; public statement migration
+remains pending. The subsequent [DECIMAL codec](NATIVE_DECIMAL_CODECS.md) is
+also implemented. Catalog implementation remains deferred.
 
 ## Codec boundary
 

@@ -149,7 +149,8 @@ ctest --test-dir build -R '^sqli_decimal_' --output-on-failure
 ```
 
 No database is needed for these tests. Existing wire fixtures remain the separate
-baseline for integrating this value type with binary result/bind codecs.
+baseline for integration. Subsequent [checked decimal tuple codecs](NATIVE_DECIMAL_CODECS.md)
+implement binary conversion; public result/bind migration remains pending.
 
 Validation recorded for this iteration (2026-09-07): Debug and Release builds
 passed with the project warning flags. All seven Debug CTest entries passed,

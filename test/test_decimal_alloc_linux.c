@@ -1,5 +1,6 @@
 #include "libsqli/sqli.h"
 #include "allocation_test.h"
+#include "sqli_decimal_codec.h"
 #include "unity.h"
 
 #include <string.h>
@@ -85,11 +86,46 @@ static void test_shrink_failure_preserves_heap_value(void)
     TEST_ASSERT_EQUAL_INT32(0, parts.scale);
 }
 
+static void test_codecs_do_not_allocate(void)
+{
+    char text[large_digits];
+    memset(text, '0', sizeof(text));
+    text[0] = '1';
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_decimal_parse(source, text, sizeof(text), false));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_decimal_copy(destination, source));
+    sqli_decimal_parts_t parts;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_decimal_get_parts(source, &parts));
+    parts.scale = large_digits - 1;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_decimal_set_parts(source, &parts));
+    uint8_t bytes[SQLI_DECIMAL_WIRE_CAPACITY];
+    size_t length = 0;
+    sqli_test_fail_next_allocation();
+    TEST_ASSERT_EQUAL_INT(SQLI_OK,
+        sqli_decimal_encode_wire(source, 0x0100, bytes, sizeof(bytes), &length));
+    /* Replacement of a heap-backed destination also needs no new allocation. */
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_decimal_decode_wire(bytes, length, 0x0100, destination));
+    int64_t value = 0;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_decimal_to_i64(destination, &value));
+    TEST_ASSERT_EQUAL_INT64(1, value);
+    const uint8_t maximum[SQLI_DECIMAL_WIRE_CAPACITY] = {
+        0xd0,99,99,99,99,99,99,99,99,99,99,99,99,99,99,99,99,0
+    };
+    TEST_ASSERT_EQUAL_INT(SQLI_OK,
+        sqli_decimal_decode_wire(maximum, sizeof(maximum), 0x20ff, destination));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK,
+        sqli_decimal_encode_wire(destination, 0x20ff, bytes, sizeof(bytes), &length));
+    TEST_ASSERT_EQUAL_MEMORY(maximum, bytes, length);
+    sqli_decimal_t *out = source;
+    TEST_ASSERT_EQUAL_INT(SQLI_ALLOC_FAIL, sqli_decimal_create(&out));
+    TEST_ASSERT_EQUAL_PTR(source, out);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_create_failure_preserves_output);
     RUN_TEST(test_parse_copy_parts_and_growth_fail_atomically);
     RUN_TEST(test_shrink_failure_preserves_heap_value);
+    RUN_TEST(test_codecs_do_not_allocate);
     return UNITY_END();
 }

@@ -5,6 +5,7 @@
 #include "sqli_internal.h"
 #include "native_wire_test.h"
 #include "sqli_temporal_codec.h"
+#include "sqli_decimal_codec.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,6 +14,7 @@
 enum {
     fixture_wire_capacity = 18,
     fixture_sql_capacity = 256,
+    fixture_text_capacity = 64,
     value_column = 0,
     sentinel_column = 1,
     fixture_columns = 2,
@@ -57,6 +59,32 @@ static const struct wire_fixture fixtures[] = {
      {0, 0, 0, 0, 0}, 5, "", true},
     {"money", "CAST(123.45 AS MONEY(8,2))", SQLI_TYPE_MONEY, 0x0802,
      {0xc2, 1, 23, 45, 0}, 5, "123.45", false},
+    {"decimal_minimum", "CAST('1e-130' AS DECIMAL(32))", SQLI_TYPE_DECIMAL, 0x20ff,
+     {0x80,1}, 18, "1E-130", false},
+    {"decimal_negative_minimum", "CAST('-1e-130' AS DECIMAL(32))", SQLI_TYPE_DECIMAL, 0x20ff,
+     {0x7f,99}, 18, "-1E-130", false},
+    {"decimal_high_exponent", "CAST('1e125' AS DECIMAL(32))", SQLI_TYPE_DECIMAL, 0x20ff,
+     {0xff,10}, 18, "1E+125", false},
+    {"decimal_negative_high_exponent", "CAST('-1e125' AS DECIMAL(32))", SQLI_TYPE_DECIMAL, 0x20ff,
+     {0,90}, 18, "-1E+125", false},
+    {"decimal_floating_scale", "CAST(123.4500 AS DECIMAL(32))", SQLI_TYPE_DECIMAL, 0x20ff,
+     {0xc2,1,23,45}, 18, "123.45", false},
+    {"decimal_floating_null", "CAST(NULL AS DECIMAL(32))", SQLI_TYPE_DECIMAL, 0x20ff,
+     {0}, 18, "", true},
+    {"decimal_floating_zero", "CAST(0 AS DECIMAL(32))", SQLI_TYPE_DECIMAL, 0x20ff,
+     {0x80}, 18, "0", false},
+    {"decimal_one_digit", "CAST(0.1 AS DECIMAL(1,1))", SQLI_TYPE_DECIMAL, 0x0101,
+     {0xc0,10}, 2, "0.1", false},
+    {"decimal_odd_scale", "CAST(-0.001 AS DECIMAL(3,3))", SQLI_TYPE_DECIMAL, 0x0303,
+     {0x40,90,0}, 3, "-0.001", false},
+    {"decimal_scale32", "CAST('1e-32' AS DECIMAL(32,32))", SQLI_TYPE_DECIMAL, 0x2020,
+     {0xb1,1}, 17, "1E-32", false},
+    {"decimal_scale31", "CAST('1e-31' AS DECIMAL(32,31))", SQLI_TYPE_DECIMAL, 0x201f,
+     {0xb1,10}, 18, "1E-31", false},
+    {"decimal_precision32", "CAST(999999999999999999999999999999.99 AS DECIMAL(32,2))",
+     SQLI_TYPE_DECIMAL, 0x2002,
+     {0xcf,99,99,99,99,99,99,99,99,99,99,99,99,99,99,99,99},
+     17, "999999999999999999999999999999.99", false},
     {"datetime_full", "DATETIME(2026-06-20 12:34:56) YEAR TO SECOND",
      SQLI_TYPE_DATETIME, 0x0e0a,
      {0xc7, 20, 26, 6, 20, 12, 34, 56}, 8, "2026-06-20 12:34:56", false},
@@ -85,7 +113,7 @@ static const struct wire_fixture fixtures[] = {
  * output is also used by the live bind probe; parameter framing is test-only. */
 static bool codec_payload(const struct wire_fixture *fixture, uint8_t *encoded, size_t *length)
 {
-    char text[SQLI_TEMPORAL_MAX_TEXT + 1] = {0};
+    char text[fixture_text_capacity] = {0};
     size_t required = 0;
     bool is_null = false;
     bool ok;
@@ -113,9 +141,12 @@ static bool codec_payload(const struct wire_fixture *fixture, uint8_t *encoded, 
              sqli_interval_encode_wire(value, (uint16_t)fixture->qualifier, encoded, fixture_wire_capacity, length) == SQLI_OK;
         sqli_interval_destroy(value);
     } else {
-        memcpy(encoded, fixture->wire, fixture->wire_length);
-        *length = fixture->wire_length;
-        return true; /* Decimal codec migration is a separate iteration. */
+        sqli_decimal_t *value = NULL;
+        ok = sqli_decimal_create(&value) == SQLI_OK &&
+             sqli_decimal_decode_wire(fixture->wire, fixture->wire_length, (uint16_t)fixture->qualifier, value) == SQLI_OK &&
+             sqli_decimal_format(value, text, sizeof(text), &required, &is_null) == SQLI_OK &&
+             sqli_decimal_encode_wire(value, (uint16_t)fixture->qualifier, encoded, fixture_wire_capacity, length) == SQLI_OK;
+        sqli_decimal_destroy(value);
     }
     return ok && is_null == fixture->is_null && strcmp(text, fixture->text) == 0 &&
            *length == fixture->wire_length && memcmp(encoded, fixture->wire, *length) == 0;
@@ -149,6 +180,7 @@ static bool check_result(sqli_result_t *result, const struct wire_fixture *fixtu
         sqli_result_is_null(result, value_column) != fixture->is_null)
         return false;
     const char *text = NULL;
+    char decimal_text[fixture_text_capacity];
     switch (fixture->type) {
     case SQLI_TYPE_DATE:
         text = sqli_result_get_date_string(result, value_column);
@@ -159,9 +191,22 @@ static bool check_result(sqli_result_t *result, const struct wire_fixture *fixtu
     case SQLI_TYPE_INTERVAL:
         text = sqli_result_get_interval_string(result, value_column);
         break;
-    default:
-        text = sqli_result_get_decimal_string(result, value_column);
+    default: {
+        sqli_decimal_t *value = NULL;
+        size_t required = 0;
+        bool is_null = false;
+        bool ok = sqli_decimal_create(&value) == SQLI_OK &&
+            sqli_decimal_decode_wire(result->tuple_buffer, fixture->wire_length,
+                                     (uint16_t)fixture->qualifier, value) == SQLI_OK &&
+            sqli_decimal_format(value, decimal_text, sizeof(decimal_text), &required, &is_null) == SQLI_OK;
+        sqli_decimal_destroy(value);
+        if (!ok)
+            return false;
+        if (is_null)
+            decimal_text[0] = '\0';
+        text = decimal_text;
         break;
+    }
     }
     if (text == NULL || strcmp(text, fixture->text) != 0) {
         fprintf(stderr, "%s: expected text '%s', received '%s'\n",

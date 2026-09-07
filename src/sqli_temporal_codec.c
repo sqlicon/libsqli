@@ -1,4 +1,5 @@
 #include "sqli_temporal_codec.h"
+#include "sqli_base100.h"
 
 #include <string.h>
 
@@ -162,17 +163,6 @@ sqli_status sqli_temporal_wire_size(uint16_t qualifier, bool interval, size_t *o
     return status;
 }
 
-/* Base-100 radix complement; zeros at the right are padding, not extra scale. */
-static void complement(uint8_t *pairs, size_t count)
-{
-    unsigned carry = 1;
-    while (count != 0) {
-        unsigned digit = pair_base - 1u - pairs[--count] + carry;
-        pairs[count] = (uint8_t)(digit % pair_base);
-        carry = digit / pair_base;
-    }
-}
-
 static sqli_status unpack(const uint8_t *bytes, size_t length, const struct wire_range *range,
                            struct wire_fields *out)
 {
@@ -193,7 +183,7 @@ static sqli_status unpack(const uint8_t *bytes, size_t length, const struct wire
     }
     out->negative = (bytes[0] & positive_flag) == 0;
     if (out->negative)
-        complement(coefficient, count);
+        sqli_base100_radix_complement(coefficient, count);
     bool zero = true;
     for (size_t i = 0; i < count; i++)
         zero = zero && coefficient[i] == 0;
@@ -285,7 +275,7 @@ static sqli_status pack(const struct wire_fields *fields, const struct wire_rang
             memcpy(temporary + 1, groups + first, count - first);
             if (fields->negative) {
                 temporary[0] ^= 0xff;
-                complement(temporary + 1, range->width - 1);
+                sqli_base100_radix_complement(temporary + 1, range->width - 1);
             }
         }
     }
