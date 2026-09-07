@@ -140,6 +140,143 @@ sqli_status sqli_decimal_parse(sqli_decimal_t *value, const char *text,
 sqli_status sqli_decimal_format(const sqli_decimal_t *value, char *buffer,
                                 size_t capacity, size_t *required, bool *is_null);
 
+/* ----------------------------------------------------------------
+ * Native calendar and interval values
+ * ---------------------------------------------------------------- */
+
+enum { SQLI_TEMPORAL_MAX_TEXT = 64 };
+
+/** Semantic fields, independent of wire qualifier codes. UNKNOWN is allowed
+ * only as a completely unknown range on a SQL-NULL object. */
+typedef enum {
+    SQLI_FIELD_UNKNOWN = 0,
+    SQLI_FIELD_YEAR,
+    SQLI_FIELD_MONTH,
+    SQLI_FIELD_DAY,
+    SQLI_FIELD_HOUR,
+    SQLI_FIELD_MINUTE,
+    SQLI_FIELD_SECOND,
+    SQLI_FIELD_FRACTION
+} sqli_temporal_field_t;
+
+typedef struct {
+    sqli_temporal_field_t first;
+    sqli_temporal_field_t last;
+    uint8_t fractional_digits; /* 1..9 with FRACTION, otherwise 0 */
+} sqli_temporal_range_t;
+
+/** Proleptic Gregorian date, years 1..9999; no epoch or timezone. */
+typedef struct {
+    int32_t year;
+    uint8_t month;
+    uint8_t day;
+    bool is_null;
+} sqli_date_t;
+
+typedef struct sqli_datetime sqli_datetime_t;
+typedef struct sqli_interval sqli_interval_t;
+
+/** Absent numeric fields must be zero for non-NULL values. A partial date is
+ * validated using only known fields; MONTH TO DAY permits February 29 without
+ * inventing a year. Numeric fields are ignored and cleared on NULL import.
+ */
+typedef struct {
+    sqli_temporal_range_t range;
+    int32_t year;
+    uint8_t month, day;
+    uint8_t hour, minute, second;
+    uint32_t nanosecond;
+    bool is_null;
+} sqli_datetime_parts_t;
+
+/** One sign covers the entire interval. The first integral field may span
+ * uint64_t; subordinate month/hour/minute/second magnitudes are bounded by
+ * their usual radices. YEAR/MONTH cannot be mixed with DAY/time fields.
+ * Leading precision belongs to the target SQL type, not this value.
+ */
+typedef struct {
+    sqli_temporal_range_t range;
+    uint64_t years, months, days;
+    uint64_t hours, minutes, seconds;
+    uint32_t nanosecond;
+    bool negative;
+    bool is_null;
+} sqli_interval_parts_t;
+
+/** All temporal functions are reentrant, with no allocation after creation of
+ * opaque objects. Read-only access may run concurrently; mutation of a shared
+ * object requires external synchronization. DATE values need no allocation.
+ * Getters export copies, never borrowed field pointers. Failed operations leave
+ * values and output arguments unchanged, except format's short-buffer metadata.
+ * No implicit field completion, timezone conversion, rounding or normalization
+ * across units is performed. Leap seconds and hour 24 are not represented.
+ * Native fractional precision up to 9 is not a claim of server support.
+ */
+sqli_status sqli_date_validate(const sqli_date_t *value);
+sqli_status sqli_date_set(sqli_date_t *value, int32_t year, int32_t month, int32_t day);
+sqli_status sqli_date_set_null(sqli_date_t *value);
+/** Exact YYYY-MM-DD input/output. Explicit NULL input ignores text/length.
+ * Formatting uses the shared temporal buffer contract documented below. */
+sqli_status sqli_date_parse(sqli_date_t *value, const char *text, size_t length, bool is_null);
+sqli_status sqli_date_format(const sqli_date_t *value, char *buffer, size_t capacity,
+                             size_t *required, bool *is_null);
+
+/** Create starts as SQL NULL with unknown range. destroy(NULL) is allowed.
+ * set_null retains any known range and clears numeric fields. */
+sqli_status sqli_datetime_create(sqli_datetime_t **out);
+void sqli_datetime_destroy(sqli_datetime_t *value);
+sqli_status sqli_datetime_copy(sqli_datetime_t *destination, const sqli_datetime_t *source);
+sqli_status sqli_datetime_is_null(const sqli_datetime_t *value, bool *out);
+sqli_status sqli_datetime_set_null(sqli_datetime_t *value);
+sqli_status sqli_datetime_set_parts(sqli_datetime_t *value, const sqli_datetime_parts_t *parts);
+sqli_status sqli_datetime_get_parts(const sqli_datetime_t *value, sqli_datetime_parts_t *out);
+
+sqli_status sqli_interval_create(sqli_interval_t **out);
+void sqli_interval_destroy(sqli_interval_t *value);
+sqli_status sqli_interval_copy(sqli_interval_t *destination, const sqli_interval_t *source);
+sqli_status sqli_interval_is_null(const sqli_interval_t *value, bool *out);
+sqli_status sqli_interval_set_null(sqli_interval_t *value);
+sqli_status sqli_interval_set_parts(sqli_interval_t *value, const sqli_interval_parts_t *parts);
+sqli_status sqli_interval_get_parts(const sqli_interval_t *value, sqli_interval_parts_t *out);
+
+/** Qualified text uses an explicit range. Calendar years have four digits,
+ * other calendar/subordinate integral fields two. Leading interval fields use
+ * 1..20 digits and an optional overall sign. Separators are '-', space, ':'
+ * and '.'. DATETIME also accepts 'T' between DAY and HOUR. Fractions contain
+ * exactly fractional_digits digits; fraction-only text accepts .digits or
+ * 0.digits. No surrounding whitespace, zone suffix or embedded NUL is accepted.
+ * On explicit NULL input text/length are ignored. A supplied range is validated
+ * and retained; a NULL range instead retains the object's existing range.
+ * Non-NULL input requires a known range. Text length is capped above.
+ */
+sqli_status sqli_datetime_parse(sqli_datetime_t *value, const sqli_temporal_range_t *range,
+                                const char *text, size_t length, bool is_null);
+sqli_status sqli_interval_parse(sqli_interval_t *value, const sqli_temporal_range_t *range,
+                                const char *text, size_t length, bool is_null);
+/** Strict YYYY-MM-DDThh:mm:ss[.fraction] input, inferring 1..9 fractional
+ * digits. No offset, timezone or implicit completion. NULL retains prior range.
+ */
+sqli_status sqli_datetime_parse_iso(sqli_datetime_t *value, const char *text,
+                                    size_t length, bool is_null);
+
+/** Formatting follows the decimal buffer contract: required includes NUL;
+ * buffer=NULL/capacity=0 queries size; short buffers are unchanged and report
+ * required/is_null. NULL succeeds with required=0 and leaves buffer unchanged.
+ * All output pointers are required except buffer for size queries. Outputs
+ * must not overlap each other or the source object.
+ * Complete calendar/time DATETIME values use 'T'; partial values use qualified
+ * text. Interval leading fields have no leading padding, and negative zero is
+ * normalized on import. No fractional digits are stripped.
+ */
+sqli_status sqli_datetime_format(const sqli_datetime_t *value, char *buffer, size_t capacity,
+                                 size_t *required, bool *is_null);
+sqli_status sqli_interval_format(const sqli_interval_t *value, char *buffer, size_t capacity,
+                                 size_t *required, bool *is_null);
+/** Non-NULL values must start at YEAR and end at SECOND or FRACTION;
+ * otherwise SQLI_INVALID_STATE is returned without changing outputs. */
+sqli_status sqli_datetime_format_iso(const sqli_datetime_t *value, char *buffer,
+                                     size_t capacity, size_t *required, bool *is_null);
+
 /** Opaque connection handle. */
 
 typedef struct sqli_conn sqli_conn_t;

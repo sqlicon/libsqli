@@ -304,6 +304,90 @@ static bool parse_number(const char *text, uint64_t *value)
     return true;
 }
 
+/* Compare native imports with independently generated semantic fields, then
+ * verify canonical text, precision and NULL range retention for every case. */
+static bool check_native_value(const struct temporal_case *c)
+{
+    static const sqli_temporal_field_t native_fields[] = {
+        SQLI_FIELD_YEAR, SQLI_FIELD_MONTH, SQLI_FIELD_DAY, SQLI_FIELD_HOUR,
+        SQLI_FIELD_MINUTE, SQLI_FIELD_SECOND, SQLI_FIELD_FRACTION
+    };
+    sqli_temporal_range_t range = {
+        native_fields[c->start], native_fields[c->end], (uint8_t)c->scale
+    };
+    uint32_t nanosecond = c->end == FRACTION ?
+        (uint32_t)c->fields[FRACTION] * power10(9u - (unsigned)c->scale) : 0;
+    uint64_t actual[7] = {0};
+    sqli_temporal_range_t actual_range = {0};
+    bool actual_null = false, actual_negative = false;
+    char text[SQLI_TEMPORAL_MAX_TEXT + 1] = "unchanged";
+    size_t required = SIZE_MAX;
+    bool format_null = false;
+    bool ok;
+    if (c->interval) {
+        sqli_interval_t *value = NULL;
+        sqli_interval_parts_t parts = {0};
+        ok = sqli_interval_create(&value) == SQLI_OK &&
+             sqli_interval_parse(value, &range, c->value, strlen(c->value), c->is_null) == SQLI_OK &&
+             sqli_interval_get_parts(value, &parts) == SQLI_OK &&
+             sqli_interval_set_parts(value, &parts) == SQLI_OK &&
+             sqli_interval_format(value, text, sizeof(text), &required, &format_null) == SQLI_OK;
+        actual[YEAR] = parts.years;
+        actual[MONTH] = parts.months;
+        actual[DAY] = parts.days;
+        actual[HOUR] = parts.hours;
+        actual[MINUTE] = parts.minutes;
+        actual[SECOND] = parts.seconds;
+        actual[FRACTION] = parts.nanosecond;
+        actual_range = parts.range;
+        actual_null = parts.is_null;
+        actual_negative = parts.negative;
+        sqli_interval_destroy(value);
+    } else {
+        sqli_datetime_t *value = NULL;
+        sqli_datetime_parts_t parts = {0};
+        ok = sqli_datetime_create(&value) == SQLI_OK &&
+             sqli_datetime_parse(value, &range, c->value, strlen(c->value), c->is_null) == SQLI_OK &&
+             sqli_datetime_get_parts(value, &parts) == SQLI_OK &&
+             sqli_datetime_set_parts(value, &parts) == SQLI_OK &&
+             sqli_datetime_format(value, text, sizeof(text), &required, &format_null) == SQLI_OK;
+        if (parts.year < 0) {
+            ok = false;
+        } else {
+            actual[YEAR] = (uint64_t)parts.year;
+        }
+        actual[MONTH] = parts.month;
+        actual[DAY] = parts.day;
+        actual[HOUR] = parts.hour;
+        actual[MINUTE] = parts.minute;
+        actual[SECOND] = parts.second;
+        actual[FRACTION] = parts.nanosecond;
+        actual_range = parts.range;
+        actual_null = parts.is_null;
+        sqli_datetime_destroy(value);
+    }
+    ok = ok && actual_null == c->is_null && format_null == c->is_null &&
+         actual_negative == (!c->is_null && c->negative) &&
+         actual_range.first == range.first && actual_range.last == range.last &&
+         actual_range.fractional_digits == range.fractional_digits;
+    for (int field = YEAR; field <= FRACTION; field++) {
+        uint64_t expected = c->is_null ? 0 :
+            field == FRACTION ? nanosecond : (uint64_t)c->fields[field];
+        ok = ok && actual[field] == expected;
+    }
+    char expected[sizeof(c->value)];
+    memcpy(expected, c->value, sizeof(expected));
+    if (!c->interval && c->start == YEAR && c->end >= SECOND) {
+        enum { timestamp_date_length = 10 };
+        expected[timestamp_date_length] = 'T';
+    }
+    ok = ok && (c->is_null ? required == 0 && strcmp(text, "unchanged") == 0 :
+        required == strlen(expected) + 1 && strcmp(text, expected) == 0);
+    if (!ok)
+        fprintf(stderr, "native temporal value: %s value=%s\n", c->type, c->value);
+    return ok;
+}
+
 static bool check_offline_wire(const struct temporal_case *c);
 
 static int self_test(struct matrix *m)
@@ -323,7 +407,7 @@ static int self_test(struct matrix *m)
                     ok = false;
             }
         }
-        if (!check_offline_wire(c))
+        if (!check_offline_wire(c) || !check_native_value(c))
             ok = false;
         if (c->is_null) nulls++;
         if (c->interval && c->start != FRACTION &&

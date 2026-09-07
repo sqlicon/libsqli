@@ -11,3 +11,4 @@ This directory contains the public reference documentation for the `libsqli` lib
 
 * [Native Value Wire Contract](NATIVE_VALUE_WIRE_CONTRACT.md) - Verified native payloads, descriptor roles and implementation gates.
 * [Exact Decimal Value API](NATIVE_DECIMAL_API.md) - Owned decimal values, scale-preserving text, exact conversion and resource limits.
+* [Native Temporal Value API](NATIVE_TEMPORAL_API.md) - Validated dates, opaque qualified timestamps and intervals, exact fractions and text convenience functions.

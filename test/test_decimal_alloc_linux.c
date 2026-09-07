@@ -1,5 +1,5 @@
 #include "libsqli/sqli.h"
-#include "decimal_alloc_test.h"
+#include "allocation_test.h"
 #include "unity.h"
 
 #include <string.h>
