@@ -6,9 +6,10 @@ This iteration adds standalone value types to `<libsqli/sqli.h>`. It follows the
 locale, timezone database or additional dependency. They expose semantic fields,
 not server epochs, packed qualifiers or decimal-pair encoding.
 
-Wire codecs, statement getters/binders and descriptor migration are subsequent
-steps. Existing statement accessors still use their previous types during this
-transition. The new values are not yet accepted by statement bind functions.
+[Checked temporal tuple codecs](NATIVE_TEMPORAL_CODECS.md) are implemented in
+the subsequent iteration. Statement getters/binders and descriptor migration
+remain subsequent steps. Existing statement accessors still use their previous
+types during this transition. The new values are not yet accepted by statement bind functions.
 The experimental API may be changed or removed as that migration proceeds;
 there is no compatibility-wrapper requirement. Catalog implementation remains
 deferred until the native core is implemented and tested.

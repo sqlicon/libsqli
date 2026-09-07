@@ -6,9 +6,10 @@ original `sqlicon/docs/test_temporal_matrix.c` sketch. The separate executable
 `sqli_temporal_matrix` is built when `SQLI_BUILD_TESTS=ON`.
 
 Current validation (2026-09-07): **2,036/2,036 live cases passed** with seed
-`0xc0ffee` under ASan/UBSan for literal, text binding and test-only native binary
-binding: 6,108 rows checked, including exact receive-byte comparisons. Offline
-semantic decoding of all 2,036 field-derived binary fixtures also passes.
+`0xc0ffee` under ASan/UBSan and LeakSanitizer for literal, text binding and
+production temporal encoding with test-only native parameter framing: 6,108
+rows checked, including exact receive-byte comparisons. Offline native encoding
+and semantic decoding of all 2,036 independent binary fixtures also pass.
 See [native wire contract](NATIVE_VALUE_WIRE_CONTRACT.md) for its scope and the
 remaining production API work. The historical failures below remain fixed.
 
@@ -41,9 +42,11 @@ This matrix covers valid values. Deliberately invalid dates, precision overflow,
 timestamp/epoch convenience bindings and temporal arithmetic are separate tests.
 The low-level fixed-format `sqli_encode_datetime()` helper is not used. The
 existing public temporal binders still bind text. The additional test-only native
-path constructs decimal-pair payloads directly from the generated fields and sends
-binary SQ_BIND parameters. This verifies wire behavior without claiming that the
-new public native API already exists.
+path now parses native values and uses the production temporal codecs before
+sending binary SQ_BIND parameters through the test framer. The independent
+field-to-pair model remains the expected-byte oracle. See
+[checked temporal codecs](NATIVE_TEMPORAL_CODECS.md); public statement migration
+remains pending.
 
 ## What each live case verifies
 

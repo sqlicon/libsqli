@@ -91,6 +91,7 @@ add_library(sqli STATIC
     ${SQLI_SRC_DIR}/sqli_types.c
     ${SQLI_SRC_DIR}/sqli_decimal.c
     ${SQLI_SRC_DIR}/sqli_temporal.c
+    ${SQLI_SRC_DIR}/sqli_temporal_codec.c
     ${SQLI_SRC_DIR}/sqli_transaction.c
     ${SQLI_SRC_DIR}/sqli_pool.c
     ${SQLI_SRC_DIR}/sqli_sqlhosts.c
@@ -193,6 +194,11 @@ if (SQLI_BUILD_TESTS)
     enable_testing()
     add_test(NAME sqli_unit COMMAND sqli_test)
 
+    add_executable(sqli_temporal_codec_test ${SQLI_TEST_DIR}/test_temporal_codec.c ${UNITY_SRC})
+    target_include_directories(sqli_temporal_codec_test PRIVATE ${unity_SOURCE_DIR}/src ${SQLI_SRC_DIR})
+    target_link_libraries(sqli_temporal_codec_test PRIVATE sqli)
+    add_test(NAME sqli_temporal_codecs COMMAND sqli_temporal_codec_test)
+
     add_executable(sqli_temporal_test ${SQLI_TEST_DIR}/test_sqli_temporal.c ${UNITY_SRC})
     target_include_directories(sqli_temporal_test PRIVATE ${unity_SOURCE_DIR}/src)
     target_link_libraries(sqli_temporal_test PRIVATE sqli)
@@ -214,7 +220,7 @@ if (SQLI_BUILD_TESTS)
         add_executable(sqli_temporal_alloc_test
             ${SQLI_TEST_DIR}/test_temporal_alloc_linux.c
             ${SQLI_TEST_DIR}/allocation_test_linux.c ${UNITY_SRC})
-        target_include_directories(sqli_temporal_alloc_test PRIVATE ${unity_SOURCE_DIR}/src)
+        target_include_directories(sqli_temporal_alloc_test PRIVATE ${unity_SOURCE_DIR}/src ${SQLI_SRC_DIR})
         target_link_libraries(sqli_temporal_alloc_test PRIVATE sqli)
         target_link_options(sqli_temporal_alloc_test PRIVATE
             "LINKER:--wrap=malloc" "LINKER:--wrap=calloc")
@@ -249,7 +255,7 @@ if (SQLI_BUILD_TESTS)
     endif()
 
     if (SQLI_ENABLE_SANITIZERS AND NOT MSVC)
-        set_tests_properties(sqli_unit sqli_temporal_generator sqli_native_wire_offline sqli_decimal_values sqli_temporal_values PROPERTIES
+        set_tests_properties(sqli_unit sqli_temporal_generator sqli_native_wire_offline sqli_decimal_values sqli_temporal_values sqli_temporal_codecs PROPERTIES
             ENVIRONMENT "LSAN_OPTIONS=detect_leaks=0")
     endif()
 endif()

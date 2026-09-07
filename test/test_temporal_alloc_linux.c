@@ -1,5 +1,6 @@
 #include "libsqli/sqli.h"
 #include "allocation_test.h"
+#include "sqli_temporal_codec.h"
 #include "unity.h"
 
 #include <string.h>
@@ -72,6 +73,25 @@ static void test_value_operations_do_not_allocate(void)
     TEST_ASSERT_EQUAL_INT(SQLI_OK,
         sqli_date_format(&date, buffer, sizeof(buffer), &required, &is_null));
     TEST_ASSERT_EQUAL_STRING("2024-02-29", buffer);
+    const char exact_timestamp[] = "2024-02-29T23:59:59.123450000";
+    const char exact_interval[] = "-999999999 23:59:59.123450000";
+    TEST_ASSERT_EQUAL_INT(SQLI_OK,
+        sqli_datetime_parse_iso(datetime, exact_timestamp, strlen(exact_timestamp), false));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK,
+        sqli_interval_parse(interval, &range, exact_interval, strlen(exact_interval), false));
+    uint8_t wire[SQLI_TEMPORAL_WIRE_CAPACITY];
+    size_t wire_length = 0;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK,
+        sqli_date_encode_wire(&date, wire, sizeof(wire), &wire_length));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_date_decode_wire(wire, wire_length, &date));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK,
+        sqli_datetime_encode_wire(datetime, 0x130f, wire, sizeof(wire), &wire_length));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK,
+        sqli_datetime_decode_wire(wire, wire_length, 0x130f, datetime));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK,
+        sqli_interval_encode_wire(interval, 0x144f, wire, sizeof(wire), &wire_length));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK,
+        sqli_interval_decode_wire(wire, wire_length, 0x144f, interval));
     /* The pending fault proves that none of the value operations allocated. */
     sqli_datetime_t *out = datetime;
     TEST_ASSERT_EQUAL_INT(SQLI_ALLOC_FAIL, sqli_datetime_create(&out));

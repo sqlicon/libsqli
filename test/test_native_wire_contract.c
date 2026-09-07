@@ -4,6 +4,7 @@
 #include "libsqli/sqli.h"
 #include "sqli_internal.h"
 #include "native_wire_test.h"
+#include "sqli_temporal_codec.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -79,6 +80,46 @@ static const struct wire_fixture fixtures[] = {
     {"interval_null", "CAST(NULL AS INTERVAL DAY(3) TO FRACTION(5))",
      SQLI_TYPE_INTERVAL, 0x0e4f, {0}, 9, "", true}
 };
+
+/* Fixed fixture bytes remain independent of the production codec. The encoded
+ * output is also used by the live bind probe; parameter framing is test-only. */
+static bool codec_payload(const struct wire_fixture *fixture, uint8_t *encoded, size_t *length)
+{
+    char text[SQLI_TEMPORAL_MAX_TEXT + 1] = {0};
+    size_t required = 0;
+    bool is_null = false;
+    bool ok;
+    if (fixture->type == SQLI_TYPE_DATE) {
+        sqli_date_t value;
+        ok = sqli_date_decode_wire(fixture->wire, fixture->wire_length, &value) == SQLI_OK &&
+             sqli_date_format(&value, text, sizeof(text), &required, &is_null) == SQLI_OK &&
+             sqli_date_encode_wire(&value, encoded, fixture_wire_capacity, length) == SQLI_OK;
+    } else if (fixture->type == SQLI_TYPE_DATETIME) {
+        sqli_datetime_t *value = NULL;
+        ok = sqli_datetime_create(&value) == SQLI_OK &&
+             sqli_datetime_decode_wire(fixture->wire, fixture->wire_length, (uint16_t)fixture->qualifier, value) == SQLI_OK &&
+             sqli_datetime_format(value, text, sizeof(text), &required, &is_null) == SQLI_OK &&
+             sqli_datetime_encode_wire(value, (uint16_t)fixture->qualifier, encoded, fixture_wire_capacity, length) == SQLI_OK;
+        sqli_datetime_destroy(value);
+        /* Fixtures retain server text spelling; the new full formatter uses T. */
+        enum { calendar_date_length = 10 };
+        if (strlen(text) > calendar_date_length && text[calendar_date_length] == 'T')
+            text[calendar_date_length] = ' ';
+    } else if (fixture->type == SQLI_TYPE_INTERVAL) {
+        sqli_interval_t *value = NULL;
+        ok = sqli_interval_create(&value) == SQLI_OK &&
+             sqli_interval_decode_wire(fixture->wire, fixture->wire_length, (uint16_t)fixture->qualifier, value) == SQLI_OK &&
+             sqli_interval_format(value, text, sizeof(text), &required, &is_null) == SQLI_OK &&
+             sqli_interval_encode_wire(value, (uint16_t)fixture->qualifier, encoded, fixture_wire_capacity, length) == SQLI_OK;
+        sqli_interval_destroy(value);
+    } else {
+        memcpy(encoded, fixture->wire, fixture->wire_length);
+        *length = fixture->wire_length;
+        return true; /* Decimal codec migration is a separate iteration. */
+    }
+    return ok && is_null == fixture->is_null && strcmp(text, fixture->text) == 0 &&
+           *length == fixture->wire_length && memcmp(encoded, fixture->wire, *length) == 0;
+}
 
 static bool check_result(sqli_result_t *result, const struct wire_fixture *fixture)
 {
@@ -196,8 +237,12 @@ static bool check_native_bind(sqli_conn_t *conn, const struct wire_fixture *fixt
                      "INSERT INTO sqli_native_wire_fixture (v) VALUES (?)",
                      &parameters, &stmt) != SQLI_OK || parameters != 1)
         goto cleanup;
+    uint8_t encoded[fixture_wire_capacity];
+    size_t encoded_length = 0;
+    if (!codec_payload(fixture, encoded, &encoded_length))
+        goto cleanup;
     if (sqli_test_bind_wire(stmt, fixture->type, (uint16_t)fixture->qualifier,
-                            fixture->wire, fixture->wire_length, fixture->is_null) != SQLI_OK)
+                            encoded, encoded_length, fixture->is_null) != SQLI_OK)
         goto cleanup;
     length = snprintf(sql, sizeof(sql),
                       "SELECT\n"
@@ -338,6 +383,9 @@ int main(int argc, char **argv)
         }
         if (!bind)
             ok = ok && check_result(result, fixture);
+        uint8_t encoded[fixture_wire_capacity];
+        size_t encoded_length = 0;
+        ok = ok && codec_payload(fixture, encoded, &encoded_length);
         if (!ok) {
             fprintf(stderr, "FAIL native wire fixture: %s\n", fixture->name);
             failed++;

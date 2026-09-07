@@ -5,6 +5,7 @@
 #include "libsqli/sqli.h"
 #include "sqli_internal.h"
 #include "native_wire_test.h"
+#include "sqli_temporal_codec.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -312,6 +313,11 @@ static bool check_native_value(const struct temporal_case *c)
         SQLI_FIELD_YEAR, SQLI_FIELD_MONTH, SQLI_FIELD_DAY, SQLI_FIELD_HOUR,
         SQLI_FIELD_MINUTE, SQLI_FIELD_SECOND, SQLI_FIELD_FRACTION
     };
+    struct temporal_wire expected_wire;
+    if (!make_wire(c, &expected_wire))
+        return false;
+    uint8_t encoded[SQLI_TEMPORAL_WIRE_CAPACITY];
+    size_t encoded_length = 0;
     sqli_temporal_range_t range = {
         native_fields[c->start], native_fields[c->end], (uint8_t)c->scale
     };
@@ -329,6 +335,10 @@ static bool check_native_value(const struct temporal_case *c)
         sqli_interval_parts_t parts = {0};
         ok = sqli_interval_create(&value) == SQLI_OK &&
              sqli_interval_parse(value, &range, c->value, strlen(c->value), c->is_null) == SQLI_OK &&
+             sqli_interval_encode_wire(value, expected_wire.qualifier, encoded, sizeof(encoded), &encoded_length) == SQLI_OK &&
+             encoded_length == expected_wire.length &&
+             memcmp(encoded, expected_wire.bytes, encoded_length) == 0 &&
+             sqli_interval_decode_wire(expected_wire.bytes, expected_wire.length, expected_wire.qualifier, value) == SQLI_OK &&
              sqli_interval_get_parts(value, &parts) == SQLI_OK &&
              sqli_interval_set_parts(value, &parts) == SQLI_OK &&
              sqli_interval_format(value, text, sizeof(text), &required, &format_null) == SQLI_OK;
@@ -348,6 +358,10 @@ static bool check_native_value(const struct temporal_case *c)
         sqli_datetime_parts_t parts = {0};
         ok = sqli_datetime_create(&value) == SQLI_OK &&
              sqli_datetime_parse(value, &range, c->value, strlen(c->value), c->is_null) == SQLI_OK &&
+             sqli_datetime_encode_wire(value, expected_wire.qualifier, encoded, sizeof(encoded), &encoded_length) == SQLI_OK &&
+             encoded_length == expected_wire.length &&
+             memcmp(encoded, expected_wire.bytes, encoded_length) == 0 &&
+             sqli_datetime_decode_wire(expected_wire.bytes, expected_wire.length, expected_wire.qualifier, value) == SQLI_OK &&
              sqli_datetime_get_parts(value, &parts) == SQLI_OK &&
              sqli_datetime_set_parts(value, &parts) == SQLI_OK &&
              sqli_datetime_format(value, text, sizeof(text), &required, &format_null) == SQLI_OK;
@@ -564,6 +578,30 @@ static bool check_text(sqli_result_t *result, const struct temporal_case *c)
 /* Session-local temporary table prevents name collisions and leaves no durable
  * fixture on failure. Every case verifies the server value, semantic fields,
  * NULLs, and following columns in a mixed projection for all three insertion paths. */
+static bool encode_native_case(const struct temporal_case *c, struct temporal_wire *wire)
+{
+    /* The generator's fields are contiguous YEAR..FRACTION, unlike wire codes. */
+    const sqli_temporal_range_t range = {
+        (sqli_temporal_field_t)(SQLI_FIELD_YEAR + c->start),
+        (sqli_temporal_field_t)(SQLI_FIELD_YEAR + c->end), (uint8_t)c->scale
+    };
+    bool ok;
+    if (c->interval) {
+        sqli_interval_t *value = NULL;
+        ok = sqli_interval_create(&value) == SQLI_OK &&
+             sqli_interval_parse(value, &range, c->value, strlen(c->value), c->is_null) == SQLI_OK &&
+             sqli_interval_encode_wire(value, wire->qualifier, wire->bytes, sizeof(wire->bytes), &wire->length) == SQLI_OK;
+        sqli_interval_destroy(value);
+    } else {
+        sqli_datetime_t *value = NULL;
+        ok = sqli_datetime_create(&value) == SQLI_OK &&
+             sqli_datetime_parse(value, &range, c->value, strlen(c->value), c->is_null) == SQLI_OK &&
+             sqli_datetime_encode_wire(value, wire->qualifier, wire->bytes, sizeof(wire->bytes), &wire->length) == SQLI_OK;
+        sqli_datetime_destroy(value);
+    }
+    return ok;
+}
+
 static bool run_case(sqli_conn_t *conn, const struct temporal_case *c,
                      const char **operation)
 {
@@ -604,7 +642,7 @@ static bool run_case(sqli_conn_t *conn, const struct temporal_case *c,
         goto cleanup;
     *operation = "native wire insert";
     struct temporal_wire wire;
-    if (!make_wire(c, &wire) ||
+    if (!make_wire(c, &wire) || !encode_native_case(c, &wire) ||
         sqli_test_bind_wire(stmt, c->interval ? SQLI_TYPE_INTERVAL : SQLI_TYPE_DATETIME,
                             wire.qualifier, wire.bytes, wire.length, c->is_null) != SQLI_OK)
         goto cleanup;

@@ -7,7 +7,11 @@ starts only after the remaining libsqli work and its tests are complete.
 
 The subsequent standalone decimal implementation is documented in
 [Exact Decimal Value API](NATIVE_DECIMAL_API.md). Binary result/bind integration
-remains pending.
+remains pending. Subsequent [temporal value objects](NATIVE_TEMPORAL_API.md)
+and [checked temporal tuple codecs](NATIVE_TEMPORAL_CODECS.md) implement the
+standalone temporal layers. The codec document records how the live native probe
+now uses production temporal encoders; the evidence below records the initial
+wire-audit iteration.
 
 ## Evidence and scope
 
