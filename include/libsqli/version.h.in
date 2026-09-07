@@ -1,0 +1,10 @@
+#ifndef SQLI_VERSION_H
+#define SQLI_VERSION_H
+
+/* Generated from project(sqli VERSION ...) in CMakeLists.txt. */
+#define SQLI_VERSION "@sqli_VERSION@"
+#define SQLI_VERSION_MAJOR @sqli_VERSION_MAJOR@
+#define SQLI_VERSION_MINOR @sqli_VERSION_MINOR@
+#define SQLI_VERSION_PATCH @sqli_VERSION_PATCH@
+
+#endif

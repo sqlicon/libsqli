@@ -1,4 +1,4 @@
-.TH SQ LICON 1 "2026-06-22" "sqlicon 0.1.4" "User Commands"
+.TH SQLICON 1 "" "sqlicon @sqli_VERSION@" "User Commands"
 .SH NAME
 sqlicon \- interactive shell for Informix
 .SH SYNOPSIS
@@ -14,17 +14,20 @@ provides an interactive SQL prompt, batch mode, and script execution.
 .B \-c, \-\-command \fIsql\fR
 Execute a single SQL statement and exit.
 .TP
-.B \-e, \-\-execute \fIsql\fR
-Execute a single SQL statement and exit (same as \fB\-c\fR).
-.TP
 .B \-f, \-\-file \fIpath\fR
 Execute SQL statements from a script file and exit.
 .TP
 .B \-h, \-\-help
-Show help and exit.
+Show help and exit. Must be used alone.
+.TP
+.B \-V, \-\-version
+Print the shared libsqli/sqlicon version from CMake and exit. Must be used alone.
+.TP
+.B \-\-finderr \fIcode\fR
+Look up a signed decimal Informix error code and exit. Must be used alone.
 .TP
 .B \-p, \-\-profile \fIname\fR
-Use a named connection profile (stored in ~/.config/sqlicon/profiles).
+Use a named connection profile (stored in ~/.config/sqlicon/profiles.conf).
 .TP
 .B \-\-profile\-create \fIname\fR
 Create a connection profile from the given connection flags.
@@ -45,7 +48,7 @@ Delete a profile (requires \fB\-\-yes\fR).
 Set the default profile name.
 .TP
 .B \-\-profile\-test \fIname\fR
-Test a profile's connection and exit.
+Test the saved profile connection and exit. Connection environment overrides are not applied.
 .TP
 .B \-\-show\-secret
 Show cleartext password in \fB\-\-profile\-show\fR.
@@ -57,7 +60,7 @@ Confirm destructive actions (required for \fB\-\-profile\-delete\fR).
 Informix host name or IP address.
 .TP
 .B \-\-port \fIvalue\fR
-Informix service or port number.
+Informix service name, numeric port (1..65535), or Unix socket path.
 .TP
 .B \-\-server \fIname\fR
 Informix server name (from sqlhosts).
@@ -76,6 +79,33 @@ Client locale (e.g. en_US.utf8).
 .TP
 .B \-\-db\-locale \fIvalue\fR
 Database locale (e.g. de_DE.CP1252).
+.TP
+.B \-\-connect-uri \fIuri\fR
+Connect using an informix+onsoctcp, informix+onsocssl or informix+onipcstr URI.
+The URI is self-contained: profiles and separate connection fields cannot be
+combined with it. Include credentials and locales in the URI as needed.
+Profile loading and CLI connection-environment merging are skipped for URIs.
+.TP
+.B \-\-log-level \fIlevel\fR
+Set connection logging to none, error, warn, info or debug (default: error).
+Logs go to stderr, or the file specified by SQLI_LOG_FILE.
+.SH ARGUMENT RULES
+Long value options accept both \fB--option value\fR and \fB--option=value\fR.
+Use the latter for values beginning with a dash. Repeated options are errors.
+An empty value is accepted only for passwords; \fB--password=\fR explicitly
+sets an empty password and overrides both environment and profile values.
+.PP
+Command and file modes are mutually exclusive. Profile actions are mutually
+exclusive and cannot be combined with SQL execution or --profile.
+Connection fields are accepted for profile create/update, but not for other
+profile actions. Profile update requires at least one field.
+.PP
+Profile create/update use explicit flags only. URI import is unsupported because
+the profile format does not preserve URI transport settings.
+.SH CONNECTION PRECEDENCE
+For ordinary connections, explicit flags override environment values, which
+override the named or default profile. Without --profile, the default profile
+provides missing fields. For --profile-test, saved connection fields are used.
 .SH MODES
 If no mode option is provided, sqlicon determines the mode automatically:
 .TP
@@ -154,13 +184,22 @@ Import a CSV file (with header row) into the specified table.
 .B .tables
 List user tables in the current database.
 .SH PROFILES
-Connection profiles are stored in \fI~/.config/sqlicon/profiles/\fR.
+Connection profiles are stored in \fI~/.config/sqlicon/profiles.conf\fR.
 Passwords are encrypted using AES-256-GCM with a key derived from the
 user's UID and hostname. Profiles protect against accidental file
 disclosure but not against an attacker with access to the same
 machine and account.
 .SH ENVIRONMENT
-Profiles are loaded from \fI~/.config/sqlicon/profiles/\fR.
+Connection defaults: SQLI_HOST, SQLI_PORT, SQLI_SERVER, SQLI_DATABASE
+(fallback SQLI_DB), SQLI_USER, SQLI_PASSWORD, SQLI_CLIENT_LOCALE,
+SQLI_DB_LOCALE and SQLI_LOG_LEVEL.
+.PP
+INFORMIXSERVER, CLIENT_LOCALE and DB_LOCALE are fallbacks for their respective
+SQLI_ variables. Empty environment values are treated as unset, except
+SQLI_PASSWORD, where an empty string represents an empty password.
+.PP
+The profile file is \fI~/.config/sqlicon/profiles.conf\fR on POSIX systems
+and \fI%APPDATA%\\sqlicon\\profiles.conf\fR on Windows.
 .SH EXAMPLES
 .TP
 Connect interactively using a profile:
@@ -178,6 +217,6 @@ Pipe SQL from stdin:
 Export query results as JSON:
 .B echo \e".mode json\\\\nSELECT * FROM products" | sqlicon \-p mydb
 .SH BUGS
-Report issues at https://github.com/libisql/libsqli/issues
+Report issues at https://github.com/sqlicon/libsqli/issues
 .SH AUTHOR
-the libisql authors <sqlicon0x7bc@gmail.com>
+the sqlicon authors <sqlicon0x7bc@gmail.com>

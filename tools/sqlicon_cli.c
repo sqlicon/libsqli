@@ -1,5 +1,7 @@
 #include "sqlicon.h"
 
+#include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,10 +39,10 @@ void print_help(FILE *out)
             "\n"
             "Mode options:\n"
             "  -c, --command <sql>      Execute inline SQL and exit\n"
-            "  -e, --execute <sql>      Execute inline SQL and exit\n"
             "  -f, --file <path>        Execute script file and exit\n"
             "      --finderr <code>     Look up Informix error code description and exit\n"
-            "  -h, --help               Show this help\n"
+            "  -h, --help               Show this help and exit\n"
+            "  -V, --version            Show the CMake project version and exit\n"
             "\n"
             "Connection/profile options:\n"
             "  -p, --profile <name>     Use named connection profile\n"
@@ -49,7 +51,7 @@ void print_help(FILE *out)
             "      --profile-list       List available profiles\n"
             "      --profile-update <n> Update profile fields from given flags\n"
             "      --profile-delete <n> Delete profile (requires --yes)\n"
-            "      --profile-default <n>Set default profile name\n"
+            "      --profile-default <n> Set default profile name\n"
             "      --profile-test <n>   Test profile connection and exit\n"
             "      --show-secret        Show cleartext password in --profile-show\n"
             "      --yes                Confirm destructive action (--profile-delete)\n"
@@ -59,14 +61,16 @@ void print_help(FILE *out)
             "      --database <name>    Database name\n"
             "      --user <name>        User name\n"
             "      --password <value>   Password (avoid in shell history)\n"
-            "                           Alias: --passwort\n"
             "      --client-locale <v>  Client locale\n"
             "      --db-locale <v>      Database locale\n"
-            "                           Alias: --dblocale\n"
             "      --connect-uri <uri>  Connection URI (onsoctcp/onsocssl/onipcstr)\n"
-            "                           Alias: --connect-url\n"
             "      --log-level <lvl>    Diagnostic log verbosity: none/error/warn/info/debug\n"
             "                           (default: error; written to stderr, or SQLI_LOG_FILE)\n"
+            "\n"
+            "Environment (connection operations):\n"
+            "  SQLI_HOST, SQLI_PORT, SQLI_SERVER, SQLI_DATABASE (or SQLI_DB),\n"
+            "  SQLI_USER, SQLI_PASSWORD, SQLI_CLIENT_LOCALE, SQLI_DB_LOCALE, SQLI_LOG_LEVEL\n"
+            "  Fallbacks: INFORMIXSERVER, CLIENT_LOCALE, DB_LOCALE\n"
             "\n"
             "URI formats:\n"
             "  informix+onsoctcp://user:pass@host:port/db?INFORMIXSERVER=srv\n"
@@ -74,9 +78,12 @@ void print_help(FILE *out)
             "  informix+onipcstr:///db?INFORMIXSERVER=srv\n"
             "\n"
             "Notes:\n"
-            "  - If --connect-uri is given, individual connection flags are ignored.\n"
-            "  - For --profile-create/--profile-update, --connect-uri seeds host/port/server/\n"
-            "    database and can be overridden by explicit connection flags.\n"
+            "  - --help, --version and --finderr are standalone actions.\n"
+            "  - --connect-uri is self-contained; do not combine it with profiles or connection flags.\n"
+            "  - Connection precedence: explicit flags > SQLI_* environment > profile.\n"
+            "  - Profile create/update use explicit flags only; URI import is unsupported.\n"
+            "  - Long value options also accept --option=value; repeated options are errors.\n"
+            "  - Use --password= for an explicitly empty password.\n"
             "  - If no mode option is provided and stdin is a TTY, interactive mode starts.\n"
             "  - If stdin is redirected and no mode option is provided, stdin batch mode starts.\n"
             "  - Profile encryption protects against accidental file disclosure only; it does not\n"
@@ -87,223 +94,152 @@ void print_help(FILE *out)
 /* CLI argument parsing                                             */
 /* ---------------------------------------------------------------- */
 
-static bool parse_option_value(int argc, char **argv, int *index_out, const char **value_out)
+typedef struct {
+    const char *name;
+    const char *short_name;
+    const char **value;
+    bool *flag;
+} cli_option;
+
+static bool has_connection_fields(const sqlicon_cli_options *opt)
 {
-    int index = *index_out;
-    if (index + 1 >= argc)
-        return false;
-    *index_out = index + 1;
-    *value_out = argv[index + 1];
-    return true;
+    return opt->host != NULL || opt->port != NULL || opt->server != NULL ||
+           opt->database != NULL || opt->user != NULL || opt->password != NULL ||
+           opt->client_locale != NULL || opt->db_locale != NULL;
+}
+
+static sqlicon_exit_code invalid_options(const char *message)
+{
+    fprintf(stderr, "error: %s\n", message);
+    return SQLICON_EXIT_MISUSE;
 }
 
 sqlicon_exit_code parse_args(int argc, char **argv, sqlicon_cli_options *opt)
 {
-    if (argc < 2) {
-        opt->show_help = true;
-        return SQLICON_EXIT_OK;
-    }
-
+    if (opt == NULL || argv == NULL || argc < 1)
+        return SQLICON_EXIT_MISUSE;
+    cli_option options[] = {
+        {"--help", "-h", NULL, &opt->show_help},
+        {"--version", "-V", NULL, &opt->show_version},
+        {"--command", "-c", &opt->inline_query, NULL},
+        {"--file", "-f", &opt->script_path, NULL},
+        {"--finderr", NULL, &opt->finderr_code, NULL},
+        {"--profile", "-p", &opt->profile_name, NULL},
+        {"--profile-create", NULL, &opt->profile_create, NULL},
+        {"--profile-show", NULL, &opt->profile_show, NULL},
+        {"--profile-list", NULL, NULL, &opt->profile_list},
+        {"--profile-update", NULL, &opt->profile_update, NULL},
+        {"--profile-delete", NULL, &opt->profile_delete, NULL},
+        {"--profile-default", NULL, &opt->profile_set_default, NULL},
+        {"--profile-test", NULL, &opt->profile_test, NULL},
+        {"--show-secret", NULL, NULL, &opt->show_profile_secret},
+        {"--yes", NULL, NULL, &opt->confirm_delete},
+        {"--host", NULL, &opt->host, NULL},
+        {"--port", NULL, &opt->port, NULL},
+        {"--server", NULL, &opt->server, NULL},
+        {"--database", NULL, &opt->database, NULL},
+        {"--user", NULL, &opt->user, NULL},
+        {"--password", NULL, &opt->password, NULL},
+        {"--client-locale", NULL, &opt->client_locale, NULL},
+        {"--db-locale", NULL, &opt->db_locale, NULL},
+        {"--connect-uri", NULL, &opt->conn_uri, NULL},
+        {"--log-level", NULL, &opt->log_level, NULL}
+    };
+    size_t option_count = 0;
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
-        if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
-            opt->show_help = true;
-            continue;
-        }
-        if (strcmp(arg, "-c") == 0 || strcmp(arg, "-e") == 0 || strcmp(arg, "--execute") == 0 || strcmp(arg, "--command") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->inline_query)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
+        const char *equals = strncmp(arg, "--", 2) == 0 ? strchr(arg, '=') : NULL;
+        size_t name_len = equals != NULL ? (size_t)(equals - arg) : strlen(arg);
+        cli_option *option = NULL;
+        for (size_t j = 0; j < sizeof(options) / sizeof(options[0]); j++) {
+            if ((strlen(options[j].name) == name_len &&
+                 strncmp(arg, options[j].name, name_len) == 0) ||
+                (equals == NULL && options[j].short_name != NULL &&
+                 strcmp(arg, options[j].short_name) == 0)) {
+                option = &options[j];
+                break;
             }
+        }
+        if (option == NULL)
+            return invalid_options("unknown option or positional argument; see --help");
+        option_count++;
+        if ((option->flag != NULL && *option->flag) ||
+            (option->value != NULL && *option->value != NULL)) {
+            fprintf(stderr, "error: %s may only be specified once\n", option->name);
+            return SQLICON_EXIT_MISUSE;
+        }
+        if (option->flag != NULL) {
+            if (equals != NULL)
+                return invalid_options("flag options do not accept values");
+            *option->flag = true;
             continue;
         }
-        if (strcmp(arg, "-f") == 0 || strcmp(arg, "--file") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->script_path)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
+        const char *value = equals != NULL ? equals + 1 : NULL;
+        if (value == NULL && i + 1 < argc) {
+            const char *next = argv[i + 1];
+            bool negative_code = option->value == &opt->finderr_code &&
+                next[0] == '-' && next[1] >= '0' && next[1] <= '9';
+            if (next[0] != '-' || negative_code) {
+                value = next;
+                i++;
             }
-            continue;
         }
-        if (strcmp(arg, "-p") == 0 || strcmp(arg, "--profile") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->profile_name)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
-            }
-            continue;
+        if (value == NULL || (value[0] == '\0' && option->value != &opt->password)) {
+            fprintf(stderr, "error: %s requires a value (use %s=value for values starting with '-')\n",
+                    option->name, option->name);
+            return SQLICON_EXIT_MISUSE;
         }
-        if (strcmp(arg, "--profile-create") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->profile_create)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
-            }
-            continue;
-        }
-        if (strcmp(arg, "--profile-show") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->profile_show)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
-            }
-            continue;
-        }
-        if (strcmp(arg, "--profile-list") == 0) {
-            opt->profile_list = true;
-            continue;
-        }
-        if (strcmp(arg, "--profile-update") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->profile_update)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
-            }
-            continue;
-        }
-        if (strcmp(arg, "--profile-delete") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->profile_delete)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
-            }
-            continue;
-        }
-        if (strcmp(arg, "--profile-default") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->profile_set_default)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
-            }
-            continue;
-        }
-        if (strcmp(arg, "--profile-test") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->profile_test)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
-            }
-            continue;
-        }
-        if (strcmp(arg, "--show-secret") == 0) {
-            opt->show_profile_secret = true;
-            continue;
-        }
-        if (strcmp(arg, "--yes") == 0) {
-            opt->confirm_delete = true;
-            continue;
-        }
-        if (strcmp(arg, "--host") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->host)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
-            }
-            continue;
-        }
-        if (strcmp(arg, "--port") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->port)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
-            }
-            continue;
-        }
-        if (strcmp(arg, "--server") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->server)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
-            }
-            continue;
-        }
-        if (strcmp(arg, "--database") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->database)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
-            }
-            continue;
-        }
-        if (strcmp(arg, "--user") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->user)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
-            }
-            continue;
-        }
-        if (strcmp(arg, "--password") == 0 || strcmp(arg, "--passwort") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->password)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
-            }
-            continue;
-        }
-        if (strcmp(arg, "--client-locale") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->client_locale)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
-            }
-            continue;
-        }
-        if (strcmp(arg, "--db-locale") == 0 || strcmp(arg, "--dblocale") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->db_locale)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
-            }
-            continue;
-        }
-        if (strcmp(arg, "--connect-uri") == 0 || strcmp(arg, "--connect-url") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->conn_uri)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
-            }
-            continue;
-        }
-        if (strcmp(arg, "--log-level") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->log_level)) {
-                fprintf(stderr, "error: %s requires a value\n", arg);
-                return SQLICON_EXIT_MISUSE;
-            }
-            continue;
-        }
-        if (strcmp(arg, "--finderr") == 0) {
-            if (!parse_option_value(argc, argv, &i, &opt->finderr_code)) {
-                fprintf(stderr, "error: %s requires an error code\n", arg);
-                return SQLICON_EXIT_MISUSE;
-            }
-            continue;
-        }
-
-        fprintf(stderr, "error: unknown argument '%s'\n", arg);
-        return SQLICON_EXIT_MISUSE;
+        *option->value = value;
     }
 
-    if (opt->inline_query != NULL && opt->script_path != NULL) {
-        fprintf(stderr, "error: --execute and --file are mutually exclusive\n");
-        return SQLICON_EXIT_MISUSE;
+    if (opt->show_help || opt->show_version) {
+        if (option_count != 1)
+            return invalid_options("--help and --version must be used alone");
+        return SQLICON_EXIT_OK;
     }
-
-    int profile_actions = 0;
-    if (opt->profile_create != NULL)
-        profile_actions++;
-    if (opt->profile_show != NULL)
-        profile_actions++;
-    if (opt->profile_list)
-        profile_actions++;
-    if (opt->profile_update != NULL)
-        profile_actions++;
-    if (opt->profile_delete != NULL)
-        profile_actions++;
-    if (opt->profile_set_default != NULL)
-        profile_actions++;
-    if (opt->profile_test != NULL)
-        profile_actions++;
-    if (profile_actions > 1) {
-        fprintf(stderr, "error: profile management actions are mutually exclusive\n");
-        return SQLICON_EXIT_MISUSE;
+    if (opt->finderr_code != NULL) {
+        if (option_count != 1)
+            return invalid_options("--finderr must be used alone");
+        const char *digits = opt->finderr_code;
+        if (*digits == '-' || *digits == '+') digits++;
+        if (*digits == '\0')
+            return invalid_options("--finderr requires a signed decimal integer");
+        for (const char *p = digits; *p != '\0'; p++) {
+            if (*p < '0' || *p > '9')
+                return invalid_options("--finderr requires a signed decimal integer");
+        }
+        errno = 0;
+        char *end = NULL;
+        long code = strtol(opt->finderr_code, &end, 10);
+        if (errno == ERANGE || *end != '\0' || code < -INT_MAX || code > INT_MAX)
+            return invalid_options("--finderr code is outside the supported integer range");
+        opt->finderr_value = (int)code;
+        return SQLICON_EXIT_OK;
     }
-    if (profile_actions > 0 && (opt->inline_query != NULL || opt->script_path != NULL)) {
-        fprintf(stderr, "error: profile management actions cannot be combined with SQL execution modes\n");
-        return SQLICON_EXIT_MISUSE;
-    }
-    if (opt->show_profile_secret && opt->profile_show == NULL) {
-        fprintf(stderr, "error: --show-secret is only valid with --profile-show\n");
-        return SQLICON_EXIT_MISUSE;
-    }
-    if (opt->confirm_delete && opt->profile_delete == NULL) {
-        fprintf(stderr, "error: --yes is only valid with --profile-delete\n");
-        return SQLICON_EXIT_MISUSE;
-    }
-
+    if (opt->inline_query != NULL && opt->script_path != NULL)
+        return invalid_options("--command and --file are mutually exclusive");
+    int profile_actions = (opt->profile_create != NULL) + (opt->profile_show != NULL) +
+        opt->profile_list + (opt->profile_update != NULL) + (opt->profile_delete != NULL) +
+        (opt->profile_set_default != NULL) + (opt->profile_test != NULL);
+    if (profile_actions > 1)
+        return invalid_options("profile actions are mutually exclusive");
+    if (profile_actions && (opt->inline_query != NULL || opt->script_path != NULL || opt->profile_name != NULL))
+        return invalid_options("profile actions cannot be combined with --profile, --command or --file");
+    if (opt->show_profile_secret && opt->profile_show == NULL)
+        return invalid_options("--show-secret is only valid with --profile-show");
+    if (opt->confirm_delete && opt->profile_delete == NULL)
+        return invalid_options("--yes is only valid with --profile-delete");
+    if (opt->profile_delete != NULL && !opt->confirm_delete)
+        return invalid_options("--profile-delete requires --yes");
+    bool fields = has_connection_fields(opt);
+    if (opt->conn_uri != NULL && (fields || opt->profile_name != NULL || profile_actions))
+        return invalid_options("--connect-uri cannot be combined with profiles or connection fields");
+    if (profile_actions && opt->profile_create == NULL && opt->profile_update == NULL && fields)
+        return invalid_options("connection fields are only valid with profile create/update or SQL execution");
+    if (profile_actions && opt->profile_test == NULL && opt->log_level != NULL)
+        return invalid_options("--log-level is only valid for connection operations");
+    if (opt->profile_update != NULL && !fields)
+        return invalid_options("--profile-update requires at least one connection field");
     return SQLICON_EXIT_OK;
 }
 
@@ -313,6 +249,9 @@ sqlicon_exit_code parse_args(int argc, char **argv, sqlicon_cli_options *opt)
 
 void apply_environment(sqlicon_cli_options *opt)
 {
+    opt->log_level = first_nonempty(opt->log_level, getenv("SQLI_LOG_LEVEL"));
+    if (opt->conn_uri != NULL)
+        return;
     opt->host = first_nonempty(opt->host, getenv("SQLI_HOST"));
     opt->port = first_nonempty(opt->port, getenv("SQLI_PORT"));
     opt->server = first_nonempty(opt->server, getenv("SQLI_SERVER"));
@@ -322,14 +261,14 @@ void apply_environment(sqlicon_cli_options *opt)
     if (opt->database == NULL)
         opt->database = getenv("SQLI_DB");
     opt->user = first_nonempty(opt->user, getenv("SQLI_USER"));
-    opt->password = first_nonempty(opt->password, getenv("SQLI_PASSWORD"));
+    if (opt->password == NULL)
+        opt->password = getenv("SQLI_PASSWORD");
     opt->client_locale = first_nonempty(opt->client_locale, getenv("SQLI_CLIENT_LOCALE"));
     if (opt->client_locale == NULL)
         opt->client_locale = getenv("CLIENT_LOCALE");
     opt->db_locale = first_nonempty(opt->db_locale, getenv("SQLI_DB_LOCALE"));
     if (opt->db_locale == NULL)
         opt->db_locale = getenv("DB_LOCALE");
-    opt->log_level = first_nonempty(opt->log_level, getenv("SQLI_LOG_LEVEL"));
 }
 
 sqlicon_exit_code apply_log_level(const sqlicon_cli_options *opt)
@@ -359,18 +298,47 @@ sqlicon_exit_code apply_log_level(const sqlicon_cli_options *opt)
     return SQLICON_EXIT_OK;
 }
 
+bool sqlicon_valid_service(const char *service)
+{
+    if (service == NULL || *service == '\0')
+        return false;
+    if (*service == '/')
+        return service[1] != '\0'; /* Unix-domain socket path */
+    if (*service >= '0' && *service <= '9') {
+        unsigned port = 0;
+        for (const char *p = service; *p != '\0'; p++) {
+            if (*p < '0' || *p > '9')
+                return false;
+            port = port * 10u + (unsigned)(*p - '0');
+            if (port > UINT16_MAX)
+                return false;
+        }
+        return port != 0;
+    }
+    for (const char *p = service; *p != '\0'; p++) {
+        if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+              (*p >= '0' && *p <= '9') || *p == '-' || *p == '_'))
+            return false;
+    }
+    return *service != '-';
+}
+
 sqlicon_exit_code validate_connection_options(const sqlicon_cli_options *opt)
 {
     if (opt->conn_uri != NULL && opt->conn_uri[0] != '\0') {
         return SQLICON_EXIT_OK;
     }
-    if (opt->host == NULL || opt->port == NULL || opt->database == NULL ||
-        opt->user == NULL || opt->password == NULL) {
+    if (opt->host == NULL || *opt->host == '\0' ||
+        opt->port == NULL || *opt->port == '\0' ||
+        opt->database == NULL || *opt->database == '\0' ||
+        opt->user == NULL || *opt->user == '\0' || opt->password == NULL) {
         fprintf(stderr,
                 "error: missing connection settings; require host, port, database, user, password\n");
         fprintf(stderr, "hint: use --host/--port/--database/--user/--password or SQLI_* env vars\n");
         return SQLICON_EXIT_MISUSE;
     }
+    if (!sqlicon_valid_service(opt->port))
+        return invalid_options("--port must be 1..65535, a service name or a Unix socket path");
     return SQLICON_EXIT_OK;
 }
 

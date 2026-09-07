@@ -255,3 +255,15 @@ value mismatches fail it. The live matrix is separate from `sqli_unit`.
 See [the qualifier matrix](doc/DATETIME_INTERVAL_QUALIFIER_MATRIX.md) for coverage,
 setup, seed-based reproduction and the decoder/formatter regressions exposed
 and corrected using these checks.
+
+### sqlicon command-line tests
+
+With `SQLI_BUILD_CLI=ON` and `SQLI_BUILD_TESTS=ON`, CTest also registers
+`sqlicon_cli_options` and `sqlicon_cli_process`. These cover option validation,
+connection precedence, an isolated profile-store round-trip, standalone version
+output and the generated manpage version. They do not require an Informix server
+or access the user's profiles.
+
+```sh
+ctest --test-dir build -R sqlicon_cli --output-on-failure
+```

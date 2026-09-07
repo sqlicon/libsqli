@@ -55,6 +55,7 @@ typedef enum {
 
 typedef struct {
     bool show_help;
+    bool show_version;
     bool show_profile_secret;
     bool confirm_delete;
     const char *inline_query;
@@ -78,6 +79,7 @@ typedef struct {
     const char *conn_uri;
     const char *log_level;
     const char *finderr_code;
+    int finderr_value;
 } sqlicon_cli_options;
 
 /* ---------------------------------------------------------------- */
@@ -312,6 +314,7 @@ static inline bool dump_fetch_lob_enabled(void)
 void print_help(FILE *out);
 sqlicon_exit_code parse_args(int argc, char **argv, sqlicon_cli_options *opt);
 void apply_environment(sqlicon_cli_options *opt);
+bool sqlicon_valid_service(const char *service);
 sqlicon_exit_code validate_connection_options(const sqlicon_cli_options *opt);
 sqlicon_exit_code apply_log_level(const sqlicon_cli_options *opt);
 sqlicon_mode select_mode(const sqlicon_cli_options *opt);

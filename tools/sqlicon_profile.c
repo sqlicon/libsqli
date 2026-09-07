@@ -27,17 +27,6 @@ static bool is_valid_profile_name(const char *name)
     return true;
 }
 
-static bool is_numeric_port(const char *port)
-{
-    if (port == NULL || *port == '\0')
-        return true;
-    for (const char *p = port; *p != '\0'; p++) {
-        if (*p < '0' || *p > '9')
-            return false;
-    }
-    return true;
-}
-
 static int set_dup_field(char **dst, const char *src)
 {
     char *copy = NULL;
@@ -48,182 +37,6 @@ static int set_dup_field(char **dst, const char *src)
     }
     free(*dst);
     *dst = copy;
-    return 0;
-}
-
-static int url_decode_dup(const char *src, size_t len, char **out)
-{
-    char *buf = NULL;
-    size_t r;
-    size_t w = 0;
-
-    if (out == NULL)
-        return -1;
-    *out = NULL;
-
-    buf = malloc(len + 1);
-    if (buf == NULL)
-        return -1;
-
-    for (r = 0; r < len; r++) {
-        if (src[r] == '%' && r + 2 < len &&
-            isxdigit((unsigned char)src[r + 1]) &&
-            isxdigit((unsigned char)src[r + 2])) {
-            char hex[3];
-            hex[0] = src[r + 1];
-            hex[1] = src[r + 2];
-            hex[2] = '\0';
-            buf[w++] = (char)strtol(hex, NULL, 16);
-            r += 2;
-            continue;
-        }
-        if (src[r] == '+') {
-            buf[w++] = ' ';
-            continue;
-        }
-        buf[w++] = src[r];
-    }
-
-    buf[w] = '\0';
-    *out = buf;
-    return 0;
-}
-
-static int set_profile_field_from_span(char **dst, const char *src, size_t len)
-{
-    char *decoded = NULL;
-    int rc;
-
-    if (src == NULL || len == 0)
-        return 0;
-
-    rc = url_decode_dup(src, len, &decoded);
-    if (rc != 0)
-        return -1;
-
-    rc = set_dup_field(dst, decoded);
-    free(decoded);
-    return rc;
-}
-
-static int merge_profile_from_uri(sqlicon_profile *p, const char *uri)
-{
-    const char *scheme_end;
-    const char *authority;
-    const char *path;
-    const char *query;
-    const char *server_key = "INFORMIXSERVER=";
-    const char *client_locale_key = "CLIENT_LOCALE=";
-    const char *db_locale_key = "DB_LOCALE=";
-    const char *server_pos;
-    const char *client_locale_pos;
-    const char *db_locale_pos;
-    const char *scheme;
-    const char *userinfo_sep = NULL;
-    const char *host_port;
-    const char *host_end;
-    const char *port_sep = NULL;
-    const char *db_start;
-    size_t db_len;
-
-    if (p == NULL || uri == NULL || uri[0] == '\0')
-        return 0;
-
-    scheme_end = strstr(uri, "://");
-    if (scheme_end == NULL)
-        return -1;
-
-    scheme = uri;
-    if (!((size_t)(scheme_end - scheme) == strlen("informix+onsoctcp") &&
-          strncmp(scheme, "informix+onsoctcp", strlen("informix+onsoctcp")) == 0) &&
-        !((size_t)(scheme_end - scheme) == strlen("informix+onsocssl") &&
-          strncmp(scheme, "informix+onsocssl", strlen("informix+onsocssl")) == 0) &&
-        !((size_t)(scheme_end - scheme) == strlen("informix+onipcstr") &&
-          strncmp(scheme, "informix+onipcstr", strlen("informix+onipcstr")) == 0)) {
-        return -1;
-    }
-
-    authority = scheme_end + 3;
-    path = strchr(authority, '/');
-    if (path == NULL)
-        return -1;
-
-    query = strchr(path, '?');
-    db_start = path + 1;
-    db_len = (query != NULL) ? (size_t)(query - db_start) : strlen(db_start);
-    if (db_len == 0)
-        return -1;
-
-    if (set_profile_field_from_span(&p->database, db_start, db_len) != 0)
-        return -1;
-
-    if (strncmp(uri, "informix+onipcstr://", strlen("informix+onipcstr://")) != 0) {
-        userinfo_sep = memchr(authority, '@', (size_t)(path - authority));
-        host_port = authority;
-        if (userinfo_sep != NULL) {
-            const char *colon = memchr(authority, ':', (size_t)(userinfo_sep - authority));
-            if (colon != NULL) {
-                if (set_profile_field_from_span(&p->user, authority, (size_t)(colon - authority)) != 0)
-                    return -1;
-                if (set_profile_field_from_span(&p->password, colon + 1, (size_t)(userinfo_sep - colon - 1)) != 0)
-                    return -1;
-            } else {
-                if (set_profile_field_from_span(&p->user, authority, (size_t)(userinfo_sep - authority)) != 0)
-                    return -1;
-            }
-            host_port = userinfo_sep + 1;
-        }
-
-        host_end = path;
-        for (const char *scan = host_end; scan > host_port; scan--) {
-            if (scan[-1] == ':') {
-                port_sep = scan - 1;
-                break;
-            }
-        }
-        if (port_sep == NULL || port_sep == host_port || (port_sep + 1) >= host_end)
-            return -1;
-
-        if (set_profile_field_from_span(&p->host, host_port, (size_t)(port_sep - host_port)) != 0)
-            return -1;
-        if (set_profile_field_from_span(&p->port, port_sep + 1, (size_t)(host_end - port_sep - 1)) != 0)
-            return -1;
-    }
-
-    if (query == NULL || query[1] == '\0')
-        return -1;
-
-    server_pos = strstr(query + 1, server_key);
-    if (server_pos == NULL)
-        return -1;
-    server_pos += strlen(server_key);
-    {
-        const char *server_end = strchr(server_pos, '&');
-        size_t server_len = (server_end != NULL) ? (size_t)(server_end - server_pos) : strlen(server_pos);
-        if (server_len == 0)
-            return -1;
-        if (set_profile_field_from_span(&p->server, server_pos, server_len) != 0)
-            return -1;
-    }
-
-    client_locale_pos = strstr(query + 1, client_locale_key);
-    if (client_locale_pos != NULL) {
-        const char *value = client_locale_pos + strlen(client_locale_key);
-        const char *value_end = strchr(value, '&');
-        size_t value_len = (value_end != NULL) ? (size_t)(value_end - value) : strlen(value);
-        if (set_profile_field_from_span(&p->client_locale, value, value_len) != 0)
-            return -1;
-    }
-
-    db_locale_pos = strstr(query + 1, db_locale_key);
-    if (db_locale_pos != NULL) {
-        const char *value = db_locale_pos + strlen(db_locale_key);
-        const char *value_end = strchr(value, '&');
-        size_t value_len = (value_end != NULL) ? (size_t)(value_end - value) : strlen(value);
-        if (set_profile_field_from_span(&p->db_locale, value, value_len) != 0)
-            return -1;
-    }
-
     return 0;
 }
 
@@ -650,32 +463,6 @@ static void print_profile(const sqlicon_profile *p, bool show_secret)
 static int merge_profile_from_options(sqlicon_profile *p, const sqlicon_cli_options *opt,
                                       bool require_all_core)
 {
-    sqlicon_profile uri_profile;
-
-    memset(&uri_profile, 0, sizeof(uri_profile));
-    if (opt->conn_uri != NULL && opt->conn_uri[0] != '\0') {
-        if (merge_profile_from_uri(&uri_profile, opt->conn_uri) != 0) {
-            profile_free_fields(&uri_profile);
-            return -4;
-        }
-        if (uri_profile.host != NULL && set_dup_field(&p->host, uri_profile.host) != 0)
-            goto oom;
-        if (uri_profile.port != NULL && set_dup_field(&p->port, uri_profile.port) != 0)
-            goto oom;
-        if (uri_profile.server != NULL && set_dup_field(&p->server, uri_profile.server) != 0)
-            goto oom;
-        if (uri_profile.database != NULL && set_dup_field(&p->database, uri_profile.database) != 0)
-            goto oom;
-        if (uri_profile.user != NULL && set_dup_field(&p->user, uri_profile.user) != 0)
-            goto oom;
-        if (uri_profile.password != NULL && set_dup_field(&p->password, uri_profile.password) != 0)
-            goto oom;
-        if (uri_profile.client_locale != NULL && set_dup_field(&p->client_locale, uri_profile.client_locale) != 0)
-            goto oom;
-        if (uri_profile.db_locale != NULL && set_dup_field(&p->db_locale, uri_profile.db_locale) != 0)
-            goto oom;
-    }
-
     if (opt->host != NULL && set_dup_field(&p->host, opt->host) != 0)
         goto oom;
     if (opt->port != NULL && set_dup_field(&p->port, opt->port) != 0)
@@ -693,26 +480,22 @@ static int merge_profile_from_options(sqlicon_profile *p, const sqlicon_cli_opti
     if (opt->db_locale != NULL && set_dup_field(&p->db_locale, opt->db_locale) != 0)
         goto oom;
 
-    if (!is_numeric_port(p->port))
+    if (p->port != NULL && !sqlicon_valid_service(p->port))
         goto invalid_port;
     if (require_all_core &&
         (p->host == NULL || p->port == NULL || p->database == NULL ||
          p->user == NULL || p->password == NULL)) {
         goto missing_core;
     }
-    profile_free_fields(&uri_profile);
     return 0;
 
 oom:
-    profile_free_fields(&uri_profile);
     return -1;
 
 invalid_port:
-    profile_free_fields(&uri_profile);
     return -2;
 
 missing_core:
-    profile_free_fields(&uri_profile);
     return -3;
 }
 
@@ -723,6 +506,8 @@ missing_core:
 sqlicon_exit_code maybe_load_profile_for_connect(sqlicon_cli_options *opt,
                                                  sqlicon_profile_override *ov)
 {
+    if (opt->conn_uri != NULL)
+        return SQLICON_EXIT_OK;
     sqlicon_profile_store store;
     profile_store_init(&store);
     int lrc = load_profile_store(&store);
@@ -766,7 +551,8 @@ sqlicon_exit_code maybe_load_profile_for_connect(sqlicon_cli_options *opt,
         opt->server = first_nonempty(opt->server, ov->server);
         opt->database = first_nonempty(opt->database, ov->database);
         opt->user = first_nonempty(opt->user, ov->user);
-        opt->password = first_nonempty(opt->password, ov->password);
+        if (opt->password == NULL)
+            opt->password = ov->password;
         opt->client_locale = first_nonempty(opt->client_locale, ov->client_locale);
         opt->db_locale = first_nonempty(opt->db_locale, ov->db_locale);
     }
@@ -840,12 +626,7 @@ sqlicon_exit_code run_profile_action(const sqlicon_cli_options *opt)
         }
         int mrc = merge_profile_from_options(p, opt, true);
         if (mrc == -2) {
-            fprintf(stderr, "error: profile port must be numeric\n");
-            rc = SQLICON_EXIT_MISUSE;
-            goto done;
-        }
-        if (mrc == -4) {
-            fprintf(stderr, "error: invalid --connect-uri for profile create\n");
+            fprintf(stderr, "error: profile port must be 1..65535, a service name or a Unix socket path\n");
             rc = SQLICON_EXIT_MISUSE;
             goto done;
         }
@@ -872,12 +653,7 @@ sqlicon_exit_code run_profile_action(const sqlicon_cli_options *opt)
         }
         int mrc = merge_profile_from_options(p, opt, false);
         if (mrc == -2) {
-            fprintf(stderr, "error: profile port must be numeric\n");
-            rc = SQLICON_EXIT_MISUSE;
-            goto done;
-        }
-        if (mrc == -4) {
-            fprintf(stderr, "error: invalid --connect-uri for profile update\n");
+            fprintf(stderr, "error: profile port must be 1..65535, a service name or a Unix socket path\n");
             rc = SQLICON_EXIT_MISUSE;
             goto done;
         }

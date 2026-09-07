@@ -2053,7 +2053,7 @@ void test_dispatch_extended_names_and_padding(void)
 {
     /* Long odd names must be drained fully; each missing pad must fail. */
     for (int scenario = 0; scenario < 5; scenario++) {
-        int reader, writer;
+        int reader = -1, writer = -1;
         TEST_ASSERT_EQUAL_INT(0, create_socket_pair(&reader, &writer));
         uint8_t wire[1024];
         const uint8_t names[] = {'i', 'd', 0};

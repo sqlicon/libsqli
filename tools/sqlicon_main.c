@@ -1,4 +1,5 @@
 #include "sqlicon.h"
+#include "libsqli/version.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,8 +34,15 @@ int main(int argc, char **argv)
         return (int)SQLICON_EXIT_OK;
     }
 
+    if (opt.show_version) {
+        printf("sqlicon %s\n", SQLI_VERSION);
+        profile_override_destroy(&ov);
+        runtime_destroy(&rt);
+        return (int)SQLICON_EXIT_OK;
+    }
+
     if (opt.finderr_code != NULL) {
-        int code = atoi(opt.finderr_code);
+        int code = opt.finderr_value;
         char msg[SQLI_ERRMSG_MAX_LEN + 1];
         int n = sqli_error_message_lookup(code, msg, sizeof(msg));
         if (n < 0) {
@@ -61,6 +69,10 @@ int main(int argc, char **argv)
         opt.inline_query = "SELECT FIRST 1 tabid FROM systables";
     }
 
+    if (opt.profile_test == NULL)
+        apply_environment(&opt);
+    else
+        opt.log_level = first_nonempty(opt.log_level, getenv("SQLI_LOG_LEVEL"));
     rc = maybe_load_profile_for_connect(&opt, &ov);
     if (rc != SQLICON_EXIT_OK) {
         profile_override_destroy(&ov);
@@ -68,7 +80,6 @@ int main(int argc, char **argv)
         return (int)rc;
     }
 
-    apply_environment(&opt);
     rc = validate_connection_options(&opt);
     if (rc != SQLICON_EXIT_OK) {
         profile_override_destroy(&ov);

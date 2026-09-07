@@ -32,7 +32,7 @@ mkdir -p "${STAGING}/usr/share/man/man1"
 mkdir -p "${STAGING}/DEBIAN"
 
 cp "${BUILDDIR}/sqlicon" "${STAGING}/usr/bin/sqlicon"
-cp "${ROOT_DIR}/tools/sqlicon.1" "${STAGING}/usr/share/man/man1/sqlicon.1"
+cp "${BUILDDIR}/sqlicon.1" "${STAGING}/usr/share/man/man1/sqlicon.1"
 gzip -f "${STAGING}/usr/share/man/man1/sqlicon.1"
 
 cat > "${STAGING}/DEBIAN/control" <<CTRL

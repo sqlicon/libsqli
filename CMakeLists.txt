@@ -61,6 +61,9 @@ endif()
 set(SQLI_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 set(SQLI_INC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
 set(SQLI_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR}/test)
+set(SQLI_GENERATED_INC_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated/include)
+configure_file(${SQLI_INC_DIR}/libsqli/version.h.in
+    ${SQLI_GENERATED_INC_DIR}/libsqli/version.h @ONLY)
 
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
@@ -118,6 +121,7 @@ endif()
 target_include_directories(sqli
     PUBLIC
         $<BUILD_INTERFACE:${SQLI_INC_DIR}>
+        $<BUILD_INTERFACE:${SQLI_GENERATED_INC_DIR}>
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${SQLI_SRC_DIR}
@@ -295,6 +299,27 @@ if (SQLI_BUILD_CLI)
         target_link_libraries(sqlicon PRIVATE sqli advapi32)
     endif()
     target_include_directories(sqlicon PRIVATE ${SQLI_INC_DIR} ${SQLI_TOOLS_DIR})
+    configure_file(${SQLI_TOOLS_DIR}/sqlicon.1.in ${CMAKE_CURRENT_BINARY_DIR}/sqlicon.1 @ONLY)
+    if(SQLI_BUILD_TESTS)
+        add_executable(sqlicon_cli_test ${SQLI_TEST_DIR}/test_sqlicon_cli.c
+            ${SQLI_TOOLS_DIR}/sqlicon_cli.c ${SQLI_TOOLS_DIR}/sqlicon_profile.c
+            ${SQLI_TOOLS_DIR}/sqlicon_crypto.c ${UNITY_SRC})
+        target_include_directories(sqlicon_cli_test PRIVATE ${SQLI_TOOLS_DIR} ${unity_SOURCE_DIR}/src)
+        target_link_libraries(sqlicon_cli_test PRIVATE sqli)
+        file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/cli-test-profiles)
+        add_test(NAME sqlicon_cli_options COMMAND ${CMAKE_COMMAND} -E env
+            SQLI_HOST=env-host SQLI_PASSWORD=env-password
+            SQLICON_TEST_PROFILE_DIR=${CMAKE_CURRENT_BINARY_DIR}/cli-test-profiles
+            $<TARGET_FILE:sqlicon_cli_test>)
+        add_test(NAME sqlicon_cli_process COMMAND ${CMAKE_COMMAND}
+            -DCLI=$<TARGET_FILE:sqlicon> -DVERSION=${sqli_VERSION}
+            -DMANPAGE=${CMAKE_CURRENT_BINARY_DIR}/sqlicon.1
+            -P ${SQLI_TEST_DIR}/check_sqlicon_cli.cmake)
+        if(SQLI_ENABLE_SANITIZERS AND NOT MSVC)
+            set_tests_properties(sqlicon_cli_options sqlicon_cli_process PROPERTIES
+                ENVIRONMENT "LSAN_OPTIONS=detect_leaks=0")
+        endif()
+    endif()
 endif()
 
 # ----------------------------------------------------------------
@@ -305,8 +330,9 @@ install(TARGETS sqli
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
 )
-install(FILES ${SQLI_INC_DIR}/libsqli/sqli.h DESTINATION include/libsqli)
+install(FILES ${SQLI_INC_DIR}/libsqli/sqli.h ${SQLI_GENERATED_INC_DIR}/libsqli/version.h
+    DESTINATION include/libsqli)
 if (TARGET sqlicon)
     install(TARGETS sqlicon DESTINATION bin)
-    install(FILES ${SQLI_TOOLS_DIR}/sqlicon.1 DESTINATION share/man/man1)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/sqlicon.1 DESTINATION share/man/man1)
 endif()
