@@ -635,44 +635,11 @@ static sqli_status receive_describe(int fd, sqli_result_t *r, sqli_conn_t *conn)
             rc = read_be32(conn, fd, &ext_info);
             if (rc != SQLI_OK) return rc;
 
-            /* extOwnerName: readChar() — 2-byte len + data + padding */
-            {
-                uint16_t str_len;
-                rc = read_be16(conn, fd, &str_len);
-                if (rc != SQLI_OK) return rc;
-                if (str_len > 0) {
-                    uint8_t buf[256];
-                    size_t to_read = str_len > sizeof(buf) ? sizeof(buf) : str_len;
-                    rc = read_exact(conn, fd, buf, to_read);
-                    if (rc != SQLI_OK) return rc;
-                    size_t copy_len = to_read < sizeof(col->name) - 1 ? to_read : sizeof(col->name) - 1;
-                    memcpy(col->name, buf, copy_len);
-                    col->name[copy_len] = '\0';
-                    if (str_len & 1) {
-                        uint8_t pad;
-                        read_exact(conn, fd, &pad, 1);
-                        (void)pad;
-                    }
-                }
-            }
-
-            /* extName: readChar() — 2-byte len + data + padding */
-            {
-                uint16_t str_len;
-                rc = read_be16(conn, fd, &str_len);
-                if (rc != SQLI_OK) return rc;
-                if (str_len > 0) {
-                    uint8_t buf[256];
-                    size_t to_read = str_len > sizeof(buf) ? sizeof(buf) : str_len;
-                    rc = read_exact(conn, fd, buf, to_read);
-                    if (rc != SQLI_OK) return rc;
-                    if (str_len & 1) {
-                        uint8_t pad;
-                        read_exact(conn, fd, &pad, 1);
-                        (void)pad;
-                    }
-                }
-            }
+            /* Consume complete padded strings even when the stored name is shorter. */
+            rc = read_str(conn, fd, col->name, sizeof(col->name));
+            if (rc != SQLI_OK) return rc;
+            rc = read_str(conn, fd, NULL, 0);
+            if (rc != SQLI_OK) return rc;
 
             rc = read_be16(conn, fd, &ref_val);
             if (rc != SQLI_OK) return rc;
@@ -704,23 +671,35 @@ static sqli_status receive_describe(int fd, sqli_result_t *r, sqli_conn_t *conn)
 
     /* Drain string table: NUL-delimited column names */
     if (string_table_size > 0) {
-        uint8_t *strtab = malloc(string_table_size + (string_table_size & 1));
-        if (strtab) {
-            rc = read_exact(conn, fd, strtab, string_table_size);
+        uint8_t *strtab = malloc(string_table_size);
+        if (strtab == NULL)
+            return SQLI_ALLOC_FAIL;
+        rc = read_exact(conn, fd, strtab, string_table_size);
+        if (rc != SQLI_OK) { free(strtab); return rc; }
+        if (string_table_size & 1) {
+            uint8_t pad;
+            rc = read_exact(conn, fd, &pad, 1);
             if (rc != SQLI_OK) { free(strtab); return rc; }
-            if (string_table_size & 1) {
-                uint8_t pad;
-                read_exact(conn, fd, &pad, 1);
-            }
-            /* Parse NUL-delimited names and assign to columns */
-            char *tok = (char *)strtab;
-            for (uint16_t i = 0; i < nfields && *tok; i++) {
-                strncpy(r->columns[i].name, tok, sizeof(r->columns[i].name) - 1);
-                r->columns[i].name[sizeof(r->columns[i].name) - 1] = '\0';
-                tok += strlen(tok) + 1;
-            }
-            free(strtab);
         }
+        /* Names must terminate inside the received table, not adjacent memory. */
+        size_t offset = 0;
+        for (uint16_t i = 0; i < nfields && offset < string_table_size; i++) {
+            const uint8_t *name = strtab + offset;
+            const uint8_t *end = memchr(name, 0, string_table_size - offset);
+            if (end == NULL) {
+                free(strtab);
+                return SQLI_PROTO_ERROR;
+            }
+            size_t length = (size_t)(end - name);
+            if (length == 0)
+                break;
+            size_t copy_len = length < sizeof(r->columns[i].name) - 1
+                ? length : sizeof(r->columns[i].name) - 1;
+            memcpy(r->columns[i].name, name, copy_len);
+            r->columns[i].name[copy_len] = '\0';
+            offset += length + 1;
+        }
+        free(strtab);
     }
 
     r->cursor = -1;

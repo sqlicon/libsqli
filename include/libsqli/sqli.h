@@ -269,7 +269,8 @@ sqli_status sqli_pool_create(sqli_pool_t **pool,
 /**
  * @brief Acquire one pooled connection (blocking).
  *
- * Blocks until a connection becomes available or the pool is shutting down.
+ * Blocks until a slot becomes available. A dead connection is reconnected once;
+ * a failed reconnect returns its error status with *conn == NULL.
  *
  * @param[in] pool Pool handle.
  * @param[out] conn Borrowed connection handle.
@@ -280,7 +281,9 @@ sqli_status sqli_pool_acquire(sqli_pool_t *pool, sqli_conn_t **conn);
 /**
  * @brief Acquire one pooled connection without waiting.
  *
- * Returns SQLI_TIMEOUT when no connection is currently available.
+ * Returns SQLI_TIMEOUT when no slot is currently available.
+ * An available dead connection is reconnected once; connection I/O may block
+ * and its error status is returned on failure.
  *
  * @param[in] pool Pool handle.
  * @param[out] conn Borrowed connection handle.
@@ -292,7 +295,9 @@ sqli_status sqli_pool_try_acquire(sqli_pool_t *pool, sqli_conn_t **conn);
  * @brief Acquire one pooled connection with timeout.
  *
  * Waits up to @p timeout_ms for an available connection.
- * Use timeout_ms == 0 for non-blocking behavior.
+ * Use timeout_ms == 0 to avoid waiting for a slot. This timeout does not bound
+ * connection I/O. Reconnection is attempted once and its error is propagated;
+ * retries and any retry delay are the caller's responsibility.
  *
  * @param[in] pool Pool handle.
  * @param[out] conn Borrowed connection handle.

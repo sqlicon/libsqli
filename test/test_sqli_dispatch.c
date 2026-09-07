@@ -2017,3 +2017,131 @@ void test_dml_describe_columns_do_not_open_cursor(void)
     TEST_ASSERT_EQUAL_INT(0, ctx.opens);
     TEST_ASSERT_FALSE(ctx.bad_request);
 }
+
+static size_t build_extended_name_fixture(uint8_t *buf, uint16_t name_len,
+                                          const uint8_t *names, size_t names_len)
+{
+    const uint8_t header[] = {
+        0, SQLI_SQ_DESCRIBE, 0, 7, 0, 1, 0, 0, 0, 0,
+        0, 4, 0, 1, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, SQLI_TYPE_INT,
+        0, 0, 0, 0
+    };
+    memcpy(buf, header, sizeof(header));
+    buf[16] = (uint8_t)(names_len >> 8);
+    buf[17] = (uint8_t)names_len;
+    size_t p = sizeof(header);
+    for (int i = 0; i < 2; i++) {
+        buf[p++] = (uint8_t)(name_len >> 8);
+        buf[p++] = (uint8_t)name_len;
+        memset(buf + p, 'x', name_len);
+        p += name_len;
+        if (name_len & 1)
+            buf[p++] = 0;
+    }
+    const uint8_t tail[] = {0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 4};
+    memcpy(buf + p, tail, sizeof(tail));
+    p += sizeof(tail);
+    memcpy(buf + p, names, names_len);
+    p += names_len;
+    if (names_len & 1)
+        buf[p++] = 0;
+    return p;
+}
+
+void test_dispatch_extended_names_and_padding(void)
+{
+    /* Long odd names must be drained fully; each missing pad must fail. */
+    for (int scenario = 0; scenario < 5; scenario++) {
+        int reader, writer;
+        TEST_ASSERT_EQUAL_INT(0, create_socket_pair(&reader, &writer));
+        uint8_t wire[1024];
+        const uint8_t names[] = {'i', 'd', 0};
+        size_t n = build_extended_name_fixture(wire, 257, names, sizeof(names));
+        sqli_status expected = SQLI_IO_ERROR;
+        if (scenario == 0) {
+            n += build_done_response(wire + n, 0);
+            expected = SQLI_OK;
+        } else if (scenario == 1) {
+            n = 32 + 2 + 257; /* missing owner padding */
+        } else if (scenario == 2) {
+            n = 32 + 260 + 2 + 257; /* missing type-name padding */
+        } else if (scenario == 3) {
+            n--; /* missing string-table padding */
+        } else {
+            wire[n - 2] = 'x'; /* no NUL within the three-byte names table */
+            expected = SQLI_PROTO_ERROR;
+        }
+        TEST_ASSERT_EQUAL_INT((int)n, (int)write(writer, wire, n));
+        TEST_ASSERT_EQUAL_INT(0, shutdown(writer, SHUT_WR));
+        sqli_conn_t *conn = NULL;
+        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_create(&conn));
+        conn->caps.extended_describe = true;
+        sqli_result_t *result = calloc(1, sizeof(*result));
+        TEST_ASSERT_NOT_NULL(result);
+        sqli_status rc = sqli_receive_dispatch(reader, result, conn);
+        if (scenario == 0) {
+            TEST_ASSERT_EQUAL_STRING("id", result->columns[0].name);
+            TEST_ASSERT_EQUAL_INT(SQLI_TYPE_INT, result->columns[0].type);
+            TEST_ASSERT_EQUAL_UINT32(4, result->columns[0].encoded_length);
+        }
+        sqli_result_destroy(result);
+        sqli_destroy(conn);
+        close(reader);
+        close(writer);
+        TEST_ASSERT_EQUAL_INT(expected, rc);
+    }
+}
+
+void test_conn_write_string_length_boundaries(void)
+{
+    sqli_conn_t *conn = NULL;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_create(&conn));
+    char *value = malloc((size_t)UINT16_MAX + 2);
+    TEST_ASSERT_NOT_NULL(value);
+    const size_t lengths[] = {0, 4096, 4097, UINT16_MAX, (size_t)UINT16_MAX + 1};
+    for (size_t i = 0; i < sizeof(lengths) / sizeof(lengths[0]); i++) {
+        size_t n = lengths[i];
+        memset(value, 'a', n);
+        value[n] = '\0';
+        conn->write_buf_len = 0;
+        sqli_status rc = sqli_conn_write_str(conn, value);
+        if (n > UINT16_MAX) {
+            TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, rc);
+            TEST_ASSERT_EQUAL_UINT32(0, conn->write_buf_len);
+        } else {
+            TEST_ASSERT_EQUAL_INT(SQLI_OK, rc);
+            TEST_ASSERT_EQUAL_UINT32(n + 2, conn->write_buf_len);
+            TEST_ASSERT_EQUAL_UINT8(n >> 8, conn->write_buf[0]);
+            TEST_ASSERT_EQUAL_UINT8(n & 0xff, conn->write_buf[1]);
+            if (n > 0)
+                TEST_ASSERT_EQUAL_MEMORY(value, conn->write_buf + 2, n);
+        }
+    }
+    free(value);
+    sqli_destroy(conn);
+}
+
+void test_connect_rejects_oversized_credentials(void)
+{
+    sqli_conn_t *conn = NULL;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_create(&conn));
+    char value[257];
+    memset(value, 'x', sizeof(value) - 1);
+    value[sizeof(value) - 1] = '\0';
+    sqli_connect_params params = {0};
+    params.hostname = "127.0.0.1";
+    params.service = "1";
+    params.username = "test";
+    params.password = value;
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_connect(conn, &params));
+    TEST_ASSERT_NOT_NULL(strstr(sqli_error(conn), "password exceeds 255-byte limit"));
+    TEST_ASSERT_EQUAL_INT(-1, conn->socket_fd);
+    sqli_close(conn);
+    params.password = "test";
+    params.username = value;
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_connect(conn, &params));
+    TEST_ASSERT_NOT_NULL(strstr(sqli_error(conn), "username exceeds 255-byte limit"));
+    TEST_ASSERT_EQUAL_INT(-1, conn->socket_fd);
+    sqli_destroy(conn);
+}

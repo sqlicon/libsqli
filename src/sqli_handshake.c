@@ -41,7 +41,7 @@ static sqli_status str_copy(char *buf, size_t buf_size, const char *src)
 
     size_t len = strlen(src);
     if (len >= buf_size)
-        len = buf_size - 1;
+        return SQLI_INVALID_STATE;
 
     memcpy(buf, src, len);
     buf[len] = '\0';
@@ -548,12 +548,19 @@ static sqli_status do_pam_handshake(sqli_conn_t *c)
         if (style == 3 || style == 4) {
             /* Informational: send ACK+EOT */
             uint8_t resp[] = { 0x00, SQLI_SQ_ACK, 0x00, SQLI_SQ_EOT };
-            sqli_tcp_send(fd, resp, 4);
+            if (sqli_tcp_send(fd, resp, sizeof(resp)) != (ssize_t)sizeof(resp)) {
+                set_error(c, "PAM: failed to send informational ACK+EOT");
+                return SQLI_IO_ERROR;
+            }
         } else {
             /* Style 1/2: send password as SQ_RESPONSE(130) */
             const char *pass = (c->password != NULL) ? c->password : "";
             size_t pass_len = strlen(pass);
-            if (pass_len > 512) pass_len = 512;
+            enum { pam_password_max = 512 };
+            if (pass_len > pam_password_max) {
+                set_error(c, "PAM: password exceeds 512-byte response limit");
+                return SQLI_INVALID_STATE;
+            }
             size_t resp_total = 4 + pass_len + (pass_len % 2 != 0 ? 1 : 0);
             uint8_t *resp = malloc(resp_total);
             if (resp == NULL) return SQLI_ALLOC_FAIL;
@@ -563,8 +570,12 @@ static sqli_status do_pam_handshake(sqli_conn_t *c)
             resp[rp++] = (uint8_t)(pass_len & 0xFF);
             memcpy(resp + rp, pass, pass_len); rp += pass_len;
             if (pass_len % 2 != 0) resp[rp++] = 0;
-            sqli_tcp_send(fd, resp, rp);
+            ssize_t sent = sqli_tcp_send(fd, resp, rp);
             free(resp);
+            if (sent != (ssize_t)rp) {
+                set_error(c, "PAM: failed to send password response");
+                return SQLI_IO_ERROR;
+            }
         }
     }
     return SQLI_OK;
@@ -609,21 +620,45 @@ sqli_status sqli_connect(sqli_conn_t *c, const sqli_connect_params *params)
     ssize_t sent;
     bool conrej_soft_accept = false;
     rc = str_copy(c->hostname, 256, params->hostname);
-    if (rc != SQLI_OK) goto out;
+    if (rc != SQLI_OK) {
+        set_error(c, "connect: hostname exceeds 255-byte limit");
+        goto out;
+    }
     rc = str_copy(c->service, 64, params->service);
-    if (rc != SQLI_OK) goto out;
+    if (rc != SQLI_OK) {
+        set_error(c, "connect: service exceeds 63-byte limit");
+        goto out;
+    }
     rc = str_copy(c->server, 256, params->server);
-    if (rc != SQLI_OK) goto out;
+    if (rc != SQLI_OK) {
+        set_error(c, "connect: server exceeds 255-byte limit");
+        goto out;
+    }
     rc = str_copy(c->database, 256, params->database);
-    if (rc != SQLI_OK) goto out;
+    if (rc != SQLI_OK) {
+        set_error(c, "connect: database exceeds 255-byte limit");
+        goto out;
+    }
     rc = str_copy(c->username, 256, params->username);
-    if (rc != SQLI_OK) goto out;
+    if (rc != SQLI_OK) {
+        set_error(c, "connect: username exceeds 255-byte limit");
+        goto out;
+    }
     rc = str_copy(c->password, 256, params->password);
-    if (rc != SQLI_OK) goto out;
+    if (rc != SQLI_OK) {
+        set_error(c, "connect: password exceeds 255-byte limit");
+        goto out;
+    }
     rc = str_copy(c->client_locale, 256, params->client_locale);
-    if (rc != SQLI_OK) goto out;
+    if (rc != SQLI_OK) {
+        set_error(c, "connect: client_locale exceeds 255-byte limit");
+        goto out;
+    }
     rc = str_copy(c->db_locale, 256, params->db_locale);
-    if (rc != SQLI_OK) goto out;
+    if (rc != SQLI_OK) {
+        set_error(c, "connect: db_locale exceeds 255-byte limit");
+        goto out;
+    }
 c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 16u * 1024u * 1024u);
     setup_locale_decoder(c);
     c->read_buf_pos = 0;
@@ -638,7 +673,11 @@ c->fetch_buf_size = parse_u32_env_local("SQLI_FETCH_BUFSIZE", 4194304u, 1024u, 1
             uid_t uid = getuid();
             struct passwd *pw = getpwuid(uid);
             if (pw != NULL) {
-                str_copy(c->username, 256, pw->pw_name);
+                rc = str_copy(c->username, 256, pw->pw_name);
+                if (rc != SQLI_OK) {
+                    set_error(c, "connect: local username exceeds 255-byte limit");
+                    goto out;
+                }
             }
         }
         c->password[0] = '\0';

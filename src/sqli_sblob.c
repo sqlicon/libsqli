@@ -1211,8 +1211,8 @@ sqli_status sqli_sblob_release(sqli_conn_t *conn, sqli_sblob_t *lob)
     if (conn == NULL || lob == NULL)
         return SQLI_INVALID_STATE;
 
-    if (lob->locator_len == 0) {
-        set_error(conn, "smart large object locator is empty");
+    if (lob->locator_len == 0 || lob->locator_len > SQLI_SBLOB_LOCATOR_MAX) {
+        set_error(conn, "smart large object locator length is invalid");
         return SQLI_INVALID_STATE;
     }
 
@@ -1222,8 +1222,10 @@ sqli_status sqli_sblob_release(sqli_conn_t *conn, sqli_sblob_t *lob)
     }
 
     char hex[SQLI_SBLOB_LOCATOR_MAX * 2 + 1];
+    static const char hex_digits[] = "0123456789abcdef";
     for (size_t i = 0; i < lob->locator_len; i++) {
-        sprintf(hex + i * 2, "%02x", lob->locator[i]);
+        hex[i * 2] = hex_digits[lob->locator[i] >> 4];
+        hex[i * 2 + 1] = hex_digits[lob->locator[i] & 0x0f];
     }
     hex[lob->locator_len * 2] = '\0';
 

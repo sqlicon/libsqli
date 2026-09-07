@@ -223,7 +223,12 @@ sqli_status sqli_conn_write_str(sqli_conn_t *c, const char *s)
     if (s == NULL)
         return sqli_conn_write_buf(c, (const uint8_t[]){0, 0}, 2); /* null string */
 
-    size_t slen = strnlen(s, 4096);
+    size_t slen = strnlen(s, (size_t)UINT16_MAX + 1);
+    if (slen > UINT16_MAX) {
+        if (c != NULL)
+            set_error(c, "string exceeds 16-bit wire length");
+        return SQLI_INVALID_STATE;
+    }
     uint8_t hdr[2];
     hdr[0] = (uint8_t)((slen >> 8) & 0xFF);
     hdr[1] = (uint8_t)(slen & 0xFF);
@@ -232,7 +237,7 @@ sqli_status sqli_conn_write_str(sqli_conn_t *c, const char *s)
     if (rc != SQLI_OK)
         return rc;
 
-    return sqli_conn_write_buf(c, (const uint8_t *)s, slen);
+    return slen == 0 ? SQLI_OK : sqli_conn_write_buf(c, (const uint8_t *)s, slen);
 }
 
 sqli_status sqli_conn_encode_client_to_db(sqli_conn_t *c, const char *s,

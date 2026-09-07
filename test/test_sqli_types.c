@@ -1784,6 +1784,14 @@ void test_sblob_close_and_release_validation(void)
     TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_release(&fake_conn, NULL));
     /* Empty locator: returns SQLI_INVALID_STATE */
     TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_release(&fake_conn, &lob));
+    lob.locator_len = SQLI_SBLOB_LOCATOR_MAX + 1;
+    lob.open = true;
+    lob.lofd = 123;
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_release(&fake_conn, &lob));
+    TEST_ASSERT_TRUE(lob.open);
+    TEST_ASSERT_EQUAL_INT(123, lob.lofd);
+    lob.locator_len = SIZE_MAX;
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_release(&fake_conn, &lob));
 }
 
 void test_count_zero_decimal_decoding(void)

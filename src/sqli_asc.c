@@ -270,7 +270,7 @@ size_t sqli_asc_encode_conreq(sqli_conn_t *c, uint8_t *buf, size_t buf_size,
     char hostname[256];
     hostname[0] = '\0';
     if (gethostname(hostname, sizeof(hostname) - 1) != 0)
-        strcpy(hostname, "localhost");
+        snprintf(hostname, sizeof(hostname), "localhost");
     size_t host_len = strlen(hostname);
     p = w16(buf, p, (uint16_t)(host_len + 1));
     p = wstr(buf, p, hostname);
@@ -283,7 +283,7 @@ size_t sqli_asc_encode_conreq(sqli_conn_t *c, uint8_t *buf, size_t buf_size,
     char cwd[512];
     cwd[0] = '\0';
     if (getcwd(cwd, sizeof(cwd) - 1) == NULL)
-        strcpy(cwd, ".");
+        snprintf(cwd, sizeof(cwd), ".");
     size_t cwd_len = strlen(cwd);
     p = w16(buf, p, (uint16_t)(cwd_len + 1));
     p = wstr(buf, p, cwd);
@@ -518,7 +518,7 @@ size_t sqli_asc_encode_ipc_preamble(sqli_conn_t *c, uint8_t *buf, size_t buf_siz
         char cwd[512];
         cwd[0] = '\0';
         if (getcwd(cwd, sizeof(cwd) - 1) == NULL) {
-            strcpy(cwd, ".");
+            snprintf(cwd, sizeof(cwd), ".");
         }
         size_t cwd_len = strlen(cwd);
         wb16((uint16_t)(cwd_len + 1));

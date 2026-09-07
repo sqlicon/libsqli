@@ -51,6 +51,11 @@ void test_sl_encode_too_small(void);
 
 #if SQLI_HAVE_POSIX_TESTS
 /* Phase 3 tests */
+void test_dispatch_extended_names_and_padding(void);
+void test_conn_write_string_length_boundaries(void);
+void test_connect_rejects_oversized_credentials(void);
+void test_pool_reconnect_failure_is_returned(void);
+void test_pam_dialog_preserves_password(void);
 void test_dispatch_describe_zero_columns(void);
 void test_dispatch_multi_row_result(void);
 void test_dispatch_done_exposes_generated_serial(void);
@@ -495,6 +500,11 @@ int main(void)
 #if SQLI_HAVE_POSIX_TESTS
     /* Phase 3 */
     if (section_enabled("phase3")) {
+    RUN_TEST(test_dispatch_extended_names_and_padding);
+    RUN_TEST(test_conn_write_string_length_boundaries);
+    RUN_TEST(test_connect_rejects_oversized_credentials);
+    RUN_TEST(test_pool_reconnect_failure_is_returned);
+    RUN_TEST(test_pam_dialog_preserves_password);
     RUN_TEST(test_dispatch_describe_zero_columns);
     RUN_TEST(test_dispatch_multi_row_result);
     RUN_TEST(test_dispatch_done_exposes_generated_serial);

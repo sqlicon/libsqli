@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "sqli_internal.h"
+#include "sqli_log.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -122,11 +123,16 @@ static sqli_status ensure_slot_connected(sqli_pool_t *pool, size_t idx)
 
     sqli_conn_t *conn = NULL;
     sqli_status rc = sqli_create(&conn);
-    if (rc != SQLI_OK)
+    if (rc != SQLI_OK) {
+        sqli_log(SQLI_LOG_ERROR, "pool reconnect: allocation failed for slot %zu (status=%d)",
+                 idx, (int)rc);
         return rc;
+    }
 
     rc = sqli_connect(conn, &pool->params);
     if (rc != SQLI_OK) {
+        sqli_log(SQLI_LOG_ERROR, "pool reconnect: slot=%zu status=%d: %s",
+                 idx, (int)rc, sqli_error(conn));
         sqli_destroy(conn);
         return rc;
     }
@@ -273,7 +279,8 @@ sqli_status sqli_pool_acquire_timeout(sqli_pool_t *pool, sqli_conn_t **conn,
 
             pool->slots[idx].in_use = false;
             pthread_cond_signal(&pool->cv);
-            continue;
+            pthread_mutex_unlock(&pool->mu);
+            return rc;
         }
 
         if (!use_timeout) {

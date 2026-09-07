@@ -2632,3 +2632,113 @@ void test_pool_reconnect_after_borrower_closed_connection(void)
     mock_srv_ctx_destroy(ctx);
     free(ctx);
 }
+
+void test_pool_reconnect_failure_is_returned(void)
+{
+    mock_srv_ctx *ctx = calloc(1, sizeof(*ctx));
+    TEST_ASSERT_NOT_NULL(ctx);
+    mock_srv_ctx_init(ctx);
+    require_test_listener_or_skip(ctx);
+    pthread_t thread;
+    TEST_ASSERT_EQUAL_INT(0, pthread_create(&thread, NULL, mock_server_pool_test, ctx));
+    wait_for_server(ctx);
+    sqli_connect_params params = {0};
+    fill_connect_params(ctx, &params);
+    sqli_pool_t *pool = NULL;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_pool_create(&pool, &params, 1));
+    sqli_conn_t *conn = NULL;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_pool_acquire(pool, &conn));
+    sqli_close(conn);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_pool_release(pool, conn));
+    TEST_ASSERT_EQUAL_INT(0, pthread_join(thread, NULL));
+    /* Stop accepting while keeping the port reserved, avoiding port reuse. */
+    TEST_ASSERT_EQUAL_INT(0, shutdown(ctx->listener_fd, SHUT_RDWR));
+    const uint32_t timeouts[] = {0, 100, UINT32_MAX};
+    for (size_t i = 0; i < sizeof(timeouts) / sizeof(timeouts[0]); i++) {
+        conn = NULL;
+        sqli_status rc = sqli_pool_acquire_timeout(pool, &conn, timeouts[i]);
+        TEST_ASSERT_TRUE(rc != SQLI_OK && rc != SQLI_TIMEOUT);
+        TEST_ASSERT_NULL(conn);
+    }
+    sqli_pool_destroy(pool);
+    close(ctx->listener_fd);
+    mock_srv_ctx_destroy(ctx);
+    free(ctx);
+}
+
+typedef struct {
+    mock_srv_ctx server;
+    bool dialog_ok;
+} pam_test_ctx;
+
+static void *mock_server_pam_dialog(void *arg)
+{
+    pam_test_ctx *ctx = arg;
+    int fd = accept(ctx->server.listener_fd, NULL, NULL);
+    if (fd < 0)
+        return NULL;
+    set_server_socket_timeout(fd);
+    uint8_t request[2048];
+    if (mock_read(fd, request, sizeof(request)) <= 0)
+        goto out;
+    mock_send_conacc(fd);
+    if (recv(fd, request, 16, MSG_WAITALL) != 16)
+        goto out;
+    const uint8_t protocols[] = {0, 126, 0, 9, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 12};
+    if (send(fd, protocols, sizeof(protocols), MSG_NOSIGNAL) != (ssize_t)sizeof(protocols))
+        goto out;
+    const uint8_t ack[] = {0, SQLI_SQ_ACK, 0, SQLI_SQ_EOT};
+    if (recv(fd, request, sizeof(ack), MSG_WAITALL) != (ssize_t)sizeof(ack) ||
+        memcmp(request, ack, sizeof(ack)) != 0)
+        goto out;
+    const uint8_t info[] = {0, SQLI_SQ_CHALLENGE, 0, 3, 0, 1, 0, 1, 'i', 0};
+    if (send(fd, info, sizeof(info), MSG_NOSIGNAL) != (ssize_t)sizeof(info))
+        goto out;
+    if (recv(fd, request, sizeof(ack), MSG_WAITALL) != (ssize_t)sizeof(ack) ||
+        memcmp(request, ack, sizeof(ack)) != 0)
+        goto out;
+    const uint8_t challenge[] = {0, SQLI_SQ_CHALLENGE, 0, 1, 0, 1, 0, 0};
+    if (send(fd, challenge, sizeof(challenge), MSG_NOSIGNAL) != (ssize_t)sizeof(challenge))
+        goto out;
+    enum { password_length = 255, response_length = 4 + password_length + 1 };
+    if (recv(fd, request, response_length, MSG_WAITALL) != response_length)
+        goto out;
+    if (request[0] != 0 || request[1] != SQLI_SQ_RESPONSE ||
+        request[2] != 0 || request[3] != password_length || request[response_length - 1] != 0)
+        goto out;
+    for (size_t i = 0; i < password_length; i++) {
+        if (request[4 + i] != 'p')
+            goto out;
+    }
+    const uint8_t reject[] = {0, SQLI_SQ_EXIT};
+    if (send(fd, reject, sizeof(reject), MSG_NOSIGNAL) != (ssize_t)sizeof(reject))
+        goto out;
+    ctx->dialog_ok = true;
+out:
+    close(fd);
+    return NULL;
+}
+
+void test_pam_dialog_preserves_password(void)
+{
+    pam_test_ctx ctx = {0};
+    mock_srv_ctx_init(&ctx.server);
+    require_test_listener_or_skip(&ctx.server);
+    pthread_t thread;
+    TEST_ASSERT_EQUAL_INT(0, pthread_create(&thread, NULL, mock_server_pam_dialog, &ctx));
+    sqli_connect_params params = {0};
+    fill_connect_params(&ctx.server, &params);
+    char password[256];
+    memset(password, 'p', sizeof(password) - 1);
+    password[sizeof(password) - 1] = '\0';
+    params.password = password;
+    sqli_conn_t *conn = NULL;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_create(&conn));
+    sqli_status rc = sqli_connect(conn, &params);
+    sqli_destroy(conn);
+    TEST_ASSERT_EQUAL_INT(0, pthread_join(thread, NULL));
+    close(ctx.server.listener_fd);
+    mock_srv_ctx_destroy(&ctx.server);
+    TEST_ASSERT_TRUE(ctx.dialog_ok);
+    TEST_ASSERT_EQUAL_INT(SQLI_AUTH_FAIL, rc);
+}

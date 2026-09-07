@@ -267,7 +267,7 @@ sqli_status sqli_connect_uri(sqli_conn_t *conn, const char *uri,
     /* Extract path (database name) */
     copy_range(comps.path, comps.path_len, path_buf, sizeof(path_buf));
     if (path_buf[0] == '\0')
-        strcpy(path_buf, "informix");
+        snprintf(path_buf, sizeof(path_buf), "informix");
 
     /* Extract and parse query parameters */
     copy_range(comps.query, comps.query_len, query_raw, sizeof(query_raw));
