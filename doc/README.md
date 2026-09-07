@@ -8,3 +8,6 @@ This directory contains the public reference documentation for the `libsqli` lib
 * [Connection Performance & Transports](CONNECTION_PERFORMANCE.md) - Deep-dive comparison of `onsoctcp` vs `onipcstr`, Linux `perf` profiling data, handshake analysis, bottlenecks, and optimization strategies.
 
 * [DATETIME / INTERVAL Qualifier Matrix](DATETIME_INTERVAL_QUALIFIER_MATRIX.md) - Deterministic generation, live coverage and reproduction of temporal boundary failures.
+
+* [Native Value Wire Contract](NATIVE_VALUE_WIRE_CONTRACT.md) - Verified native payloads, descriptor roles and implementation gates.
+* [Exact Decimal Value API](NATIVE_DECIMAL_API.md) - Owned decimal values, scale-preserving text, exact conversion and resource limits.

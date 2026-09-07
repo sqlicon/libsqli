@@ -5,6 +5,10 @@ API decisions for the native-value redesign. The new production value API and
 binary binders are not implemented by this iteration. The catalog component
 starts only after the remaining libsqli work and its tests are complete.
 
+The subsequent standalone decimal implementation is documented in
+[Exact Decimal Value API](NATIVE_DECIMAL_API.md). Binary result/bind integration
+remains pending.
+
 ## Evidence and scope
 
 `test/test_native_wire_contract.c` contains 20 fixed receive fixtures. Each fixture
