@@ -5,9 +5,12 @@ The deterministic generator and live checks are implemented in
 original `sqlicon/docs/test_temporal_matrix.c` sketch. The separate executable
 `sqli_temporal_matrix` is built when `SQLI_BUILD_TESTS=ON`.
 
-Current validation (2026-09-07, corrected working tree): **2,036/2,036 live cases
-pass** with seed `0xc0ffee` under ASan/UBSan. The historical failures below are
-fixed; the assertions and complete qualifier coverage remain enabled.
+Current validation (2026-09-07): **2,036/2,036 live cases passed** with seed
+`0xc0ffee` under ASan/UBSan for literal, text binding and test-only native binary
+binding: 6,108 rows checked, including exact receive-byte comparisons. Offline
+semantic decoding of all 2,036 field-derived binary fixtures also passes.
+See [native wire contract](NATIVE_VALUE_WIRE_CONTRACT.md) for its scope and the
+remaining production API work. The historical failures below remain fixed.
 
 ## Coverage
 
@@ -36,9 +39,11 @@ Fractions use exactly the declared scale. Negative zero is normalized to zero.
 
 This matrix covers valid values. Deliberately invalid dates, precision overflow,
 timestamp/epoch convenience bindings and temporal arithmetic are separate tests.
-The low-level fixed-format `sqli_encode_datetime()` helper is not the path tested
-here: the public `sqli_bind_datetime()` and `sqli_bind_interval()` APIs bind text
-and let the server convert it to the declared target type.
+The low-level fixed-format `sqli_encode_datetime()` helper is not used. The
+existing public temporal binders still bind text. The additional test-only native
+path constructs decimal-pair payloads directly from the generated fields and sends
+binary SQ_BIND parameters. This verifies wire behavior without claiming that the
+new public native API already exists.
 
 ## What each live case verifies
 
@@ -46,13 +51,14 @@ and let the server convert it to the declared target type.
 2. Insert a typed SQL literal as the server reference.
 3. Insert the same value with a prepared statement and the public temporal bind
    API (or `sqli_bind_null()` for NULL).
-4. Have the server compare both stored values against the independent literal.
-5. Decode both rows with the semantic getter and compare each present field,
+4. Insert a third row using the test-only native wire probe, then have the server compare all three stored values against the independent literal.
+5. Decode all three rows with the semantic getter and compare each present field,
    fraction scale, sign and qualifier against values generated before querying.
 6. Compare the public temporal string getter with a server-side LVARCHAR cast.
    Only outer padding and an optional zero before a fraction-only decimal point
    are normalized; other digits and separators must agree.
-7. Verify integer sentinels and a negative YEAR(3) TO MONTH interval after the
+7. Compare receive bytes and the descriptor qualifier against the independent
+   field-derived wire model. Verify integer sentinels and a negative YEAR(3) TO MONTH interval after the
    tested value in a mixed projection, detecting tuple-width/offset mistakes.
 8. Check the result row count, destroy handles and drop the temporary table.
    Session-local tables also disappear when the connection closes.
@@ -72,7 +78,8 @@ ctest --test-dir build -R '^sqli_temporal_generator$' --output-on-failure
 ```
 
 The offline CTest checks deterministic generation, qualifier uniqueness, exact
-coverage counts, value bounds and numeric option parsing. It needs no database.
+coverage counts, value bounds, numeric option parsing and semantic decoding of
+all 2,036 field-derived binary fixtures. It needs no database.
 
 For live checks, set `SQLI_TEST_HOST`, `SQLI_TEST_PORT`, `SQLI_TEST_DB`,
 `SQLI_TEST_USER` and `SQLI_TEST_PASS`. Optional settings are `SQLI_TEST_SERVER`,

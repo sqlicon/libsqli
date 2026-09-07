@@ -3,6 +3,8 @@
  * Expected semantic fields are generated independently of libsqli's decoder.
  */
 #include "libsqli/sqli.h"
+#include "sqli_internal.h"
+#include "native_wire_test.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -33,6 +35,131 @@ struct matrix {
     size_t count;
     uint64_t rng;
 };
+
+/* Independent test model: pack generated fields into decimal pairs, then
+ * normalize the coefficient. It does not invoke a production wire encoder. */
+enum {
+    temporal_wire_capacity = 20,
+    decimal_pair_base = 100,
+    decimal_pair_digits = 2,
+    temporal_exponent_bias = 64,
+    temporal_positive_flag = 128,
+    temporal_zero_marker = 128,
+    temporal_second_code = 10,
+    temporal_fraction_start = 12,
+    matrix_id_column = 0,
+    matrix_value_column = 1,
+    matrix_sentinel_column = 2,
+    matrix_interval_column = 3,
+    matrix_tail_column = 4,
+    matrix_equal_column = 5,
+    matrix_text_column = 6,
+    matrix_integer_width = 4,
+    matrix_projection_columns = 7,
+    offline_value_column = 0
+};
+
+struct temporal_wire {
+    uint8_t bytes[temporal_wire_capacity];
+    size_t length;
+    uint16_t qualifier;
+};
+
+static bool make_wire(const struct temporal_case *c, struct temporal_wire *out)
+{
+    uint8_t pairs[temporal_wire_capacity] = {0};
+    size_t count = 0;
+    unsigned leading = c->interval ? (unsigned)c->precision : c->start == YEAR ? 4u : 2u;
+    unsigned start = c->start == FRACTION ? temporal_fraction_start : (unsigned)c->start * 2u;
+    unsigned end = c->end == FRACTION ? temporal_second_code + (unsigned)c->scale : (unsigned)c->end * 2u;
+    unsigned digits = c->start == FRACTION ? (unsigned)c->scale : leading + end - start;
+    unsigned padding = c->interval && c->start != FRACTION ? leading & 1u : 0;
+    struct temporal_wire wire = {0};
+    wire.length = 1u + (digits + padding + 1u) / decimal_pair_digits;
+    if (wire.length > sizeof(wire.bytes) || digits > UINT8_MAX)
+        return false;
+    wire.qualifier = (uint16_t)((digits << 8) | (start << 4) | end);
+    if (c->is_null) {
+        *out = wire;
+        return true;
+    }
+    int exponent = 0;
+    for (int field = c->start; field <= c->end && field <= SECOND; field++) {
+        unsigned width = field == c->start ? (leading + 1u) / decimal_pair_digits : 1u;
+        if (width > sizeof(pairs) - count || c->fields[field] < 0)
+            return false;
+        unsigned value = (unsigned)c->fields[field];
+        for (unsigned i = width; i > 0; i--) {
+            pairs[count + i - 1] = (uint8_t)(value % decimal_pair_base);
+            value /= decimal_pair_base;
+        }
+        if (value != 0)
+            return false;
+        count += width;
+    }
+    if (c->start != FRACTION)
+        exponent = (int)count + SECOND - (c->end > SECOND ? SECOND : c->end);
+    if (c->end == FRACTION) {
+        unsigned width = ((unsigned)c->scale + 1u) / decimal_pair_digits;
+        if (width > sizeof(pairs) - count || c->fields[FRACTION] < 0)
+            return false;
+        unsigned value = (unsigned)c->fields[FRACTION];
+        if ((c->scale & 1) != 0)
+            value *= 10; /* Right-pad the last fractional decimal pair. */
+        for (unsigned i = width; i > 0; i--) {
+            pairs[count + i - 1] = (uint8_t)(value % decimal_pair_base);
+            value /= decimal_pair_base;
+        }
+        if (value != 0)
+            return false;
+        count += width;
+    }
+    size_t first = 0;
+    while (first < count && pairs[first] == 0) {
+        first++;
+        exponent--;
+    }
+    while (count > first && pairs[count - 1] == 0)
+        count--;
+    if (first == count) {
+        wire.bytes[0] = temporal_zero_marker;
+    } else {
+        if (count - first > wire.length - 1 ||
+            exponent < -temporal_exponent_bias || exponent >= temporal_exponent_bias)
+            return false;
+        unsigned encoded = (unsigned)(exponent + temporal_exponent_bias);
+        wire.bytes[0] = (uint8_t)(encoded | temporal_positive_flag);
+        memcpy(wire.bytes + 1, pairs + first, count - first);
+        if (c->negative) {
+            wire.bytes[0] = (uint8_t)(encoded ^ 0x7f);
+            /* Base-100 radix complement, retaining trailing zero padding. */
+            unsigned carry = 1;
+            for (size_t i = wire.length; i > 1; i--) {
+                unsigned digit = decimal_pair_base - 1u - wire.bytes[i - 1] + carry;
+                wire.bytes[i - 1] = (uint8_t)(digit % decimal_pair_base);
+                carry = digit / decimal_pair_base;
+            }
+        }
+    }
+    *out = wire;
+    return true;
+}
+
+static bool check_wire(sqli_result_t *result, const struct temporal_case *c)
+{
+    struct temporal_wire wire;
+    if (!make_wire(c, &wire) || result == NULL || result->tuple_buffer == NULL ||
+        result->column_count != matrix_projection_columns ||
+        result->columns[matrix_value_column].encoded_length != wire.qualifier ||
+        result->tuple_len < matrix_integer_width ||
+        wire.length > result->tuple_len - matrix_integer_width)
+        return false;
+    if (memcmp(result->tuple_buffer + matrix_integer_width, wire.bytes, wire.length) != 0) {
+        fprintf(stderr, "  received temporal payload differs from field-derived fixture\n");
+        return false;
+    }
+    return true;
+}
 
 static unsigned power10(unsigned n)
 {
@@ -177,6 +304,8 @@ static bool parse_number(const char *text, uint64_t *value)
     return true;
 }
 
+static bool check_offline_wire(const struct temporal_case *c);
+
 static int self_test(struct matrix *m)
 {
     struct matrix *copy = malloc(sizeof(*copy));
@@ -194,6 +323,8 @@ static int self_test(struct matrix *m)
                     ok = false;
             }
         }
+        if (!check_offline_wire(c))
+            ok = false;
         if (c->is_null) nulls++;
         if (c->interval && c->start != FRACTION &&
             (unsigned)c->fields[c->start] >= power10((unsigned)c->precision))
@@ -276,6 +407,35 @@ static bool check_value(sqli_result_t *result, int column,
     return true;
 }
 
+/* All buffers belong to this stack frame. Supplying the row-cache arrays
+ * avoids allocation and makes the decoder exercise its ordinary cache path. */
+static bool check_offline_wire(const struct temporal_case *c)
+{
+    struct temporal_wire wire;
+    if (!make_wire(c, &wire))
+        return false;
+    sqli_column_info column = {0};
+    column.type = c->interval ? SQLI_TYPE_INTERVAL : SQLI_TYPE_DATETIME;
+    column.encoded_length = wire.qualifier;
+    size_t data_start = 0;
+    size_t data_length = 0;
+    uint8_t is_null = 0;
+    sqli_result_t result = {0};
+    result.columns = &column;
+    result.column_count = 1;
+    result.current_row = 0;
+    result.cur_cache_row = -1;
+    result.tuple_buffer = wire.bytes;
+    result.tuple_len = wire.length;
+    result.cur_col_data_start = &data_start;
+    result.cur_col_data_len = &data_length;
+    result.cur_col_is_null = &is_null;
+    bool ok = check_value(&result, offline_value_column, c);
+    if (!ok)
+        fprintf(stderr, "offline wire model: %s value=%s\n", c->type, c->value);
+    return ok;
+}
+
 /* Informix pads INTERVAL leading fields with spaces. FRACTION-only text may
  * have an optional zero before the decimal point. Preserve all other digits
  * and separators when comparing the public string getter to the server. */
@@ -299,12 +459,12 @@ static bool check_text(sqli_result_t *result, const struct temporal_case *c)
     if (c->is_null)
         return true;
     char server[128], client[128];
-    const char *value = sqli_result_get_string(result, 6);
+    const char *value = sqli_result_get_string(result, matrix_text_column);
     if (value == NULL || strlen(value) >= sizeof(server))
         return false;
     snprintf(server, sizeof(server), "%s", value);
-    value = c->interval ? sqli_result_get_interval_string(result, 1) :
-                          sqli_result_get_datetime_string(result, 1);
+    value = c->interval ? sqli_result_get_interval_string(result, matrix_value_column) :
+                          sqli_result_get_datetime_string(result, matrix_value_column);
     if (value == NULL || strlen(value) >= sizeof(client))
         return false;
     snprintf(client, sizeof(client), "%s", value);
@@ -319,7 +479,7 @@ static bool check_text(sqli_result_t *result, const struct temporal_case *c)
 
 /* Session-local temporary table prevents name collisions and leaves no durable
  * fixture on failure. Every case verifies the server value, semantic fields,
- * NULLs, and following columns in a mixed projection for both insertion paths. */
+ * NULLs, and following columns in a mixed projection for all three insertion paths. */
 static bool run_case(sqli_conn_t *conn, const struct temporal_case *c,
                      const char **operation)
 {
@@ -354,6 +514,18 @@ static bool run_case(sqli_conn_t *conn, const struct temporal_case *c,
         goto cleanup;
     sqli_stmt_destroy(stmt);
     stmt = NULL;
+    *operation = "prepare native insert";
+    if (sqli_prepare(conn, "INSERT INTO sqli_temporal_matrix VALUES (3, ?)",
+                     &parameters, &stmt) != SQLI_OK || parameters != 1)
+        goto cleanup;
+    *operation = "native wire insert";
+    struct temporal_wire wire;
+    if (!make_wire(c, &wire) ||
+        sqli_test_bind_wire(stmt, c->interval ? SQLI_TYPE_INTERVAL : SQLI_TYPE_DATETIME,
+                            wire.qualifier, wire.bytes, wire.length, c->is_null) != SQLI_OK)
+        goto cleanup;
+    sqli_stmt_destroy(stmt);
+    stmt = NULL;
     *operation = "mixed projection";
     snprintf(sql, sizeof(sql),
              "SELECT id,v,2468,-INTERVAL(3-02) YEAR(3) TO MONTH,1357,"
@@ -369,24 +541,26 @@ static bool run_case(sqli_conn_t *conn, const struct temporal_case *c,
                  "FROM sqli_temporal_matrix ORDER BY id", literal);
     if (sqli_query(conn, sql, &result) != SQLI_OK)
         goto cleanup;
-    for (int id = 1; id <= 2; id++) {
-        *operation = id == 1 ? "literal row decode" : "bound row decode";
-        if (!sqli_result_next(result) || sqli_result_get_int(result, 0) != id ||
-            sqli_result_get_int(result, 2) != 2468 ||
-            sqli_result_get_int(result, 4) != 1357 || sqli_result_get_int(result, 5) != 1 ||
-            !check_value(result, 1, c) || !check_text(result, c))
+    for (int id = 1; id <= 3; id++) {
+        *operation = id == 1 ? "literal row decode" :
+                     id == 2 ? "text-bound row decode" : "native-bound row decode";
+        if (!sqli_result_next(result) || sqli_result_get_int(result, matrix_id_column) != id ||
+            sqli_result_get_int(result, matrix_sentinel_column) != 2468 ||
+            sqli_result_get_int(result, matrix_tail_column) != 1357 || sqli_result_get_int(result, matrix_equal_column) != 1 ||
+            !check_wire(result, c) || !check_value(result, matrix_value_column, c) || !check_text(result, c))
             goto cleanup;
         sqli_interval_value sentinel;
-        if (sqli_result_get_interval(result, 3, &sentinel) != SQLI_OK ||
+        if (sqli_result_get_interval(result, matrix_interval_column, &sentinel) != SQLI_OK ||
             sentinel.is_null || !sentinel.negative || sentinel.year != 3 || sentinel.month != 2)
             goto cleanup;
     }
     *operation = "end of result";
-    ok = !sqli_result_next(result);
+    ok = !sqli_result_next(result) && !result->saw_error;
 cleanup:
     if (!ok) {
         sqli_error_info error = {0};
-        sqli_error_get_info(conn, &error);
+        if (sqli_error_get_info(conn, &error) != SQLI_OK)
+            fprintf(stderr, "  error details unavailable\n");
         fprintf(stderr, "  operation=%s sqlcode=%d isamcode=%d\n", *operation,
                 error.sqlcode, error.isamcode);
     }

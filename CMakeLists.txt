@@ -191,7 +191,21 @@ if (SQLI_BUILD_TESTS)
     enable_testing()
     add_test(NAME sqli_unit COMMAND sqli_test)
 
-    add_executable(sqli_temporal_matrix ${SQLI_TEST_DIR}/test_temporal_matrix.c)
+    add_executable(sqli_native_wire_contract ${SQLI_TEST_DIR}/test_native_wire_contract.c
+        ${SQLI_TEST_DIR}/native_wire_test.c)
+    target_include_directories(sqli_native_wire_contract PRIVATE ${SQLI_SRC_DIR})
+    target_link_libraries(sqli_native_wire_contract PRIVATE sqli)
+    add_test(NAME sqli_native_wire_offline COMMAND sqli_native_wire_contract --offline)
+    if (SQLI_ENABLE_LIVE_TESTS)
+        add_test(NAME sqli_native_wire_live COMMAND sqli_native_wire_contract --live)
+        add_test(NAME sqli_native_bind_live COMMAND sqli_native_wire_contract --live-bind)
+        set_tests_properties(sqli_native_wire_live sqli_native_bind_live PROPERTIES
+            LABELS "live;native" SKIP_RETURN_CODE 77 TIMEOUT 120)
+    endif()
+
+    add_executable(sqli_temporal_matrix ${SQLI_TEST_DIR}/test_temporal_matrix.c
+        ${SQLI_TEST_DIR}/native_wire_test.c)
+    target_include_directories(sqli_temporal_matrix PRIVATE ${SQLI_SRC_DIR})
     target_link_libraries(sqli_temporal_matrix PRIVATE sqli)
     add_test(NAME sqli_temporal_generator COMMAND sqli_temporal_matrix --self-test)
     if (SQLI_ENABLE_LIVE_TESTS)
@@ -201,7 +215,7 @@ if (SQLI_BUILD_TESTS)
     endif()
 
     if (SQLI_ENABLE_SANITIZERS AND NOT MSVC)
-        set_tests_properties(sqli_unit sqli_temporal_generator PROPERTIES
+        set_tests_properties(sqli_unit sqli_temporal_generator sqli_native_wire_offline PROPERTIES
             ENVIRONMENT "LSAN_OPTIONS=detect_leaks=0")
     endif()
 endif()
