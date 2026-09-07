@@ -41,7 +41,8 @@ typedef enum {
     SQLI_INEXACT,
     SQLI_BUFFER_TOO_SMALL,
     SQLI_NULL_VALUE,
-    SQLI_LIMIT_EXCEEDED
+    SQLI_LIMIT_EXCEEDED,
+    SQLI_METADATA_UNAVAILABLE
 } sqli_status;
 /** @} */
 
@@ -897,6 +898,66 @@ void sqli_stmt_close(sqli_stmt_t *stmt);
  * Safe to call with NULL (no-op).
  */
 void sqli_stmt_destroy(sqli_stmt_t *stmt);
+
+/* ----------------------------------------------------------------
+ * Immutable server descriptor snapshots
+ * ---------------------------------------------------------------- */
+typedef struct sqli_descriptor sqli_descriptor_t;
+enum { SQLI_DESCRIPTOR_MAX_BYTES = 16 * 1024 * 1024 };
+
+/** Borrowed bytes in server encoding, not necessarily UTF-8 or NUL terminated.
+ * available distinguishes missing information from a known empty byte span. */
+typedef struct {
+    const uint8_t *data;
+    size_t length;
+    bool available;
+} sqli_descriptor_bytes_t;
+
+typedef struct {
+    uint16_t statement_type;
+    uint16_t statement_id;
+    uint32_t cost_raw;
+    uint16_t tuple_size;
+    size_t field_count;
+    bool extended;
+} sqli_descriptor_info_t;
+
+/** Raw server fields. Extended members are available only when info.extended
+ * is true. Unknown type codes and flags are retained without normalization.
+ * A server-described field is not proof of an input-parameter ordinal. */
+typedef struct {
+    uint32_t field_index;
+    uint32_t tuple_offset;
+    uint16_t type_raw;
+    uint32_t encoded_length;
+    uint32_t extended_info;
+    uint16_t reference;
+    uint16_t alignment;
+    uint32_t source_type;
+    sqli_descriptor_bytes_t name;
+    sqli_descriptor_bytes_t type_owner;
+    sqli_descriptor_bytes_t type_name;
+} sqli_descriptor_field_t;
+
+/** Acquisition returns an owned reference, usable after result/statement close
+ * or destruction. SQLI_METADATA_UNAVAILABLE means no complete DESCRIBE has
+ * arrived; a known zero-field descriptor is a successful snapshot. These APIs
+ * expose server DESCRIBE fields, not inferred parameter metadata.
+ * Acquisition requires external synchronization with result/statement mutation.
+ * Published snapshots are immutable: getters and reference operations may run
+ * concurrently while callers hold a reference. Retained byte views remain valid
+ * until the owning reference is released. All failures preserve outputs.
+ */
+sqli_status sqli_result_get_descriptor(const sqli_result_t *result, sqli_descriptor_t **out);
+sqli_status sqli_stmt_get_descriptor(const sqli_stmt_t *stmt, sqli_descriptor_t **out);
+sqli_status sqli_descriptor_retain(sqli_descriptor_t *descriptor);
+void sqli_descriptor_release(sqli_descriptor_t *descriptor);
+sqli_status sqli_descriptor_get_info(const sqli_descriptor_t *descriptor, sqli_descriptor_info_t *out);
+/** Field indices are zero-based. */
+sqli_status sqli_descriptor_get_field(const sqli_descriptor_t *descriptor, size_t index,
+                                      sqli_descriptor_field_t *out);
+/** Entire original names table, including terminators and unused trailing bytes. */
+sqli_status sqli_descriptor_get_names(const sqli_descriptor_t *descriptor, sqli_descriptor_bytes_t *out);
 
 /* ----------------------------------------------------------------
  * Callable statements (stored procedures/functions)

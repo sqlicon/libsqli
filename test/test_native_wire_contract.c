@@ -306,6 +306,33 @@ cleanup:
     return ok;
 }
 
+static bool check_empty_result_descriptor(sqli_conn_t *conn)
+{
+    enum { alias_length = 128, sql_capacity = 256 };
+    char alias[alias_length + 1];
+    memset(alias, 'a', alias_length);
+    alias[alias_length] = '\0';
+    char sql[sql_capacity];
+    int length = snprintf(sql, sizeof(sql),
+        "SELECT 1 AS %s FROM systables WHERE 1 = 0", alias);
+    if (length < 0 || (size_t)length >= sizeof(sql))
+        return false;
+    sqli_result_t *result = NULL;
+    sqli_descriptor_t *snapshot = NULL;
+    sqli_descriptor_info_t info;
+    bool ok = sqli_query(conn, sql, &result) == SQLI_OK &&
+        sqli_result_get_descriptor(result, &snapshot) == SQLI_OK &&
+        sqli_descriptor_get_info(snapshot, &info) == SQLI_OK && info.field_count == 1 &&
+        !sqli_result_next(result) && !result->saw_error;
+    sqli_result_destroy(result);
+    sqli_descriptor_field_t field;
+    ok = ok && sqli_descriptor_get_field(snapshot, 0, &field) == SQLI_OK &&
+        field.name.available && field.name.length == alias_length &&
+        memcmp(field.name.data, alias, alias_length) == 0;
+    sqli_descriptor_release(snapshot);
+    return ok;
+}
+
 /* A descriptor's column count is not a universal input-parameter count.
  * These statements deliberately make the two counts differ. */
 static bool check_describe(sqli_conn_t *conn)
@@ -349,6 +376,23 @@ static bool check_describe(sqli_conn_t *conn)
             matches = stmt->result.columns[col].type == cases[i].types[col] &&
                       stmt->result.columns[col].encoded_length == cases[i].encoded[col];
         }
+        sqli_descriptor_t *snapshot = NULL;
+        sqli_descriptor_info_t info = {0};
+        matches = matches && sqli_stmt_get_descriptor(stmt, &snapshot) == SQLI_OK &&
+                  sqli_descriptor_get_info(snapshot, &info) == SQLI_OK &&
+                  info.field_count == (size_t)cases[i].columns;
+        for (size_t col = 0; matches && col < info.field_count; col++) {
+            sqli_descriptor_field_t field;
+            matches = sqli_descriptor_get_field(snapshot, col, &field) == SQLI_OK &&
+                      (field.type_raw & 0xff) == cases[i].types[col] &&
+                      field.encoded_length == cases[i].encoded[col];
+        }
+        sqli_stmt_destroy(stmt);
+        stmt = NULL;
+        /* Snapshot fields remain readable after closing the server statement. */
+        matches = matches && sqli_descriptor_get_info(snapshot, &info) == SQLI_OK &&
+                  info.field_count == (size_t)cases[i].columns;
+        sqli_descriptor_release(snapshot);
         if (!matches) {
             fprintf(stderr, "FAIL descriptor fixture: %zu\n", i);
             ok = false;
@@ -357,6 +401,10 @@ static bool check_describe(sqli_conn_t *conn)
     }
     if (!execute_sql(conn, "DROP TABLE sqli_native_describe"))
         ok = false;
+    if (!check_empty_result_descriptor(conn)) {
+        fprintf(stderr, "FAIL empty-result descriptor fixture\n");
+        ok = false;
+    }
     printf("native descriptor fixtures: %s\n", ok ? "PASS" : "FAIL");
     return ok;
 }

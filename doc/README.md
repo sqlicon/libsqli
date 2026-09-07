@@ -14,3 +14,4 @@ This directory contains the public reference documentation for the `libsqli` lib
 * [Native Temporal Value API](NATIVE_TEMPORAL_API.md) - Validated dates, opaque qualified timestamps and intervals, exact fractions and text convenience functions.
 * [Checked Temporal Wire Codecs](NATIVE_TEMPORAL_CODECS.md) - Exact binary DATE/DATETIME/INTERVAL conversion, qualifier validation and malformed-payload tests.
 * [Checked Decimal Wire Codecs](NATIVE_DECIMAL_CODECS.md) - Exact DECIMAL/NUMERIC/MONEY tuple conversion, fixed/floating scales and exponent-boundary validation.
+* [Immutable Descriptor Snapshots](DESCRIPTOR_SNAPSHOTS.md) - Complete raw server metadata, explicit availability and ownership beyond statement/result lifetime.

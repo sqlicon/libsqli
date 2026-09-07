@@ -384,6 +384,7 @@ typedef struct {
 struct sqli_result {
     sqli_conn_t *owner_conn; /* connection context for locale-aware decoding */
     /* --- Metadata --- */
+    sqli_descriptor_t *descriptor; /* retained immutable server metadata */
     sqli_column_info *columns;
     int column_count;
     int64_t rows_affected;
@@ -465,6 +466,8 @@ int sqli_decode_decimal(const uint8_t *buf, size_t buf_size,
 static inline void sqli_result_cleanup(sqli_result_t *r)
 {
     if (r == NULL) return;
+    sqli_descriptor_release(r->descriptor);
+    r->descriptor = NULL;
     free(r->columns);
     r->columns = NULL;
     if (r->rows != NULL) {

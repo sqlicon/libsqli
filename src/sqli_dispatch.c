@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "sqli_internal.h"
+#include "sqli_descriptor_internal.h"
 #include "sqli_protocol_internal.h"
 #include "sqli_result_internal.h"
 
@@ -248,7 +249,8 @@ static sqli_status read_be32(sqli_conn_t *conn, int fd, uint32_t *val)
     sqli_status rc = read_exact(conn, fd, buf, 4);
     if (rc != SQLI_OK)
         return rc;
-    *val = (uint32_t)((buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3]);
+    *val = ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16) |
+           ((uint32_t)buf[2] << 8) | (uint32_t)buf[3];
     return SQLI_OK;
 }
 
@@ -541,176 +543,187 @@ sqli_status sqli_fetchblob_materialize(sqli_result_t *result, int col_index,
  * SQ_EOT — send end-of-transmission marker
  * ---------------------------------------------------------------- */
 
-static sqli_status receive_describe(int fd, sqli_result_t *r, sqli_conn_t *conn)
+static sqli_status receive_descriptor_string(sqli_conn_t *conn, int fd,
+                                              sqli_descriptor_t *descriptor,
+                                              sqli_descriptor_bytes_t *out)
 {
-    uint16_t stmt_type, stmt_id, tuple_size, nfields;
-    uint32_t cost_val;
-    uint32_t string_table_size;
-    sqli_status rc;
-    int extended_describe = (conn != NULL && conn->caps.extended_describe);
+    uint16_t length;
+    sqli_status rc = read_be16(conn, fd, &length);
+    if (rc != SQLI_OK)
+        return rc;
+    uint8_t *bytes = NULL;
+    rc = sqli_descriptor_alloc_bytes(descriptor, length, &bytes);
+    if (rc != SQLI_OK)
+        return rc;
+    *out = (sqli_descriptor_bytes_t){bytes, length, true};
+    if (length != 0) {
+        rc = read_exact(conn, fd, bytes, length);
+        if (rc != SQLI_OK)
+            return rc;
+    }
+    if ((length & 1u) != 0) {
+        uint8_t padding;
+        rc = read_exact(conn, fd, &padding, 1);
+    }
+    return rc;
+}
 
-    /* Header (verified against server traffic):
-     * statementType(2) + statementID(2) + cost(4) +
-     * tupleSize(2) + nfields(2) + stringTableSize(2) = 14 bytes
-     * Note: server sends tupleSize and stringTableSize as 2 bytes
-     */
-
-    rc = read_be16(conn, fd, &stmt_type);
+static sqli_status receive_descriptor_field(sqli_conn_t *conn, int fd,
+                                             sqli_descriptor_t *descriptor, size_t index)
+{
+    sqli_descriptor_field_t *field = &descriptor->fields[index];
+    sqli_status rc = read_be32(conn, fd, &field->field_index);
     if (rc != SQLI_OK) return rc;
-    r->statement_type = stmt_type;
-
-    rc = read_be16(conn, fd, &stmt_id);
+    rc = read_be32(conn, fd, &field->tuple_offset);
     if (rc != SQLI_OK) return rc;
-    r->stmt_id = (int32_t)stmt_id;
-
-    rc = read_be32(conn, fd, &cost_val);
+    rc = read_be16(conn, fd, &field->type_raw);
     if (rc != SQLI_OK) return rc;
-    (void)cost_val;
-
-    rc = read_be16(conn, fd, &tuple_size);
+    if (!descriptor->info.extended) {
+        uint16_t length;
+        rc = read_be16(conn, fd, &length);
+        if (rc == SQLI_OK)
+            field->encoded_length = length;
+        return rc;
+    }
+    rc = read_be32(conn, fd, &field->extended_info);
     if (rc != SQLI_OK) return rc;
-    (void)tuple_size;
-
-    rc = read_be16(conn, fd, &nfields);
+    rc = receive_descriptor_string(conn, fd, descriptor, &field->type_owner);
     if (rc != SQLI_OK) return rc;
-    r->column_count = (int)nfields;
+    rc = receive_descriptor_string(conn, fd, descriptor, &field->type_name);
+    if (rc != SQLI_OK) return rc;
+    rc = read_be16(conn, fd, &field->reference);
+    if (rc != SQLI_OK) return rc;
+    rc = read_be16(conn, fd, &field->alignment);
+    if (rc != SQLI_OK) return rc;
+    rc = read_be32(conn, fd, &field->source_type);
+    if (rc != SQLI_OK) return rc;
+    return read_be32(conn, fd, &field->encoded_length);
+}
 
-    if (extended_describe) {
-        rc = read_be32(conn, fd, &string_table_size);
-        if (rc != SQLI_OK) return rc;
+static void descriptor_legacy_columns(const sqli_descriptor_t *descriptor, sqli_column_info *columns)
+{
+    enum { extended_blob = 10, extended_clob = 11, extended_lvarchar = 1, extended_bool = 5 };
+    for (size_t i = 0; i < descriptor->info.field_count; i++) {
+        const sqli_descriptor_field_t *field = &descriptor->fields[i];
+        sqli_column_info *column = &columns[i];
+        column->flags = field->type_raw;
+        column->type = (sqli_column_type)(field->type_raw & 0xff);
+        column->encoded_length = field->encoded_length;
+        column->col_start_pos = field->tuple_offset;
+        column->field_index = field->field_index <= INT32_MAX ? (int32_t)field->field_index :
+            (int32_t)((int64_t)field->field_index - INT64_C(4294967296));
+        if (descriptor->info.extended) {
+            switch (field->extended_info) {
+            case extended_blob: column->type = SQLI_TYPE_BLOB; break;
+            case extended_clob: column->type = SQLI_TYPE_CLOB; break;
+            case extended_lvarchar: column->type = SQLI_TYPE_LVARCHAR; break;
+            case extended_bool: column->type = SQLI_TYPE_BOOL; break;
+            default: break;
+            }
+        }
+        /* Retain the old display fallback; snapshots distinguish the actual
+         * field name from an extended type's owner and never truncate either. */
+        sqli_descriptor_bytes_t name = field->name.available ? field->name : field->type_owner;
+        size_t length = name.length < sizeof(column->name) - 1 ? name.length : sizeof(column->name) - 1;
+        if (length != 0)
+            memcpy(column->name, name.data, length);
+        column->name[length] = '\0';
+    }
+}
+
+static void replace_descriptor(sqli_result_t *result, sqli_descriptor_t *descriptor,
+                                sqli_column_info *columns)
+{
+    sqli_descriptor_release(result->descriptor);
+    free(result->columns);
+    free(result->cur_col_data_start);
+    free(result->cur_col_data_len);
+    free(result->cur_col_is_null);
+    result->cur_col_data_start = NULL;
+    result->cur_col_data_len = NULL;
+    result->cur_col_is_null = NULL;
+    result->cur_cache_row = -1;
+    result->descriptor = descriptor;
+    result->columns = columns;
+    result->column_count = (int)descriptor->info.field_count;
+    result->statement_type = descriptor->info.statement_type;
+    result->stmt_id = descriptor->info.statement_id;
+    result->cursor = -1;
+    result->current_row = -1;
+    result->eof = 0;
+    result->absolute_row_num = 0;
+    result->at_before_first = true;
+    result->at_after_last = false;
+}
+
+static sqli_status receive_describe(int fd, sqli_result_t *result, sqli_conn_t *conn)
+{
+    sqli_descriptor_info_t info = {.extended = conn != NULL && conn->caps.extended_describe};
+    uint16_t fields;
+    uint32_t names_length;
+    sqli_status rc = read_be16(conn, fd, &info.statement_type);
+    if (rc != SQLI_OK) return rc;
+    rc = read_be16(conn, fd, &info.statement_id);
+    if (rc != SQLI_OK) return rc;
+    rc = read_be32(conn, fd, &info.cost_raw);
+    if (rc != SQLI_OK) return rc;
+    rc = read_be16(conn, fd, &info.tuple_size);
+    if (rc != SQLI_OK) return rc;
+    rc = read_be16(conn, fd, &fields);
+    if (rc != SQLI_OK) return rc;
+    info.field_count = fields;
+    if (info.extended) {
+        rc = read_be32(conn, fd, &names_length);
     } else {
-        uint16_t strtab16;
-        rc = read_be16(conn, fd, &strtab16);
+        uint16_t length;
+        rc = read_be16(conn, fd, &length);
         if (rc != SQLI_OK) return rc;
-        string_table_size = strtab16;
+        names_length = length;
     }
-    sqli_log(SQLI_LOG_DEBUG, "DESCRIBE: stmt_type=%u stmt_id=%u nfields=%u strTabSize=%u",
-             stmt_type, stmt_id, nfields, string_table_size);
-
-    if (nfields > 0) {
-        r->columns = calloc(nfields, sizeof(sqli_column_info));
-        if (r->columns == NULL)
-            return SQLI_ALLOC_FAIL;
+    if (rc != SQLI_OK) return rc;
+    if (names_length > SQLI_DESCRIPTOR_MAX_BYTES)
+        return SQLI_LIMIT_EXCEEDED;
+    sqli_descriptor_t *descriptor = NULL;
+    rc = sqli_descriptor_create(&info, &descriptor);
+    if (rc != SQLI_OK) return rc;
+    for (size_t i = 0; i < info.field_count; i++) {
+        rc = receive_descriptor_field(conn, fd, descriptor, i);
+        if (rc != SQLI_OK) goto cleanup;
     }
-
-    /* Per-column (matches Client receiveDescribe()):
-     * fieldIndex(4) + startPos(4) + type(2) + extInfo(4) +
-     * extOwnerName(readChar) + extName(readChar) +
-     * ref(2) + align(2) + sourceType(4) + encLen(4)
-     * readChar = 2-byte BE length + data + 1-byte padding if length is odd
-     */
-    for (uint16_t i = 0; i < nfields; i++) {
-        sqli_column_info *col = &r->columns[i];
-        uint32_t field_index, start_pos;
-        uint16_t type_raw;
-
-        rc = read_be32(conn, fd, &field_index);
-        if (rc != SQLI_OK) return rc;
-        col->field_index = (int32_t)field_index;
-
-        rc = read_be32(conn, fd, &start_pos);
-        if (rc != SQLI_OK) return rc;
-        col->col_start_pos = start_pos;
-
-        rc = read_be16(conn, fd, &type_raw);
-        if (rc != SQLI_OK) return rc;
-        col->flags = type_raw;
-        col->type = (sqli_column_type)(type_raw & 0x00FF);
-
-        if (!extended_describe) {
-            uint16_t enc_len16;
-            rc = read_be16(conn, fd, &enc_len16);
-            if (rc != SQLI_OK) return rc;
-            col->encoded_length = enc_len16;
-            sqli_log(SQLI_LOG_DEBUG,
-                     "  col[%u]: fidx=%u spos=%u type=%u encLen=%u name=[%s]",
-                     i, field_index, start_pos, type_raw, col->encoded_length, col->name);
-            continue;
+    rc = sqli_descriptor_alloc_bytes(descriptor, names_length, &descriptor->names);
+    if (rc != SQLI_OK) goto cleanup;
+    descriptor->names_length = names_length;
+    if (names_length != 0) {
+        rc = read_exact(conn, fd, descriptor->names, names_length);
+        if (rc != SQLI_OK) goto cleanup;
+    }
+    if ((names_length & 1u) != 0) {
+        uint8_t padding;
+        rc = read_exact(conn, fd, &padding, 1);
+        if (rc != SQLI_OK) goto cleanup;
+    }
+    rc = sqli_descriptor_assign_names(descriptor);
+    if (rc != SQLI_OK) goto cleanup;
+    sqli_column_info *columns = NULL;
+    if (info.field_count != 0) {
+        if (info.field_count > SIZE_MAX / sizeof(*columns)) {
+            rc = SQLI_LIMIT_EXCEEDED;
+            goto cleanup;
         }
-
-        {
-            uint32_t ext_info, source_type, enc_len;
-            uint16_t ref_val, align_val;
-
-            rc = read_be32(conn, fd, &ext_info);
-            if (rc != SQLI_OK) return rc;
-
-            /* Consume complete padded strings even when the stored name is shorter. */
-            rc = read_str(conn, fd, col->name, sizeof(col->name));
-            if (rc != SQLI_OK) return rc;
-            rc = read_str(conn, fd, NULL, 0);
-            if (rc != SQLI_OK) return rc;
-
-            rc = read_be16(conn, fd, &ref_val);
-            if (rc != SQLI_OK) return rc;
-            rc = read_be16(conn, fd, &align_val);
-            if (rc != SQLI_OK) return rc;
-
-            rc = read_be32(conn, fd, &source_type);
-            if (rc != SQLI_OK) return rc;
-
-            rc = read_be32(conn, fd, &enc_len);
-            if (rc != SQLI_OK) return rc;
-            col->encoded_length = enc_len;
-
-            if (ext_info == 10) {
-                col->type = SQLI_TYPE_BLOB;
-            } else if (ext_info == 11) {
-                col->type = SQLI_TYPE_CLOB;
-            } else if (ext_info == 1) {
-                col->type = SQLI_TYPE_LVARCHAR;
-            } else if (ext_info == 5) {
-                col->type = SQLI_TYPE_BOOL;
-            }
-
-            sqli_log(SQLI_LOG_DEBUG,
-                     "  col[%u]: fidx=%u spos=%u type=%u extInfo=%u srcType=%u encLen=%u name=[%s]",
-                     i, field_index, start_pos, type_raw, ext_info, source_type, enc_len, col->name);
+        columns = calloc(info.field_count, sizeof(*columns));
+        if (columns == NULL) {
+            rc = SQLI_ALLOC_FAIL;
+            goto cleanup;
         }
     }
-
-    /* Drain string table: NUL-delimited column names */
-    if (string_table_size > 0) {
-        uint8_t *strtab = malloc(string_table_size);
-        if (strtab == NULL)
-            return SQLI_ALLOC_FAIL;
-        rc = read_exact(conn, fd, strtab, string_table_size);
-        if (rc != SQLI_OK) { free(strtab); return rc; }
-        if (string_table_size & 1) {
-            uint8_t pad;
-            rc = read_exact(conn, fd, &pad, 1);
-            if (rc != SQLI_OK) { free(strtab); return rc; }
-        }
-        /* Names must terminate inside the received table, not adjacent memory. */
-        size_t offset = 0;
-        for (uint16_t i = 0; i < nfields && offset < string_table_size; i++) {
-            const uint8_t *name = strtab + offset;
-            const uint8_t *end = memchr(name, 0, string_table_size - offset);
-            if (end == NULL) {
-                free(strtab);
-                return SQLI_PROTO_ERROR;
-            }
-            size_t length = (size_t)(end - name);
-            if (length == 0)
-                break;
-            size_t copy_len = length < sizeof(r->columns[i].name) - 1
-                ? length : sizeof(r->columns[i].name) - 1;
-            memcpy(r->columns[i].name, name, copy_len);
-            r->columns[i].name[copy_len] = '\0';
-            offset += length + 1;
-        }
-        free(strtab);
-    }
-
-    r->cursor = -1;
-    r->current_row = -1;
-    r->eof = 0;
-    r->absolute_row_num = 0;
-    r->at_before_first = true;
-    r->at_after_last = false;
-
-    sqli_log(SQLI_LOG_DEBUG, "DESCRIBE: %u columns", nfields);
+    descriptor_legacy_columns(descriptor, columns);
+    replace_descriptor(result, descriptor, columns);
+    sqli_log(SQLI_LOG_DEBUG, "DESCRIBE: stmt_type=%u stmt_id=%u fields=%zu names_bytes=%u extended=%d",
+             info.statement_type, info.statement_id, info.field_count, names_length, info.extended);
     return SQLI_OK;
+cleanup:
+    sqli_descriptor_release(descriptor);
+    return rc;
 }
 
 /* ----------------------------------------------------------------

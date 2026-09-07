@@ -89,6 +89,7 @@ add_library(sqli STATIC
     ${SQLI_SRC_DIR}/sqli_result_value.c
     ${SQLI_SRC_DIR}/sqli_prepare.c
     ${SQLI_SRC_DIR}/sqli_types.c
+    ${SQLI_SRC_DIR}/sqli_descriptor.c
     ${SQLI_SRC_DIR}/sqli_decimal.c
     ${SQLI_SRC_DIR}/sqli_decimal_codec.c
     ${SQLI_SRC_DIR}/sqli_temporal.c
@@ -195,6 +196,16 @@ if (SQLI_BUILD_TESTS)
     enable_testing()
     add_test(NAME sqli_unit COMMAND sqli_test)
 
+    if (NOT WIN32)
+        add_executable(sqli_descriptor_test ${SQLI_TEST_DIR}/test_descriptor_posix.c ${UNITY_SRC})
+        target_include_directories(sqli_descriptor_test PRIVATE ${unity_SOURCE_DIR}/src ${SQLI_SRC_DIR})
+        target_link_libraries(sqli_descriptor_test PRIVATE sqli)
+        add_test(NAME sqli_descriptors COMMAND sqli_descriptor_test)
+        if (SQLI_ENABLE_SANITIZERS)
+            set_tests_properties(sqli_descriptors PROPERTIES ENVIRONMENT "LSAN_OPTIONS=detect_leaks=0")
+        endif()
+    endif()
+
     add_executable(sqli_decimal_matrix ${SQLI_TEST_DIR}/test_decimal_matrix.c)
     target_include_directories(sqli_decimal_matrix PRIVATE ${SQLI_SRC_DIR})
     target_link_libraries(sqli_decimal_matrix PRIVATE sqli)
@@ -224,6 +235,17 @@ if (SQLI_BUILD_TESTS)
     target_link_libraries(sqli_decimal_test PRIVATE sqli)
     add_test(NAME sqli_decimal_values COMMAND sqli_decimal_test)
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        add_executable(sqli_descriptor_alloc_test
+            ${SQLI_TEST_DIR}/test_descriptor_alloc_linux.c
+            ${SQLI_TEST_DIR}/allocation_test_linux.c ${UNITY_SRC})
+        target_include_directories(sqli_descriptor_alloc_test PRIVATE ${unity_SOURCE_DIR}/src ${SQLI_SRC_DIR})
+        target_link_libraries(sqli_descriptor_alloc_test PRIVATE sqli)
+        target_link_options(sqli_descriptor_alloc_test PRIVATE
+            "LINKER:--wrap=malloc" "LINKER:--wrap=calloc")
+        add_test(NAME sqli_descriptor_allocation COMMAND sqli_descriptor_alloc_test)
+        if (SQLI_ENABLE_SANITIZERS)
+            set_tests_properties(sqli_descriptor_allocation PROPERTIES ENVIRONMENT "LSAN_OPTIONS=detect_leaks=0")
+        endif()
         add_executable(sqli_decimal_alloc_test
             ${SQLI_TEST_DIR}/test_decimal_alloc_linux.c
             ${SQLI_TEST_DIR}/allocation_test_linux.c ${UNITY_SRC})

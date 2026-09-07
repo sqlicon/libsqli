@@ -13,7 +13,9 @@ standalone temporal layers. The codec document records how the live native probe
 now uses production temporal encoders; the evidence below records the initial
 wire-audit iteration. The later [decimal codec iteration](NATIVE_DECIMAL_CODECS.md)
 extends precision/scale and exponent evidence and switches the decimal native
-probe to production encoding.
+probe to production encoding. The subsequent
+[descriptor snapshot iteration](DESCRIPTOR_SNAPSHOTS.md) preserves complete server
+metadata with independent ownership; parameter association remains pending.
 
 ## Evidence and scope
 
