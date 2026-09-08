@@ -1,5 +1,7 @@
 # Native decimal result getter
 
+Public declarations: `<libsqli/sqli_decimal.h>` (explicit include required).
+
 The public `sqli_result_get_decimal()` connects the checked result-row path to
 the production decimal decoder. It reads DECIMAL, NUMERIC and MONEY into an
 existing, application-owned `sqli_decimal_t` without formatting, parsing text or

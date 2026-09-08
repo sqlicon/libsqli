@@ -1,6 +1,7 @@
 #ifndef SQLI_TEMPORAL_CODEC_H
 #define SQLI_TEMPORAL_CODEC_H
 
+#include "libsqli/sqli_temporal.h"
 #include "libsqli/sqli.h"
 
 enum { SQLI_DATE_WIRE_SIZE = 4, SQLI_TEMPORAL_WIRE_CAPACITY = 12 };

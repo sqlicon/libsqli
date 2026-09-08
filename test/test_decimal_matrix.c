@@ -1,6 +1,7 @@
 /* Live decimal receive matrix. Server casts are an independent reference for
  * the native encoder; decoding is compared numerically with the source value.
  * No production getter or text binder is used to obtain the decimal bytes. */
+#include "libsqli/sqli_decimal.h"
 #include "sqli_decimal_codec.h"
 #include "sqli_internal.h"
 

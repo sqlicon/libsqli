@@ -1,6 +1,6 @@
 # Native DATE, DATETIME and INTERVAL values
 
-This iteration adds standalone value types to `<libsqli/sqli.h>`. It follows the
+The native temporal value API is declared in `<libsqli/sqli_temporal.h>`. It follows the
 [wire contract audit](NATIVE_VALUE_WIRE_CONTRACT.md) and the
 [exact decimal value API](NATIVE_DECIMAL_API.md). Values require no connection,
 locale, timezone database or additional dependency. They expose semantic fields,
@@ -9,8 +9,8 @@ not server epochs, packed qualifiers or decimal-pair encoding.
 [Checked temporal tuple codecs](NATIVE_TEMPORAL_CODECS.md) are implemented in
 the subsequent iteration. [Descriptor snapshots](DESCRIPTOR_SNAPSHOTS.md) and
 [native DATE result reads](NATIVE_DATE_GETTER.md) are now implemented. The DATE
-getter uses `sqli_date_t`; DATETIME/INTERVAL getters and public native binders
-remain subsequent migration steps.
+getter uses `sqli_date_t`. [Native DATETIME/INTERVAL getters and binders](NATIVE_TEMPORAL_INTEGRATION.md)
+are also implemented; their former public result structures have been removed.
 The experimental API may be changed or removed as that migration proceeds;
 there is no compatibility-wrapper requirement. Catalog implementation remains
 deferred until the native core is implemented and tested.

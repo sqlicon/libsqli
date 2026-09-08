@@ -7,6 +7,7 @@
  * NOT part of the public API. Include only from .c files.
  */
 
+#include "sqli_temporal_codec.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdarg.h>
@@ -535,6 +536,8 @@ typedef enum {
     SQLI_BIND_BIGINT    = 52,   /* SQLI_TYPE_BIGINT */
     SQLI_BIND_FLOAT     = 3,    /* SQLI_TYPE_FLOAT */
     SQLI_BIND_DECIMAL   = 5,    /* SQLI_TYPE_DECIMAL */
+    SQLI_BIND_DATETIME  = SQLI_TYPE_DATETIME,
+    SQLI_BIND_INTERVAL  = SQLI_TYPE_INTERVAL,
     SQLI_BIND_DATE      = 7,    /* SQLI_TYPE_DATE */
     SQLI_BIND_STRING    = 13,   /* SQLI_TYPE_VARCHAR */
     SQLI_BIND_BYTES     = 11,   /* SQLI_TYPE_BYTE */
@@ -554,6 +557,9 @@ typedef struct {
     uint8_t *bval;    /* for SQLI_BIND_BYTES */
     size_t blen;      /* for SQLI_BIND_BYTES */
     bool is_null;
+    uint16_t temporal_qualifier;
+    uint8_t temporal_bytes[SQLI_TEMPORAL_WIRE_CAPACITY];
+    size_t temporal_length;
 } sqli_bound_param;
 
 typedef struct {

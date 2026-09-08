@@ -242,6 +242,17 @@ if (SQLI_BUILD_TESTS)
     target_link_libraries(sqli_decimal_test PRIVATE sqli)
     add_test(NAME sqli_decimal_values COMMAND sqli_decimal_test)
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        add_executable(sqli_native_temporal_test
+            ${SQLI_TEST_DIR}/test_native_temporal_linux.c
+            ${SQLI_TEST_DIR}/allocation_test_linux.c ${UNITY_SRC})
+        target_include_directories(sqli_native_temporal_test PRIVATE ${unity_SOURCE_DIR}/src ${SQLI_SRC_DIR})
+        target_link_libraries(sqli_native_temporal_test PRIVATE sqli)
+        target_link_options(sqli_native_temporal_test PRIVATE
+            "LINKER:--wrap=malloc" "LINKER:--wrap=calloc")
+        add_test(NAME sqli_native_temporal COMMAND sqli_native_temporal_test)
+        if (SQLI_ENABLE_SANITIZERS)
+            set_tests_properties(sqli_native_temporal PROPERTIES ENVIRONMENT "LSAN_OPTIONS=detect_leaks=0")
+        endif()
         add_executable(sqli_native_date_getter_test
             ${SQLI_TEST_DIR}/test_native_date_getter_linux.c
             ${SQLI_TEST_DIR}/allocation_test_linux.c ${UNITY_SRC})
@@ -320,8 +331,7 @@ if (SQLI_BUILD_TESTS)
             LABELS "live;native" SKIP_RETURN_CODE 77 TIMEOUT 120)
     endif()
 
-    add_executable(sqli_temporal_matrix ${SQLI_TEST_DIR}/test_temporal_matrix.c
-        ${SQLI_TEST_DIR}/native_wire_test.c)
+    add_executable(sqli_temporal_matrix ${SQLI_TEST_DIR}/test_temporal_matrix.c)
     target_include_directories(sqli_temporal_matrix PRIVATE ${SQLI_SRC_DIR})
     target_link_libraries(sqli_temporal_matrix PRIVATE sqli)
     add_test(NAME sqli_temporal_generator COMMAND sqli_temporal_matrix --self-test)
@@ -461,7 +471,9 @@ install(TARGETS sqli
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
 )
-install(FILES ${SQLI_INC_DIR}/libsqli/sqli.h ${SQLI_INC_DIR}/libsqli/sqli_sblob.h ${SQLI_GENERATED_INC_DIR}/libsqli/version.h
+install(FILES ${SQLI_INC_DIR}/libsqli/sqli.h ${SQLI_INC_DIR}/libsqli/sqli_sblob.h
+    ${SQLI_INC_DIR}/libsqli/sqli_decimal.h ${SQLI_INC_DIR}/libsqli/sqli_temporal.h
+    ${SQLI_GENERATED_INC_DIR}/libsqli/version.h
     DESTINATION include/libsqli)
 if (TARGET sqlicon)
     install(TARGETS sqlicon DESTINATION bin)

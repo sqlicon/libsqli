@@ -23,13 +23,19 @@ An experimental, lightweight C11 substitute for parts of the IBM Informix Client
 
 ### Public headers
 
-Include `<libsqli/sqli.h>` for connections, statements, native values and
-[opaque descriptor views](doc/DESCRIPTOR_SNAPSHOTS.md). Smart-LOB operations use
-`<libsqli/sqli_sblob.h>`, which includes the core header and can be included alone.
-It declares the Smart-LOB types, options, locator binding, streaming and low-level
-read/write functions. Existing Smart-LOB callers must add this explicit include;
-all functions remain in the same library. The options and existing Smart-LOB
-handle layout are unchanged by this header split.
+| Header | Public API |
+| --- | --- |
+| `<libsqli/sqli.h>` | Connections, statements, generic results and descriptor views |
+| `<libsqli/sqli_decimal.h>` | DECIMAL/NUMERIC/MONEY values, result access, binding and decimal metadata |
+| `<libsqli/sqli_temporal.h>` | DATE/DATETIME/INTERVAL values, result access, binding, temporal metadata and timestamp/epoch conveniences |
+| `<libsqli/sqli_sblob.h>` | Smart-LOB handles, options, locator binding, streaming and low-level I/O |
+
+Each domain header includes the core header and can be included alone. The core
+header does not include the domain headers. Add explicit includes when migrating;
+all functions remain in the same library. See the
+[native temporal integration](doc/NATIVE_TEMPORAL_INTEGRATION.md) for the new
+opaque DATETIME/INTERVAL getters and native binders. Text binding remains available
+as `sqli_bind_datetime_string` and `sqli_bind_interval_string`.
 
 ### Prerequisites
 

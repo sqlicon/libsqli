@@ -1,3 +1,5 @@
+#include "libsqli/sqli_temporal.h"
+#include "libsqli/sqli_decimal.h"
 #include "unity.h"
 #include "libsqli/sqli.h"
 #include "sqli_internal.h"
@@ -45,8 +47,8 @@ void test_stability_bind_api_reuse(void)
         TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(&stmt, 1, txt));
         TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_decimal(&stmt, 1, "12345.6789"));
         TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_date(&stmt, 1, "2026-06-20"));
-        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_datetime(&stmt, 1, "2026-06-20 12:34:56"));
-        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_interval(&stmt, 1, "1 02:03:04"));
+        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_datetime_string(&stmt, 1, "2026-06-20 12:34:56"));
+        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_interval_string(&stmt, 1, "1 02:03:04"));
         TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bool(&stmt, 1, i & 1));
         TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bytes(&stmt, 1, payload, sizeof(payload)));
         TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_null(&stmt, 1));

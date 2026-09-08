@@ -4,6 +4,9 @@
  * Tests DATE/DATETIME/DECIMAL encoding, row extraction, and column accessors.
  */
 
+#include "libsqli/sqli_temporal.h"
+#include "libsqli/sqli_decimal.h"
+#include "temporal_result_test.h"
 #include "libsqli/sqli_sblob.h"
 #include "unity.h"
 #include "libsqli/sqli.h"
@@ -1397,8 +1400,8 @@ void test_dt_412_datetime_semantic_object(void)
                                                     tuple, sizeof(tuple));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
 
-    sqli_datetime_value dt;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_datetime(result, 0, &dt));
+    sqli_datetime_parts_t dt;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, test_datetime_parts(result, 0, &dt));
     TEST_ASSERT_EQUAL_INT(0, dt.is_null);
     TEST_ASSERT_EQUAL_INT(2026, dt.year);
     TEST_ASSERT_EQUAL_INT(6, dt.month);
@@ -1406,7 +1409,7 @@ void test_dt_412_datetime_semantic_object(void)
     TEST_ASSERT_EQUAL_INT(12, dt.hour);
     TEST_ASSERT_EQUAL_INT(34, dt.minute);
     TEST_ASSERT_EQUAL_INT(56, dt.second);
-    TEST_ASSERT_EQUAL_INT(0, dt.fraction_scale);
+    TEST_ASSERT_EQUAL_INT(0, dt.range.fractional_digits);
     sqli_result_destroy(result);
 }
 
@@ -1418,14 +1421,14 @@ void test_dt_413_interval_semantic_object(void)
                                                     tuple, sizeof(tuple));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
 
-    sqli_interval_value iv;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_interval(result, 0, &iv));
+    sqli_interval_parts_t iv;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, test_interval_parts(result, 0, &iv));
     TEST_ASSERT_EQUAL_INT(0, iv.is_null);
     TEST_ASSERT_EQUAL_INT(0, iv.negative);
-    TEST_ASSERT_EQUAL_INT(12, iv.day);
-    TEST_ASSERT_EQUAL_INT(3, iv.hour);
-    TEST_ASSERT_EQUAL_INT(4, iv.minute);
-    TEST_ASSERT_EQUAL_INT(5, iv.second);
+    TEST_ASSERT_EQUAL_INT(12, iv.days);
+    TEST_ASSERT_EQUAL_INT(3, iv.hours);
+    TEST_ASSERT_EQUAL_INT(4, iv.minutes);
+    TEST_ASSERT_EQUAL_INT(5, iv.seconds);
     sqli_result_destroy(result);
 }
 
@@ -1464,15 +1467,15 @@ void test_dt_414_datetime_interval_two_column_layout(void)
     TEST_ASSERT_EQUAL_INT(0, (int)result->columns[0].col_start_pos);
     TEST_ASSERT_EQUAL_INT(8, (int)result->columns[1].col_start_pos);
 
-    sqli_datetime_value dt;
-    sqli_interval_value iv;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_datetime(result, 0, &dt));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_interval(result, 1, &iv));
+    sqli_datetime_parts_t dt;
+    sqli_interval_parts_t iv;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, test_datetime_parts(result, 0, &dt));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, test_interval_parts(result, 1, &iv));
     TEST_ASSERT_EQUAL_INT(0, dt.is_null);
     TEST_ASSERT_EQUAL_INT(0, iv.is_null);
     TEST_ASSERT_EQUAL_INT(2026, dt.year);
-    TEST_ASSERT_EQUAL_INT(12, iv.day);
-    TEST_ASSERT_EQUAL_INT(5, iv.second);
+    TEST_ASSERT_EQUAL_INT(12, iv.days);
+    TEST_ASSERT_EQUAL_INT(5, iv.seconds);
     sqli_result_destroy(result);
 }
 
@@ -1484,8 +1487,8 @@ void test_dt_415_datetime_null_semantic_object(void)
                                                     tuple, sizeof(tuple));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
 
-    sqli_datetime_value dt;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_datetime(result, 0, &dt));
+    sqli_datetime_parts_t dt;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, test_datetime_parts(result, 0, &dt));
     TEST_ASSERT_EQUAL_INT(1, dt.is_null);
     TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(result, 0));
     sqli_result_destroy(result);
@@ -1499,8 +1502,8 @@ void test_dt_416_interval_null_semantic_object(void)
                                                     tuple, sizeof(tuple));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
 
-    sqli_interval_value iv;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_interval(result, 0, &iv));
+    sqli_interval_parts_t iv;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, test_interval_parts(result, 0, &iv));
     TEST_ASSERT_EQUAL_INT(1, iv.is_null);
     TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(result, 0));
     sqli_result_destroy(result);
@@ -1835,12 +1838,12 @@ void test_interval_year_to_month_field_boundary(void)
     TEST_ASSERT_NOT_NULL(result);
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
 
-    sqli_interval_value iv;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_interval(result, 0, &iv));
+    sqli_interval_parts_t iv;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, test_interval_parts(result, 0, &iv));
     TEST_ASSERT_EQUAL_INT(0, iv.is_null);
     TEST_ASSERT_EQUAL_INT(0, iv.negative);
-    TEST_ASSERT_EQUAL_INT(3, iv.year);
-    TEST_ASSERT_EQUAL_INT(2, iv.month);
+    TEST_ASSERT_EQUAL_INT(3, iv.years);
+    TEST_ASSERT_EQUAL_INT(2, iv.months);
     TEST_ASSERT_EQUAL_STRING("3-02", sqli_result_get_string(result, 0));
     sqli_result_destroy(result);
 }
@@ -1970,16 +1973,16 @@ void test_interval_odd_precision_fraction_preserves_next_column(void)
     TEST_ASSERT_EQUAL_INT(0, (int)result->columns[0].col_start_pos);
     TEST_ASSERT_EQUAL_INT(9, (int)result->columns[1].col_start_pos);
 
-    sqli_interval_value dt;
-    sqli_interval_value iv;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_interval(result, 0, &dt));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_interval(result, 1, &iv));
+    sqli_interval_parts_t dt;
+    sqli_interval_parts_t iv;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, test_interval_parts(result, 0, &dt));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, test_interval_parts(result, 1, &iv));
     TEST_ASSERT_EQUAL_INT(0, dt.is_null);
     TEST_ASSERT_EQUAL_INT(0, iv.is_null);
-    TEST_ASSERT_EQUAL_INT(3, dt.day);
-    TEST_ASSERT_EQUAL_INT(12345, dt.fraction);
-    TEST_ASSERT_EQUAL_INT(3, iv.year);
-    TEST_ASSERT_EQUAL_INT(2, iv.month);
+    TEST_ASSERT_EQUAL_INT(3, dt.days);
+    TEST_ASSERT_EQUAL_INT(12345, test_fraction(dt.nanosecond, dt.range.fractional_digits));
+    TEST_ASSERT_EQUAL_INT(3, iv.years);
+    TEST_ASSERT_EQUAL_INT(2, iv.months);
     sqli_result_destroy(result);
 }
 
@@ -1991,8 +1994,8 @@ void test_datetime_exponent_restores_leading_fields(void)
     sqli_result_t *r = make_single_row_result(SQLI_TYPE_DATETIME, 0x0400,
                                              year, sizeof(year));
     TEST_ASSERT_TRUE(sqli_result_next(r));
-    sqli_datetime_value value;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_datetime(r, 0, &value));
+    sqli_datetime_parts_t value;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, test_datetime_parts(r, 0, &value));
     TEST_ASSERT_EQUAL_INT(1, value.year);
     TEST_ASSERT_EQUAL_STRING("0001", sqli_result_get_datetime_string(r, 0));
     sqli_result_destroy(r);
@@ -2000,12 +2003,12 @@ void test_datetime_exponent_restores_leading_fields(void)
     const uint8_t full[] = {0xC6, 1, 1, 1, 0, 0, 0, 0, 0, 10, 0};
     r = make_single_row_result(SQLI_TYPE_DATETIME, 0x130f, full, sizeof(full));
     TEST_ASSERT_TRUE(sqli_result_next(r));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_datetime(r, 0, &value));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, test_datetime_parts(r, 0, &value));
     TEST_ASSERT_EQUAL_INT(1, value.year);
     TEST_ASSERT_EQUAL_INT(1, value.month);
     TEST_ASSERT_EQUAL_INT(1, value.day);
-    TEST_ASSERT_EQUAL_INT(1, value.fraction);
-    TEST_ASSERT_EQUAL_INT(5, value.fraction_scale);
+    TEST_ASSERT_EQUAL_INT(1, test_fraction(value.nanosecond, value.range.fractional_digits));
+    TEST_ASSERT_EQUAL_INT(5, value.range.fractional_digits);
     TEST_ASSERT_EQUAL_STRING("0001-01-01 00:00:00.00001", sqli_result_get_datetime_string(r, 0));
     sqli_result_destroy(r);
 }

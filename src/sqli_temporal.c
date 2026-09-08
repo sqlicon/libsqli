@@ -1,3 +1,5 @@
+#include "sqli_temporal_internal.h"
+#include "libsqli/sqli_temporal.h"
 #include "libsqli/sqli.h"
 
 #include <stdlib.h>
@@ -21,8 +23,6 @@ enum {
     seconds_per_minute = 60
 };
 
-struct sqli_datetime { sqli_datetime_parts_t parts; };
-struct sqli_interval { sqli_interval_parts_t parts; };
 
 struct temporal_fields {
     sqli_temporal_range_t range;

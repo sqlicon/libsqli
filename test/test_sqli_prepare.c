@@ -6,6 +6,8 @@
  * by constructing mock sqli_stmt_t objects.
  */
 
+#include "libsqli/sqli_temporal.h"
+#include "libsqli/sqli_decimal.h"
 #include "libsqli/sqli_sblob.h"
 #include "libsqli/sqli.h"
 #include "sqli_internal.h"
@@ -174,16 +176,16 @@ void test_bind_date_invalid_index(void)
 void test_bind_datetime_invalid_index(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_datetime(s, 0, "2026-01-01"));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_datetime(s, 3, "2026-01-01"));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_datetime_string(s, 0, "2026-01-01"));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_datetime_string(s, 3, "2026-01-01"));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_interval_invalid_index(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_interval(s, 0, "1-2"));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_interval(s, 3, "1-2"));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_interval_string(s, 0, "1-2"));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_interval_string(s, 3, "1-2"));
     sqli_stmt_destroy(s);
 }
 
@@ -689,14 +691,14 @@ void test_bind_decimal_negative(void)
 void test_bind_datetime_success(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_datetime(s, 1, "2026-01-01 12:00:00"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_datetime_string(s, 1, "2026-01-01 12:00:00"));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_interval_success(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_interval(s, 1, "1-2"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_interval_string(s, 1, "1-2"));
     sqli_stmt_destroy(s);
 }
 

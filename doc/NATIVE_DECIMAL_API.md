@@ -1,5 +1,7 @@
 # Exact decimal value objects
 
+Public declarations: `<libsqli/sqli_decimal.h>` (explicit include required).
+
 This iteration implements the standalone native DECIMAL value object. DECIMAL,
 NUMERIC and MONEY share its numeric representation; their SQL type identities
 remain separate. It does not yet change result getters, parameter encoding or

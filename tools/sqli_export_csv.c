@@ -1,4 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
+#include "libsqli/sqli_temporal.h"
+#include "libsqli/sqli_decimal.h"
 #include "libsqli/sqli.h"
 
 #include <stdio.h>

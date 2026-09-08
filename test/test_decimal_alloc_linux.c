@@ -1,3 +1,4 @@
+#include "libsqli/sqli_decimal.h"
 #include "libsqli/sqli.h"
 #include "allocation_test.h"
 #include "sqli_decimal_codec.h"

@@ -1,6 +1,8 @@
 /* Fixed receive fixtures, optionally checked against independent server literals.
  * This test never calls a libsqli encoder to construct expected bytes.
  */
+#include "libsqli/sqli_temporal.h"
+#include "libsqli/sqli_decimal.h"
 #include "libsqli/sqli.h"
 #include "sqli_internal.h"
 #include "native_wire_test.h"
@@ -278,6 +280,40 @@ static bool execute_sql(sqli_conn_t *conn, const char *sql)
     return status == SQLI_OK;
 }
 
+static sqli_status bind_temporal_fixture(sqli_stmt_t *stmt, const struct wire_fixture *fixture)
+{
+    sqli_temporal_range_t range;
+    sqli_status status = sqli_temporal_decode_range((uint16_t)fixture->qualifier,
+                                                   fixture->type == SQLI_TYPE_INTERVAL, &range);
+    if (status != SQLI_OK)
+        return status;
+    if (fixture->type == SQLI_TYPE_DATETIME) {
+        sqli_datetime_t *value = NULL;
+        status = sqli_datetime_create(&value);
+        if (status == SQLI_OK)
+            status = sqli_datetime_decode_wire(fixture->wire, fixture->wire_length,
+                                               (uint16_t)fixture->qualifier, value);
+        if (status == SQLI_OK)
+            status = sqli_bind_datetime(stmt, 1, value, &range);
+        sqli_datetime_destroy(value);
+    } else {
+        unsigned start = (fixture->qualifier >> 4) & 0xf;
+        unsigned end = fixture->qualifier & 0xf;
+        uint8_t leading = range.first == SQLI_FIELD_FRACTION ? 0 :
+            (uint8_t)((fixture->qualifier >> 8) - (end - start));
+        sqli_interval_t *value = NULL;
+        status = sqli_interval_create(&value);
+        if (status == SQLI_OK)
+            status = sqli_interval_decode_wire(fixture->wire, fixture->wire_length,
+                                               (uint16_t)fixture->qualifier, value);
+        if (status == SQLI_OK)
+            status = sqli_bind_interval(stmt, 1, value, &range, leading);
+        sqli_interval_destroy(value);
+    }
+    /* Execution must use the binding's owned copy after object destruction. */
+    return status == SQLI_OK ? sqli_execute(stmt) : status;
+}
+
 static bool check_native_bind(sqli_conn_t *conn, const struct wire_fixture *fixture)
 {
     char sql[fixture_sql_capacity];
@@ -304,8 +340,13 @@ static bool check_native_bind(sqli_conn_t *conn, const struct wire_fixture *fixt
     size_t encoded_length = 0;
     if (!codec_payload(fixture, encoded, &encoded_length))
         goto cleanup;
-    if (sqli_test_bind_wire(stmt, fixture->type, (uint16_t)fixture->qualifier,
-                            encoded, encoded_length, fixture->is_null) != SQLI_OK)
+    sqli_status bind_status;
+    if (fixture->type == SQLI_TYPE_DATETIME || fixture->type == SQLI_TYPE_INTERVAL)
+        bind_status = bind_temporal_fixture(stmt, fixture);
+    else
+        bind_status = sqli_test_bind_wire(stmt, fixture->type, (uint16_t)fixture->qualifier,
+                                         encoded, encoded_length, fixture->is_null);
+    if (bind_status != SQLI_OK)
         goto cleanup;
     length = snprintf(sql, sizeof(sql),
                       "SELECT\n"

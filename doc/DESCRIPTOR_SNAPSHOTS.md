@@ -63,8 +63,10 @@ header, and makes `sqli_descriptor_field_t` incomplete in the public header.
 Migrate field variables to `const sqli_descriptor_field_t *` and use property
 getters instead of member access. Field pointers must never be freed separately.
 Public DATE values, temporal ranges and native import/export parts remain plain
-value structures. Legacy DATETIME/INTERVAL result structures remain transitional
-until their getter migration; hiding them now would introduce a second handle API.
+value structures. The DATETIME/INTERVAL result structures have since been removed by the
+[native temporal integration](NATIVE_TEMPORAL_INTEGRATION.md). Decimal precision/scale
+getters are declared in `sqli_decimal.h`, and the temporal range getter in
+`sqli_temporal.h`; include the corresponding domain header.
 
 ## Internally preserved information
 

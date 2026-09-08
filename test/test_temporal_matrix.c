@@ -2,9 +2,11 @@
  * CTest runs generator checks offline; --live requires SQLI_TEST_*.
  * Expected semantic fields are generated independently of libsqli's decoder.
  */
+#include "libsqli/sqli_temporal.h"
+#include "temporal_result_test.h"
 #include "libsqli/sqli.h"
 #include "sqli_internal.h"
-#include "native_wire_test.h"
+#include "sqli_result_internal.h"
 #include "sqli_temporal_codec.h"
 
 #include <ctype.h>
@@ -461,26 +463,26 @@ static bool check_value(sqli_result_t *result, int column,
     bool is_null, negative = false;
     int scale, start, end;
     if (c->interval) {
-        sqli_interval_value v;
-        if (sqli_result_get_interval(result, column, &v) != SQLI_OK)
+        sqli_interval_parts_t v;
+        if (test_interval_parts(result, column, &v) != SQLI_OK)
             return false;
-        int decoded[] = {v.year, v.month, v.day, v.hour, v.minute, v.second, v.fraction};
+        int decoded[] = {v.years, v.months, v.days, v.hours, v.minutes, v.seconds, test_fraction(v.nanosecond, v.range.fractional_digits)};
         memcpy(fields, decoded, sizeof(fields));
         is_null = v.is_null;
         negative = v.negative;
-        scale = v.fraction_scale;
-        start = v.start_qualifier;
-        end = v.end_qualifier;
+        scale = v.range.fractional_digits;
+        start = ((v.range.first - SQLI_FIELD_YEAR) * 2);
+        end = (v.range.last == SQLI_FIELD_FRACTION ? 10 + v.range.fractional_digits : ((int)v.range.last - SQLI_FIELD_YEAR) * 2);
     } else {
-        sqli_datetime_value v;
-        if (sqli_result_get_datetime(result, column, &v) != SQLI_OK)
+        sqli_datetime_parts_t v;
+        if (test_datetime_parts(result, column, &v) != SQLI_OK)
             return false;
-        int decoded[] = {v.year, v.month, v.day, v.hour, v.minute, v.second, v.fraction};
+        int decoded[] = {v.year, v.month, v.day, v.hour, v.minute, v.second, test_fraction(v.nanosecond, v.range.fractional_digits)};
         memcpy(fields, decoded, sizeof(fields));
         is_null = v.is_null;
-        scale = v.fraction_scale;
-        start = v.start_qualifier;
-        end = v.end_qualifier;
+        scale = v.range.fractional_digits;
+        start = ((v.range.first - SQLI_FIELD_YEAR) * 2);
+        end = (v.range.last == SQLI_FIELD_FRACTION ? 10 + v.range.fractional_digits : ((int)v.range.last - SQLI_FIELD_YEAR) * 2);
     }
     if (is_null != c->is_null || sqli_result_is_null(result, column) != c->is_null) {
         fprintf(stderr, "  NULL expected=%d actual=%d\n", c->is_null, is_null);
@@ -528,7 +530,8 @@ static bool check_offline_wire(const struct temporal_case *c)
     result.cur_col_data_start = &data_start;
     result.cur_col_data_len = &data_length;
     result.cur_col_is_null = &is_null;
-    bool ok = check_value(&result, offline_value_column, c);
+    bool ok = sqli_result_prepare_row_cache(&result) == SQLI_OK &&
+              check_value(&result, offline_value_column, c);
     if (!ok)
         fprintf(stderr, "offline wire model: %s value=%s\n", c->type, c->value);
     return ok;
@@ -578,7 +581,7 @@ static bool check_text(sqli_result_t *result, const struct temporal_case *c)
 /* Session-local temporary table prevents name collisions and leaves no durable
  * fixture on failure. Every case verifies the server value, semantic fields,
  * NULLs, and following columns in a mixed projection for all three insertion paths. */
-static bool encode_native_case(const struct temporal_case *c, struct temporal_wire *wire)
+static bool bind_native_case(sqli_stmt_t *stmt, const struct temporal_case *c)
 {
     /* The generator's fields are contiguous YEAR..FRACTION, unlike wire codes. */
     const sqli_temporal_range_t range = {
@@ -590,13 +593,13 @@ static bool encode_native_case(const struct temporal_case *c, struct temporal_wi
         sqli_interval_t *value = NULL;
         ok = sqli_interval_create(&value) == SQLI_OK &&
              sqli_interval_parse(value, &range, c->value, strlen(c->value), c->is_null) == SQLI_OK &&
-             sqli_interval_encode_wire(value, wire->qualifier, wire->bytes, sizeof(wire->bytes), &wire->length) == SQLI_OK;
+             sqli_bind_interval(stmt, 1, value, &range, c->start == FRACTION ? 0 : (uint8_t)c->precision) == SQLI_OK;
         sqli_interval_destroy(value);
     } else {
         sqli_datetime_t *value = NULL;
         ok = sqli_datetime_create(&value) == SQLI_OK &&
              sqli_datetime_parse(value, &range, c->value, strlen(c->value), c->is_null) == SQLI_OK &&
-             sqli_datetime_encode_wire(value, wire->qualifier, wire->bytes, sizeof(wire->bytes), &wire->length) == SQLI_OK;
+             sqli_bind_datetime(stmt, 1, value, &range) == SQLI_OK;
         sqli_datetime_destroy(value);
     }
     return ok;
@@ -631,7 +634,7 @@ static bool run_case(sqli_conn_t *conn, const struct temporal_case *c,
         goto cleanup;
     *operation = "bind insert";
     sqli_status rc = c->is_null ? sqli_bind_null(stmt, 1) : c->interval ?
-        sqli_bind_interval(stmt, 1, c->value) : sqli_bind_datetime(stmt, 1, c->value);
+        sqli_bind_interval_string(stmt, 1, c->value) : sqli_bind_datetime_string(stmt, 1, c->value);
     if (rc != SQLI_OK || sqli_execute(stmt) != SQLI_OK)
         goto cleanup;
     sqli_stmt_destroy(stmt);
@@ -641,10 +644,7 @@ static bool run_case(sqli_conn_t *conn, const struct temporal_case *c,
                      &parameters, &stmt) != SQLI_OK || parameters != 1)
         goto cleanup;
     *operation = "native wire insert";
-    struct temporal_wire wire;
-    if (!make_wire(c, &wire) || !encode_native_case(c, &wire) ||
-        sqli_test_bind_wire(stmt, c->interval ? SQLI_TYPE_INTERVAL : SQLI_TYPE_DATETIME,
-                            wire.qualifier, wire.bytes, wire.length, c->is_null) != SQLI_OK)
+    if (!bind_native_case(stmt, c) || sqli_execute(stmt) != SQLI_OK)
         goto cleanup;
     sqli_stmt_destroy(stmt);
     stmt = NULL;
@@ -671,9 +671,9 @@ static bool run_case(sqli_conn_t *conn, const struct temporal_case *c,
             sqli_result_get_int(result, matrix_tail_column) != 1357 || sqli_result_get_int(result, matrix_equal_column) != 1 ||
             !check_wire(result, c) || !check_value(result, matrix_value_column, c) || !check_text(result, c))
             goto cleanup;
-        sqli_interval_value sentinel;
-        if (sqli_result_get_interval(result, matrix_interval_column, &sentinel) != SQLI_OK ||
-            sentinel.is_null || !sentinel.negative || sentinel.year != 3 || sentinel.month != 2)
+        sqli_interval_parts_t sentinel;
+        if (test_interval_parts(result, matrix_interval_column, &sentinel) != SQLI_OK ||
+            sentinel.is_null || !sentinel.negative || sentinel.years != 3 || sentinel.months != 2)
             goto cleanup;
     }
     *operation = "end of result";

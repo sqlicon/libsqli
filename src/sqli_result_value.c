@@ -1,4 +1,7 @@
 #define _GNU_SOURCE
+#include "libsqli/sqli_temporal.h"
+#include "libsqli/sqli_decimal.h"
+#include "sqli_temporal_internal.h"
 #include "sqli_internal.h"
 #include "sqli_charset.h"
 #include "sqli_protocol_internal.h"
@@ -803,89 +806,6 @@ void sqli_days_to_ymd_ifx(int32_t ifx_days, int *y, int *m, int *d)
     if (d) *d = (int)dd;
 }
 
-static int sqli_qual_length(uint32_t encoded_length)
-{
-    return (int)((encoded_length >> 8) & 0xFF);
-}
-
-static int sqli_qual_start(uint32_t encoded_length)
-{
-    return (int)((encoded_length >> 4) & 0x0F);
-}
-
-static int sqli_qual_end(uint32_t encoded_length)
-{
-    return (int)(encoded_length & 0x0F);
-}
-
-static int sqli_parse_digits_to_int(const char *digits, size_t n)
-{
-    int v = 0;
-    for (size_t i = 0; i < n; i++) {
-        if (digits[i] < '0' || digits[i] > '9')
-            return 0;
-        v = v * 10 + (digits[i] - '0');
-    }
-    return v;
-}
-
-static int sqli_extract_temporal_digits(const uint8_t *raw, size_t len,
-                                        uint32_t encoded_length,
-                                        char *digits, size_t digits_cap,
-                                        int *negative)
-{
-    uint8_t b100[63];
-    size_t ndgts = 0;
-    int frac_digits = 0;
-    int qlen = sqli_qual_length(encoded_length);
-    int qend = sqli_qual_end(encoded_length);
-    if (len < 2 || len - 1 > sizeof(b100) || qlen <= 0 ||
-        (size_t)qlen >= digits_cap ||
-        !sqli_base100_decode_parts(raw, len, b100, &ndgts, &frac_digits, negative))
-        return 0;
-
-    /* Temporal decimals are aligned to the qualifier's SECOND position.
-     * The wire omits leading zero pairs and adjusts its exponent. Restore
-     * those positions before splitting digits into calendar/time fields. */
-    int exponent = (int)ndgts - frac_digits / 2;
-    int expected_exponent = (qlen + 10 - qend + 1) / 2;
-    int leading_pairs = expected_exponent - exponent;
-    memset(digits, '0', (size_t)qlen);
-    for (size_t i = 0; i < ndgts; i++) {
-        if (b100[i] > 99)
-            return 0;
-        int pos = 2 * (leading_pairs + (int)i);
-        if (pos >= 0 && pos < qlen)
-            digits[pos] = (char)('0' + b100[i] / 10);
-        if (pos + 1 >= 0 && pos + 1 < qlen)
-            digits[pos + 1] = (char)('0' + b100[i] % 10);
-    }
-    digits[qlen] = '\0';
-    return qlen;
-}
-
-static sqli_status sqli_get_temporal_payload(sqli_result_t *result, int col_index,
-                                             uint8_t *raw, size_t *raw_len,
-                                             const sqli_column_info **col_out)
-{
-    if (result == NULL || raw == NULL || raw_len == NULL ||
-        col_out == NULL || col_index < 0 || col_index >= result->column_count)
-        return SQLI_INVALID_STATE;
-    if (result->current_row < 0 || result->tuple_len == 0)
-        return SQLI_INVALID_STATE;
-
-    result->last_was_null = sqli_result_is_null_internal(result, col_index);
-    if (result->last_was_null) {
-        *raw_len = 0;
-        *col_out = &result->columns[(size_t)col_index];
-        return SQLI_OK;
-    }
-
-    const sqli_column_info *col = &result->columns[(size_t)col_index];
-    *col_out = col;
-    return sqli_extract_current_value(result, col_index, raw, raw_len);
-}
-
 const char *sqli_result_get_decimal_string(sqli_result_t *result, int col_index)
 {
     static _Thread_local char out[256];
@@ -1028,256 +948,40 @@ const char *sqli_result_get_date_string(sqli_result_t *result, int col_index)
     return out;
 }
 
-static bool sqli_format_temporal_fields(char *out, size_t capacity,
-                                        const int fields[6], int start, int end,
-                                        int fraction, int scale,
-                                        bool interval, bool negative)
-{
-    size_t used = 0;
-    bool started = false;
-    if (negative) {
-        if (capacity < 2)
-            return false;
-        out[used++] = '-';
-    }
-    for (int code = start; code <= end && code <= 10; code += 2) {
-        const char *separator = "";
-        if (started)
-            separator = code <= 4 ? "-" : code == 6 ? " " : ":";
-        int width = interval && !started ? 1 : code == 0 ? 4 : 2;
-        int n = snprintf(out + used, capacity - used, "%s%0*d",
-                         separator, width, fields[code / 2]);
-        if (n < 0 || (size_t)n >= capacity - used)
-            return false;
-        used += (size_t)n;
-        started = true;
-    }
-    if (scale > 0) {
-        int n = snprintf(out + used, capacity - used, ".%0*d", scale, fraction);
-        if (n < 0 || (size_t)n >= capacity - used)
-            return false;
-    }
-    return true;
-}
-
 const char *sqli_result_get_datetime_string(sqli_result_t *result, int col_index)
 {
-    static _Thread_local char out[128];
+    static _Thread_local char out[SQLI_TEMPORAL_MAX_TEXT];
     out[0] = '\0';
-    sqli_datetime_value dt;
-    if (sqli_result_get_datetime(result, col_index, &dt) != SQLI_OK || dt.is_null)
+    struct sqli_datetime value = {0};
+    size_t required;
+    bool is_null;
+    if (col_index < 0 || sqli_result_get_datetime(result, (size_t)col_index, &value) != SQLI_OK)
         return out;
-    const int fields[] = {dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second};
-    if (!sqli_format_temporal_fields(out, sizeof(out), fields,
-                                    dt.start_qualifier, dt.end_qualifier,
-                                    dt.fraction, dt.fraction_scale, false, false))
+    if (sqli_datetime_format(&value, out, sizeof(out), &required, &is_null) != SQLI_OK)
         out[0] = '\0';
+    else
+        result->last_was_null = is_null;
+    /* Preserve SQL-style spacing in this convenience getter. */
+    char *separator = strchr(out, 'T');
+    if (separator != NULL)
+        *separator = ' ';
     return out;
 }
 
 const char *sqli_result_get_interval_string(sqli_result_t *result, int col_index)
 {
-    static _Thread_local char out[128];
+    static _Thread_local char out[SQLI_TEMPORAL_MAX_TEXT];
     out[0] = '\0';
-    sqli_interval_value iv;
-    if (sqli_result_get_interval(result, col_index, &iv) != SQLI_OK || iv.is_null)
+    struct sqli_interval value = {0};
+    size_t required;
+    bool is_null;
+    if (col_index < 0 || sqli_result_get_interval(result, (size_t)col_index, &value) != SQLI_OK)
         return out;
-    const int fields[] = {iv.year, iv.month, iv.day, iv.hour, iv.minute, iv.second};
-    if (!sqli_format_temporal_fields(out, sizeof(out), fields,
-                                    iv.start_qualifier, iv.end_qualifier,
-                                    iv.fraction, iv.fraction_scale, true, iv.negative))
+    if (sqli_interval_format(&value, out, sizeof(out), &required, &is_null) != SQLI_OK)
         out[0] = '\0';
+    else
+        result->last_was_null = is_null;
     return out;
-}
-
-sqli_status sqli_result_get_datetime(sqli_result_t *result, int col_index,
-                                     sqli_datetime_value *out)
-{
-    if (result == NULL || out == NULL)
-        return SQLI_INVALID_STATE;
-    memset(out, 0, sizeof(*out));
-    out->year = out->month = out->day = -1;
-    out->hour = out->minute = out->second = -1;
-    out->fraction = 0;
-    out->fraction_scale = 0;
-
-    uint8_t raw[128];
-    size_t raw_len = sizeof(raw);
-    const sqli_column_info *col = NULL;
-    sqli_status rc = sqli_get_temporal_payload(result, col_index, raw, &raw_len, &col);
-    if (rc != SQLI_OK)
-        return rc;
-    if (raw_len == 0) {
-        out->is_null = 1;
-        return SQLI_OK;
-    }
-
-    int qlen = sqli_qual_length(col->encoded_length);
-    int qstart = sqli_qual_start(col->encoded_length);
-    int qend = sqli_qual_end(col->encoded_length);
-    int first_width = qlen - (qend - qstart);
-    if (first_width <= 0)
-        first_width = (qstart == 0) ? 4 : 2;
-    out->start_qualifier = (uint8_t)qstart;
-    out->end_qualifier = (uint8_t)qend;
-    out->first_field_width = (uint8_t)first_width;
-
-    char digits[160];
-    int negative = 0;
-    int dlen = sqli_extract_temporal_digits(raw, raw_len, col->encoded_length,
-                                                digits, sizeof(digits), &negative);
-    if (dlen <= 0 || negative)
-        return SQLI_PROTO_ERROR;
-
-    int pos = 0;
-    int fields_end = qend > 10 ? 10 : qend;
-    for (int code = qstart; code <= fields_end; code += 2) {
-        int w = (code == qstart) ? first_width : 2;
-        if (pos + w > dlen)
-            break;
-        int val = sqli_parse_digits_to_int(digits + pos, (size_t)w);
-        switch (code) {
-        case 0: out->year = val; break;
-        case 2: out->month = val; break;
-        case 4: out->day = val; break;
-        case 6: out->hour = val; break;
-        case 8: out->minute = val; break;
-        case 10: out->second = val; break;
-        default: break;
-        }
-        pos += w;
-    }
-
-    if (qend > 10) {
-        int frac_w = qend - 10;
-        if (frac_w > 0 && pos + frac_w <= dlen) {
-            out->fraction = sqli_parse_digits_to_int(digits + pos, (size_t)frac_w);
-            out->fraction_scale = frac_w;
-        }
-    }
-    out->is_null = 0;
-    return SQLI_OK;
-}
-
-sqli_status sqli_result_get_interval(sqli_result_t *result, int col_index,
-                                     sqli_interval_value *out)
-{
-    if (result == NULL || out == NULL)
-        return SQLI_INVALID_STATE;
-    memset(out, 0, sizeof(*out));
-    out->year = out->month = out->day = 0;
-    out->hour = out->minute = out->second = 0;
-
-    uint8_t raw[128];
-    size_t raw_len = sizeof(raw);
-    const sqli_column_info *col = NULL;
-    sqli_status rc = sqli_get_temporal_payload(result, col_index, raw, &raw_len, &col);
-    if (rc != SQLI_OK)
-        return rc;
-    if (raw_len == 0) {
-        out->is_null = 1;
-        return SQLI_OK;
-    }
-
-    int qlen = sqli_qual_length(col->encoded_length);
-    int qstart = sqli_qual_start(col->encoded_length);
-    int qend = sqli_qual_end(col->encoded_length);
-    int first_width = qlen - (qend - qstart);
-    if (first_width <= 0)
-        first_width = 2;
-    out->start_qualifier = (uint8_t)qstart;
-    out->end_qualifier = (uint8_t)qend;
-    out->first_field_width = (uint8_t)first_width;
-
-    if (raw_len < 2)
-        return SQLI_PROTO_ERROR;
-
-    int expon = (int8_t)raw[0];
-    uint8_t dec_dgts[64];
-    size_t dec_ndgts = raw_len - 1;
-    if (dec_ndgts > sizeof(dec_dgts))
-        dec_ndgts = sizeof(dec_dgts);
-    memcpy(dec_dgts, raw + 1, dec_ndgts);
-
-    int negative = 0;
-    if ((expon & 0x80) == 0) {
-        sqli_base100_complement(dec_dgts, dec_ndgts);
-        expon ^= 0x7F;
-        negative = 1;
-    }
-    out->negative = negative ? 1 : 0;
-    expon = (expon & 0x7F) - 64;
-
-    while (dec_ndgts > 0 && dec_dgts[dec_ndgts - 1] == 0)
-        dec_ndgts--;
-
-    int bexpon = (qlen + 10 - qend + 1) / 2;
-    uint8_t dtbuf[32];
-    memset(dtbuf, 0, sizeof(dtbuf));
-    if (dec_ndgts > 0 && bexpon >= expon) {
-        size_t offset = (size_t)(bexpon - expon);
-        if (offset < sizeof(dtbuf)) {
-            size_t copy = dec_ndgts;
-            if (offset + copy > sizeof(dtbuf))
-                copy = sizeof(dtbuf) - offset;
-            memcpy(dtbuf + offset, dec_dgts, copy);
-        }
-    }
-
-    int flen = first_width;
-    int dtbufIndex = 0;
-    int currentField = qstart;
-
-    if (qstart != 12) {
-        int i = flen / 2;
-        if ((flen & 1) > 0)
-            i++;
-        int val = 0;
-        while (dtbufIndex < i && dtbufIndex < (int)sizeof(dtbuf)) {
-            val = val * 100 + dtbuf[dtbufIndex++];
-        }
-        switch (qstart) {
-        case 0: out->year = val; break;
-        case 2: out->month = val; break;
-        case 4: out->day = val; break;
-        case 6: out->hour = val; break;
-        case 8: out->minute = val; break;
-        case 10: out->second = val; break;
-        default: break;
-        }
-        currentField = qstart + 2;
-    }
-
-    int fields_end = qend > 10 ? 10 : qend;
-    while (currentField <= fields_end) {
-        int val = (dtbufIndex < (int)sizeof(dtbuf)) ? dtbuf[dtbufIndex++] : 0;
-        switch (currentField) {
-        case 0: out->year = val; break;
-        case 2: out->month = val; break;
-        case 4: out->day = val; break;
-        case 6: out->hour = val; break;
-        case 8: out->minute = val; break;
-        case 10: out->second = val; break;
-        default: break;
-        }
-        currentField += 2;
-    }
-
-    if (qend > 10) {
-        int scale = qend - 10;
-        int nbytes = (scale + 1) / 2;
-        int frac_val = 0;
-        for (int b = 0; b < nbytes; b++) {
-            frac_val = frac_val * 100 + ((dtbufIndex < (int)sizeof(dtbuf)) ? dtbuf[dtbufIndex++] : 0);
-        }
-        if (scale & 1)
-            frac_val /= 10;
-        out->fraction = frac_val;
-        out->fraction_scale = scale;
-    }
-
-    out->is_null = 0;
-    return SQLI_OK;
 }
 
 sqli_status sqli_result_stream_bytes(sqli_result_t *result, int col_index,
@@ -1375,25 +1079,21 @@ sqli_status sqli_result_get_timestamp(sqli_result_t *result, int col_index,
     }
 
     if (type == SQLI_TYPE_DATETIME) {
-        sqli_datetime_value dt;
-        sqli_status rc = sqli_result_get_datetime(result, col_index, &dt);
+        struct sqli_datetime value = {0};
+        sqli_status rc = sqli_result_get_datetime(result, (size_t)col_index, &value);
+        if (rc != SQLI_OK) return rc;
+        sqli_datetime_parts_t dt;
+        rc = sqli_datetime_get_parts(&value, &dt);
         if (rc != SQLI_OK) return rc;
         out->is_null = dt.is_null;
         if (dt.is_null) return SQLI_OK;
-
-        out->year = (dt.year >= 0) ? dt.year : 1970;
-        out->month = (dt.month >= 0) ? dt.month : 1;
-        out->day = (dt.day >= 0) ? dt.day : 1;
-        out->hour = (dt.hour >= 0) ? dt.hour : 0;
-        out->minute = (dt.minute >= 0) ? dt.minute : 0;
-        out->second = (dt.second >= 0) ? dt.second : 0;
-
-        int microsecond = 0;
-        if (dt.fraction_scale > 0 && dt.fraction_scale <= 5) {
-            int scale_factors[6] = { 1000000, 100000, 10000, 1000, 100, 10 };
-            microsecond = dt.fraction * scale_factors[dt.fraction_scale];
-        }
-        out->microsecond = microsecond;
+        out->year = dt.range.first <= SQLI_FIELD_YEAR ? dt.year : 1970;
+        out->month = dt.range.first <= SQLI_FIELD_MONTH && dt.range.last >= SQLI_FIELD_MONTH ? dt.month : 1;
+        out->day = dt.range.first <= SQLI_FIELD_DAY && dt.range.last >= SQLI_FIELD_DAY ? dt.day : 1;
+        out->hour = dt.hour;
+        out->minute = dt.minute;
+        out->second = dt.second;
+        out->microsecond = (int)(dt.nanosecond / 1000);
         return SQLI_OK;
     }
 

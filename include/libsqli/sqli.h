@@ -47,238 +47,6 @@ typedef enum {
 } sqli_status;
 /** @} */
 
-/* ----------------------------------------------------------------
- * Exact decimal values (DECIMAL / NUMERIC / MONEY)
- * ---------------------------------------------------------------- */
-
-/** Resource ceilings, independent of server precision/scale limits. */
-enum {
-    SQLI_DECIMAL_LIMB_BASE = 1000000000,
-    SQLI_DECIMAL_MAX_DIGITS = 1000000,
-    SQLI_DECIMAL_MAX_TEXT = SQLI_DECIMAL_MAX_DIGITS + 32
-};
-
-typedef struct sqli_decimal sqli_decimal_t;
-
-/** Borrowed coefficient, least significant base-10^9 limb first.
- * value = sign * coefficient * 10^(-scale). Each limb must be below
- * SQLI_DECIMAL_LIMB_BASE. Zero may have no limbs; its sign is nonnegative
- * and its scale is retained. Numeric fields are ignored for SQL NULL.
- */
-typedef struct {
-    const uint32_t *limbs;
-    size_t limb_count;
-    int32_t scale;
-    bool negative;
-    bool is_null;
-} sqli_decimal_parts_t;
-
-/** All decimal functions are reentrant. Distinct objects may be used
- * concurrently; a shared object requires external synchronization when any
- * thread modifies it. Read-only operations may run concurrently.
- *
- * All fallible operations leave existing values unchanged on failure.
- * Caller-owned outputs also remain unchanged except for format's documented
- * required-size and NULL outputs on SQLI_BUFFER_TOO_SMALL.
- * A null C object pointer is SQLI_INVALID_ARGUMENT, never SQL NULL.
- * destroy(NULL) is allowed. No function uses a connection or server conversion.
- */
-/** Allocate an owned SQL-NULL value. On failure, out is unchanged. */
-sqli_status sqli_decimal_create(sqli_decimal_t **out);
-void sqli_decimal_destroy(sqli_decimal_t *value);
-sqli_status sqli_decimal_copy(sqli_decimal_t *destination,
-                              const sqli_decimal_t *source);
-sqli_status sqli_decimal_is_null(const sqli_decimal_t *value, bool *out);
-sqli_status sqli_decimal_set_null(sqli_decimal_t *value);
-
-/** Import validates and copies. Leading zero limbs are removed; decimal
- * trailing zeros and scale are retained. Aliasing the destination's borrowed
- * coefficient is allowed. NULL input ignores the numeric parts.
- */
-sqli_status sqli_decimal_set_parts(sqli_decimal_t *value,
-                                   const sqli_decimal_parts_t *parts);
-/** Returned limbs borrow from value until its next successful mutation or
- * destruction. The view must not outlive the owner or be modified by the caller.
- */
-sqli_status sqli_decimal_get_parts(const sqli_decimal_t *value,
-                                   sqli_decimal_parts_t *out);
-sqli_status sqli_decimal_set_i64(sqli_decimal_t *value, int64_t coefficient,
-                                 int32_t scale);
-/** Convert the numeric value exactly, not merely its coefficient.
- * Fractional values return SQLI_INEXACT; integral overflow is SQLI_OUT_OF_RANGE.
- * SQL NULL returns SQLI_NULL_VALUE and leaves out unchanged.
- */
-sqli_status sqli_decimal_to_i64(const sqli_decimal_t *value, int64_t *out);
-/** Numeric ordering (-1, 0, +1), ignoring differences in scale.
- * Either operand being SQL NULL returns SQLI_NULL_VALUE, leaving out unchanged.
- */
-sqli_status sqli_decimal_compare(const sqli_decimal_t *left,
-                                 const sqli_decimal_t *right, int *out);
-/** Preserve the numeric value while changing scale, without rounding.
- * SQLI_INEXACT means discarded digits would be nonzero. SQL NULL returns
- * SQLI_NULL_VALUE. Excessive coefficient growth returns SQLI_LIMIT_EXCEEDED.
- */
-sqli_status sqli_decimal_rescale_exact(sqli_decimal_t *value, int32_t scale);
-
-/** Parse a length-delimited ASCII decimal, optionally signed, with optional
- * decimal point and E/e exponent. At least one mantissa digit is required.
- * No whitespace, grouping, embedded NUL, NaN or infinity is accepted.
- * Scale equals fractional digit count minus exponent, within int32_t range.
- * Input length and coefficient digits (excluding leading zeros) obey the
- * resource ceilings above.
- * Explicit is_null=true ignores text/length and sets SQL NULL.
- */
-sqli_status sqli_decimal_parse(sqli_decimal_t *value, const char *text,
-                               size_t length, bool is_null);
-/** Canonical scale-preserving text. Use plain notation when scale >= 0 and
- * adjusted exponent >= -6; otherwise scientific notation with uppercase E.
- * required includes the terminating NUL for non-NULL values. SQL NULL succeeds
- * with is_null=true and required=0, leaving the buffer untouched.
- * buffer=NULL, capacity=0 queries size successfully. A short buffer returns
- * SQLI_BUFFER_TOO_SMALL, updates required/is_null and leaves buffer unchanged.
- * required and is_null are mandatory; buffer=NULL with capacity>0 is invalid.
- * Caller-provided output objects/buffers must not overlap one another or value.
- */
-sqli_status sqli_decimal_format(const sqli_decimal_t *value, char *buffer,
-                                size_t capacity, size_t *required, bool *is_null);
-
-/* ----------------------------------------------------------------
- * Native calendar and interval values
- * ---------------------------------------------------------------- */
-
-enum { SQLI_TEMPORAL_MAX_TEXT = 64 };
-
-/** Semantic fields, independent of wire qualifier codes. UNKNOWN is allowed
- * only as a completely unknown range on a SQL-NULL object. */
-typedef enum {
-    SQLI_FIELD_UNKNOWN = 0,
-    SQLI_FIELD_YEAR,
-    SQLI_FIELD_MONTH,
-    SQLI_FIELD_DAY,
-    SQLI_FIELD_HOUR,
-    SQLI_FIELD_MINUTE,
-    SQLI_FIELD_SECOND,
-    SQLI_FIELD_FRACTION
-} sqli_temporal_field_t;
-
-typedef struct {
-    sqli_temporal_field_t first;
-    sqli_temporal_field_t last;
-    uint8_t fractional_digits; /* 1..9 with FRACTION, otherwise 0 */
-} sqli_temporal_range_t;
-
-/** Proleptic Gregorian date, years 1..9999; no epoch or timezone. */
-typedef struct {
-    int32_t year;
-    uint8_t month;
-    uint8_t day;
-    bool is_null;
-} sqli_date_t;
-
-typedef struct sqli_datetime sqli_datetime_t;
-typedef struct sqli_interval sqli_interval_t;
-
-/** Absent numeric fields must be zero for non-NULL values. A partial date is
- * validated using only known fields; MONTH TO DAY permits February 29 without
- * inventing a year. Numeric fields are ignored and cleared on NULL import.
- */
-typedef struct {
-    sqli_temporal_range_t range;
-    int32_t year;
-    uint8_t month, day;
-    uint8_t hour, minute, second;
-    uint32_t nanosecond;
-    bool is_null;
-} sqli_datetime_parts_t;
-
-/** One sign covers the entire interval. The first integral field may span
- * uint64_t; subordinate month/hour/minute/second magnitudes are bounded by
- * their usual radices. YEAR/MONTH cannot be mixed with DAY/time fields.
- * Leading precision belongs to the target SQL type, not this value.
- */
-typedef struct {
-    sqli_temporal_range_t range;
-    uint64_t years, months, days;
-    uint64_t hours, minutes, seconds;
-    uint32_t nanosecond;
-    bool negative;
-    bool is_null;
-} sqli_interval_parts_t;
-
-/** All temporal functions are reentrant, with no allocation after creation of
- * opaque objects. Read-only access may run concurrently; mutation of a shared
- * object requires external synchronization. DATE values need no allocation.
- * Getters export copies, never borrowed field pointers. Failed operations leave
- * values and output arguments unchanged, except format's short-buffer metadata.
- * No implicit field completion, timezone conversion, rounding or normalization
- * across units is performed. Leap seconds and hour 24 are not represented.
- * Native fractional precision up to 9 is not a claim of server support.
- */
-sqli_status sqli_date_validate(const sqli_date_t *value);
-sqli_status sqli_date_set(sqli_date_t *value, int32_t year, int32_t month, int32_t day);
-sqli_status sqli_date_set_null(sqli_date_t *value);
-/** Exact YYYY-MM-DD input/output. Explicit NULL input ignores text/length.
- * Formatting uses the shared temporal buffer contract documented below. */
-sqli_status sqli_date_parse(sqli_date_t *value, const char *text, size_t length, bool is_null);
-sqli_status sqli_date_format(const sqli_date_t *value, char *buffer, size_t capacity,
-                             size_t *required, bool *is_null);
-
-/** Create starts as SQL NULL with unknown range. destroy(NULL) is allowed.
- * set_null retains any known range and clears numeric fields. */
-sqli_status sqli_datetime_create(sqli_datetime_t **out);
-void sqli_datetime_destroy(sqli_datetime_t *value);
-sqli_status sqli_datetime_copy(sqli_datetime_t *destination, const sqli_datetime_t *source);
-sqli_status sqli_datetime_is_null(const sqli_datetime_t *value, bool *out);
-sqli_status sqli_datetime_set_null(sqli_datetime_t *value);
-sqli_status sqli_datetime_set_parts(sqli_datetime_t *value, const sqli_datetime_parts_t *parts);
-sqli_status sqli_datetime_get_parts(const sqli_datetime_t *value, sqli_datetime_parts_t *out);
-
-sqli_status sqli_interval_create(sqli_interval_t **out);
-void sqli_interval_destroy(sqli_interval_t *value);
-sqli_status sqli_interval_copy(sqli_interval_t *destination, const sqli_interval_t *source);
-sqli_status sqli_interval_is_null(const sqli_interval_t *value, bool *out);
-sqli_status sqli_interval_set_null(sqli_interval_t *value);
-sqli_status sqli_interval_set_parts(sqli_interval_t *value, const sqli_interval_parts_t *parts);
-sqli_status sqli_interval_get_parts(const sqli_interval_t *value, sqli_interval_parts_t *out);
-
-/** Qualified text uses an explicit range. Calendar years have four digits,
- * other calendar/subordinate integral fields two. Leading interval fields use
- * 1..20 digits and an optional overall sign. Separators are '-', space, ':'
- * and '.'. DATETIME also accepts 'T' between DAY and HOUR. Fractions contain
- * exactly fractional_digits digits; fraction-only text accepts .digits or
- * 0.digits. No surrounding whitespace, zone suffix or embedded NUL is accepted.
- * On explicit NULL input text/length are ignored. A supplied range is validated
- * and retained; a NULL range instead retains the object's existing range.
- * Non-NULL input requires a known range. Text length is capped above.
- */
-sqli_status sqli_datetime_parse(sqli_datetime_t *value, const sqli_temporal_range_t *range,
-                                const char *text, size_t length, bool is_null);
-sqli_status sqli_interval_parse(sqli_interval_t *value, const sqli_temporal_range_t *range,
-                                const char *text, size_t length, bool is_null);
-/** Strict YYYY-MM-DDThh:mm:ss[.fraction] input, inferring 1..9 fractional
- * digits. No offset, timezone or implicit completion. NULL retains prior range.
- */
-sqli_status sqli_datetime_parse_iso(sqli_datetime_t *value, const char *text,
-                                    size_t length, bool is_null);
-
-/** Formatting follows the decimal buffer contract: required includes NUL;
- * buffer=NULL/capacity=0 queries size; short buffers are unchanged and report
- * required/is_null. NULL succeeds with required=0 and leaves buffer unchanged.
- * All output pointers are required except buffer for size queries. Outputs
- * must not overlap each other or the source object.
- * Complete calendar/time DATETIME values use 'T'; partial values use qualified
- * text. Interval leading fields have no leading padding, and negative zero is
- * normalized on import. No fractional digits are stripped.
- */
-sqli_status sqli_datetime_format(const sqli_datetime_t *value, char *buffer, size_t capacity,
-                                 size_t *required, bool *is_null);
-sqli_status sqli_interval_format(const sqli_interval_t *value, char *buffer, size_t capacity,
-                                 size_t *required, bool *is_null);
-/** Non-NULL values must start at YEAR and end at SECOND or FRACTION;
- * otherwise SQLI_INVALID_STATE is returned without changing outputs. */
-sqli_status sqli_datetime_format_iso(const sqli_datetime_t *value, char *buffer,
-                                     size_t capacity, size_t *required, bool *is_null);
-
 /** Opaque connection handle. */
 
 typedef struct sqli_conn sqli_conn_t;
@@ -710,29 +478,6 @@ typedef enum {
  * Prepared statements
  * ---------------------------------------------------------------- */
 
-typedef struct {
-    bool is_null;
-    int year;
-    int month;
-    int day;
-    int hour;
-    int minute;
-    int second;
-    int microsecond;
-} sqli_timestamp_t;
-
-/*
- * Unix epoch conversion helpers for sqli_timestamp_t.
- */
-int64_t sqli_timestamp_to_epoch_sec(const sqli_timestamp_t *ts);
-int64_t sqli_timestamp_to_epoch_ms(const sqli_timestamp_t *ts);
-int32_t sqli_timestamp_to_epoch_days(const sqli_timestamp_t *ts);
-
-void sqli_timestamp_from_epoch_sec(sqli_timestamp_t *ts, int64_t sec);
-void sqli_timestamp_from_epoch_ms(sqli_timestamp_t *ts, int64_t ms);
-void sqli_timestamp_from_epoch_days(sqli_timestamp_t *ts, int32_t days);
-
-
 /* Opaque prepared statement handle */
 typedef struct sqli_stmt sqli_stmt_t;
 typedef struct sqli_batch_result sqli_batch_result_t;
@@ -778,40 +523,6 @@ sqli_status sqli_bind_double(sqli_stmt_t *stmt, int param_index, double value);
  * Bind a UTF-8 string value to a positional parameter (1-indexed).
  */
 sqli_status sqli_bind_string(sqli_stmt_t *stmt, int param_index, const char *value);
-
-/*
- * Bind textual DECIMAL/NUMERIC representation (e.g. "123.45").
- */
-sqli_status sqli_bind_decimal(sqli_stmt_t *stmt, int param_index, const char *value);
-
-/*
- * Bind a DATE value in ISO format (YYYY-MM-DD).
- */
-sqli_status sqli_bind_date(sqli_stmt_t *stmt, int param_index, const char *value);
-
-/*
- * Bind a DATETIME/TIMESTAMP-like value as text.
- */
-sqli_status sqli_bind_datetime(sqli_stmt_t *stmt, int param_index, const char *value);
-
-/*
- * Bind a standard portable timestamp struct.
- */
-sqli_status sqli_bind_timestamp(sqli_stmt_t *stmt, int param_index, const sqli_timestamp_t *value);
-
-/*
- * Direct Unix epoch binding helpers (format as YYYY-MM-DD HH:MM:SS.ffffff or YYYY-MM-DD).
- */
-sqli_status sqli_bind_epoch_sec(sqli_stmt_t *stmt, int param_index, int64_t sec);
-sqli_status sqli_bind_epoch_ms(sqli_stmt_t *stmt, int param_index, int64_t ms);
-sqli_status sqli_bind_epoch_days(sqli_stmt_t *stmt, int param_index, int32_t days);
-
-
-
-/*
- * Bind an INTERVAL value as text.
- */
-sqli_status sqli_bind_interval(sqli_stmt_t *stmt, int param_index, const char *value);
 
 /*
  * Bind a boolean value.
@@ -953,13 +664,6 @@ sqli_status sqli_descriptor_field_get_type_name(const sqli_descriptor_field_t *f
                                                 sqli_descriptor_bytes_t *out);
 sqli_status sqli_descriptor_field_get_type(const sqli_descriptor_field_t *field,
                                            sqli_column_type *out);
-/** DECIMAL/MONEY precision and fixed scale. Floating scale is unavailable. */
-sqli_status sqli_descriptor_field_get_precision(const sqli_descriptor_field_t *field, uint8_t *out);
-sqli_status sqli_descriptor_field_get_scale(const sqli_descriptor_field_t *field, uint8_t *out);
-/** DATETIME/INTERVAL field range, including fractional precision. */
-sqli_status sqli_descriptor_field_get_temporal_range(const sqli_descriptor_field_t *field,
-                                                     sqli_temporal_range_t *out);
-
 /* ----------------------------------------------------------------
  * Callable statements (stored procedures/functions)
  * ---------------------------------------------------------------- */
@@ -1032,28 +736,6 @@ int sqli_result_column_type(sqli_result_t *result, int col_index);
  * Row data extractors (only valid between sqli_result_next() == 1 calls)
  * ---------------------------------------------------------------- */
 
-/** Read a DECIMAL/NUMERIC/MONEY column directly into an existing native object.
- * The index is zero-based. No implicit conversion from other column types:
- * SQLI_TYPE_MISMATCH also applies to a NULL column of the wrong type.
- * Requires a successfully positioned, validated row. SQL NULL returns SQLI_OK
- * and sets the object's NULL state. Malformed bytes/descriptors return
- * SQLI_PROTO_ERROR. Every failure leaves the destination unchanged.
- * No allocation or text conversion is performed. The owned value survives row
- * advancement and result destruction. The legacy was_null flag is unchanged;
- * use sqli_decimal_is_null on the destination. Synchronize access to the result
- * and destination externally; destination must not overlap result storage.
- */
-sqli_status sqli_result_get_decimal(sqli_result_t *result, size_t index, sqli_decimal_t *out);
-
-/** Read a DATE column into a calendar value (years 1..9999).
- * Uses the native decimal getter's index, row-state, ownership and failure
- * rules. SQL NULL succeeds with out->is_null=true. Other source types, even
- * NULL, return SQLI_TYPE_MISMATCH. Invalid dates/descriptors return
- * SQLI_PROTO_ERROR. No allocation, epoch exposure or implicit conversion.
- * The legacy was_null flag is unchanged; use out->is_null directly.
- */
-sqli_status sqli_result_get_date(sqli_result_t *result, size_t index, sqli_date_t *out);
-
 /* Extract an int32 value from column col_index (0-based). */
 int32_t sqli_result_get_int(sqli_result_t *result, int col_index);
 
@@ -1100,19 +782,6 @@ bool sqli_result_is_null(sqli_result_t *result, int col_index);
 bool sqli_result_was_null(sqli_result_t *result);
 
 /*
- * Extract DECIMAL/NUMERIC/MONEY as textual representation.
- */
-const char *sqli_result_get_decimal_string(sqli_result_t *result, int col_index);
-
-/*
- * Extract DATE/DATETIME/INTERVAL textual representations.
- * Current MVP returns wire-derived normalized text.
- */
-const char *sqli_result_get_date_string(sqli_result_t *result, int col_index);
-const char *sqli_result_get_datetime_string(sqli_result_t *result, int col_index);
-const char *sqli_result_get_interval_string(sqli_result_t *result, int col_index);
-
-/*
  * Extract boolean value (true/false).
  */
 bool sqli_result_get_bool(sqli_result_t *result, int col_index);
@@ -1127,111 +796,6 @@ typedef int (*sqli_stream_chunk_cb)(const uint8_t *chunk, size_t len, void *ctx)
 sqli_status sqli_result_stream_bytes(sqli_result_t *result, int col_index,
                                      size_t chunk_size, sqli_stream_chunk_cb cb,
                                      void *ctx);
-
-/* Transitional temporal objects; native DATE uses sqli_date_t. */
-typedef struct {
-    bool is_null;
-    int year;
-    int month;
-    int day;
-    int hour;
-    int minute;
-    int second;
-    int fraction;
-    int fraction_scale;
-    uint8_t start_qualifier;
-    uint8_t end_qualifier;
-    uint8_t first_field_width;
-} sqli_datetime_value;
-
-typedef struct {
-    bool is_null;
-    bool negative;
-    int year;
-    int month;
-    int day;
-    int hour;
-    int minute;
-    int second;
-    int fraction;
-    int fraction_scale;
-    uint8_t start_qualifier;
-    uint8_t end_qualifier;
-    uint8_t first_field_width;
-} sqli_interval_value;
-
-sqli_status sqli_result_get_datetime(sqli_result_t *result, int col_index,
-                                     sqli_datetime_value *out);
-sqli_status sqli_result_get_interval(sqli_result_t *result, int col_index,
-                                     sqli_interval_value *out);
-sqli_status sqli_result_get_timestamp(sqli_result_t *result, int col_index,
-                                      sqli_timestamp_t *out);
-
-/*
- * Direct Unix epoch retrieval helpers (auto-padded and locale-independent).
- */
-sqli_status sqli_result_get_epoch_sec(sqli_result_t *result, int col_index, int64_t *out_sec);
-sqli_status sqli_result_get_epoch_ms(sqli_result_t *result, int col_index, int64_t *out_ms);
-sqli_status sqli_result_get_epoch_days(sqli_result_t *result, int col_index, int32_t *out_days);
-
-
-
-/* ----------------------------------------------------------------
- * Type encoding utilities
- * ---------------------------------------------------------------- */
-
-/*
- * Encode a DATE value as 4 big-endian bytes (days since Informix epoch).
- * Informix wire epoch: 1899-12-31 (day 0).
- * Example: 1970-01-01 => 25568.
- * Returns the 4-byte big-endian encoding.
- */
-int32_t sqli_encode_date(int32_t days_since_epoch);
-
-/*
- * Decode days since Informix epoch from a DATE value.
- */
-int32_t sqli_decode_date(int32_t encoded_date);
-
-/*
- * Encode a DATETIME value into buf using BCD Decimal wire format (spec §7.5).
- * Encodes YEAR TO SECOND (14 decimal digits: YYYYMMDDHHMMSS).
- * frac is reserved for future FRACTION support.
- *
- * Returns bytes written (same layout as sqli_encode_decimal), 0 on error.
- */
-size_t sqli_encode_datetime(int year, int month, int day,
-                            int hour, int minute, int second,
-                            unsigned int frac,
-                            uint8_t *buf, size_t buf_size);
-
-/*
- * Decode a DATETIME value from BCD Decimal wire format.
- * buf/buf_len point to the raw wire bytes (including the 2-byte length prefix).
- */
-void sqli_decode_datetime(const uint8_t *buf, size_t buf_len,
-                          int *year, int *month, int *day,
-                          int *hour, int *minute, int *second,
-                          unsigned int *frac);
-
-/*
- * Encode a DECIMAL value into a buffer using BCD encoding.
- *
- * precision: total number of digits (1-15)
- * scale: number of digits after decimal point (0 <= scale <= precision)
- * negative: non-zero for negative numbers
- * digits: array of 'precision' decimal digits (0-9)
- *
- * Wire format (spec §7.4): [2-byte length][exponent byte][BCD digit bytes]
- * exponent byte = ((exp+64) & 0x7F) | (positive ? 0x80 : 0x00)
- * where exp = (precision - scale) - 1.
- * Negative values are 10's-complemented in the BCD digit bytes.
- *
- * Returns bytes written, 0 on error (buffer too small).
- */
-size_t sqli_encode_decimal(uint8_t *buf, size_t buf_size,
-                           uint8_t precision, uint8_t scale,
-                           int negative, const uint8_t *digits);
 
 /* ----------------------------------------------------------------
  * Protocol utilities

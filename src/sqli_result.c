@@ -1,3 +1,5 @@
+#include "libsqli/sqli_temporal.h"
+#include "libsqli/sqli_decimal.h"
 #include "sqli_internal.h"
 #include "sqli_protocol_internal.h"
 #include "sqli_result_internal.h"
@@ -1046,6 +1048,40 @@ sqli_status sqli_result_get_date(sqli_result_t *result, size_t index, sqli_date_
     if (column->encoded_length != SQLI_DATE_WIRE_SIZE)
         return SQLI_PROTO_ERROR;
     return sqli_date_decode_wire(bytes, length, out);
+}
+
+sqli_status sqli_result_get_datetime(sqli_result_t *result, size_t index, sqli_datetime_t *out)
+{
+    if (out == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    const sqli_column_info *column;
+    const uint8_t *bytes;
+    size_t length;
+    sqli_status status = native_result_span(result, index, &column, &bytes, &length);
+    if (status != SQLI_OK)
+        return status;
+    if (column->type != SQLI_TYPE_DATETIME)
+        return SQLI_TYPE_MISMATCH;
+    if (column->encoded_length > UINT16_MAX)
+        return SQLI_PROTO_ERROR;
+    return sqli_datetime_decode_wire(bytes, length, (uint16_t)column->encoded_length, out);
+}
+
+sqli_status sqli_result_get_interval(sqli_result_t *result, size_t index, sqli_interval_t *out)
+{
+    if (out == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    const sqli_column_info *column;
+    const uint8_t *bytes;
+    size_t length;
+    sqli_status status = native_result_span(result, index, &column, &bytes, &length);
+    if (status != SQLI_OK)
+        return status;
+    if (column->type != SQLI_TYPE_INTERVAL)
+        return SQLI_TYPE_MISMATCH;
+    if (column->encoded_length > UINT16_MAX)
+        return SQLI_PROTO_ERROR;
+    return sqli_interval_decode_wire(bytes, length, (uint16_t)column->encoded_length, out);
 }
 
 int sqli_result_row_number(sqli_result_t *result)

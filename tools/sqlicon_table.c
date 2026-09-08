@@ -1,3 +1,5 @@
+#include "libsqli/sqli_temporal.h"
+#include "libsqli/sqli_decimal.h"
 #include "sqlicon.h"
 
 #include <stdbool.h>

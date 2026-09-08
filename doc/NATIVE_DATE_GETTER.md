@@ -1,5 +1,7 @@
 # Native DATE result getter
 
+Public declarations: `<libsqli/sqli_temporal.h>` (explicit include required).
+
 The experimental DATE result API now uses the native calendar type directly:
 
 ```c

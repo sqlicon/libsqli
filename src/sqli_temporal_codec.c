@@ -1,3 +1,4 @@
+#include "libsqli/sqli_temporal.h"
 #include "sqli_temporal_codec.h"
 #include "sqli_base100.h"
 

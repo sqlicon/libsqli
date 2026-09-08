@@ -1,3 +1,4 @@
+#include "libsqli/sqli_decimal.h"
 #include "libsqli/sqli.h"
 #include "unity.h"
 

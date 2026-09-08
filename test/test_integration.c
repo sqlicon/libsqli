@@ -7,6 +7,8 @@
  */
 
 #define _GNU_SOURCE
+#include "libsqli/sqli_temporal.h"
+#include "temporal_result_test.h"
 #include "libsqli/sqli_sblob.h"
 #include "unity.h"
 #include "libsqli/sqli.h"
@@ -2234,13 +2236,13 @@ void test_datatypes_live_flow(void)
 
     /* INTERVAL */
     TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 4));
-    sqli_interval_value iv;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_interval(res, 4, &iv));
+    sqli_interval_parts_t iv;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, test_interval_parts(res, 4, &iv));
     TEST_ASSERT_EQUAL_INT(0, iv.is_null);
-    TEST_ASSERT_EQUAL_INT(1, iv.day);
-    TEST_ASSERT_EQUAL_INT(2, iv.hour);
-    TEST_ASSERT_EQUAL_INT(3, iv.minute);
-    TEST_ASSERT_EQUAL_INT(4, iv.second);
+    TEST_ASSERT_EQUAL_INT(1, iv.days);
+    TEST_ASSERT_EQUAL_INT(2, iv.hours);
+    TEST_ASSERT_EQUAL_INT(3, iv.minutes);
+    TEST_ASSERT_EQUAL_INT(4, iv.seconds);
 
     /* SMALLFLOAT */
     TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 5));

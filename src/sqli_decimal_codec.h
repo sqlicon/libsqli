@@ -1,6 +1,7 @@
 #ifndef SQLI_DECIMAL_CODEC_H
 #define SQLI_DECIMAL_CODEC_H
 
+#include "libsqli/sqli_decimal.h"
 #include "libsqli/sqli.h"
 
 enum { SQLI_DECIMAL_WIRE_CAPACITY = 18 };
