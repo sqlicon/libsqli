@@ -1053,6 +1053,15 @@ int sqli_result_column_type(sqli_result_t *result, int col_index);
  */
 sqli_status sqli_result_get_decimal(sqli_result_t *result, size_t index, sqli_decimal_t *out);
 
+/** Read a DATE column into a calendar value (years 1..9999).
+ * Uses the native decimal getter's index, row-state, ownership and failure
+ * rules. SQL NULL succeeds with out->is_null=true. Other source types, even
+ * NULL, return SQLI_TYPE_MISMATCH. Invalid dates/descriptors return
+ * SQLI_PROTO_ERROR. No allocation, epoch exposure or implicit conversion.
+ * The legacy was_null flag is unchanged; use out->is_null directly.
+ */
+sqli_status sqli_result_get_date(sqli_result_t *result, size_t index, sqli_date_t *out);
+
 /* Extract an int32 value from column col_index (0-based). */
 int32_t sqli_result_get_int(sqli_result_t *result, int col_index);
 
@@ -1127,15 +1136,7 @@ sqli_status sqli_result_stream_bytes(sqli_result_t *result, int col_index,
                                      size_t chunk_size, sqli_stream_chunk_cb cb,
                                      void *ctx);
 
-/* Semantic temporal objects. */
-typedef struct {
-    bool is_null;
-    int32_t days_since_ifx_epoch;
-    int year;
-    int month;
-    int day;
-} sqli_date_value;
-
+/* Transitional temporal objects; native DATE uses sqli_date_t. */
 typedef struct {
     bool is_null;
     int year;
@@ -1167,9 +1168,6 @@ typedef struct {
     uint8_t first_field_width;
 } sqli_interval_value;
 
-sqli_status sqli_result_get_date(sqli_result_t *result, int col_index,
-
-                                 sqli_date_value *out);
 sqli_status sqli_result_get_datetime(sqli_result_t *result, int col_index,
                                      sqli_datetime_value *out);
 sqli_status sqli_result_get_interval(sqli_result_t *result, int col_index,

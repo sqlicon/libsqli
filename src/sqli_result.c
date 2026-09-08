@@ -988,9 +988,12 @@ bool sqli_result_next(sqli_result_t *result)
     return sqli_result_fetch(result) == SQLI_OK;
 }
 
-sqli_status sqli_result_get_decimal(sqli_result_t *result, size_t index, sqli_decimal_t *out)
+/* Borrow a span only from a successfully validated current-row cache. */
+static sqli_status native_result_span(sqli_result_t *result, size_t index,
+                                      const sqli_column_info **column,
+                                      const uint8_t **bytes, size_t *length)
 {
-    if (result == NULL || out == NULL)
+    if (result == NULL)
         return SQLI_INVALID_ARGUMENT;
     if (result->column_count < 0 || index >= (size_t)result->column_count)
         return SQLI_OUT_OF_RANGE;
@@ -1001,17 +1004,48 @@ sqli_status sqli_result_get_decimal(sqli_result_t *result, size_t index, sqli_de
         result->columns == NULL || result->cur_cache_row != result->current_row ||
         result->cur_col_data_start == NULL || result->cur_col_data_len == NULL)
         return SQLI_INVALID_STATE;
-    const sqli_column_info *column = &result->columns[index];
+    size_t start = result->cur_col_data_start[index];
+    size_t size = result->cur_col_data_len[index];
+    if (start > result->tuple_len || size > result->tuple_len - start)
+        return SQLI_PROTO_ERROR;
+    *column = &result->columns[index];
+    *bytes = result->tuple_buffer + start;
+    *length = size;
+    return SQLI_OK;
+}
+
+sqli_status sqli_result_get_decimal(sqli_result_t *result, size_t index, sqli_decimal_t *out)
+{
+    if (out == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    const sqli_column_info *column;
+    const uint8_t *bytes;
+    size_t length;
+    sqli_status status = native_result_span(result, index, &column, &bytes, &length);
+    if (status != SQLI_OK)
+        return status;
     if (column->type != SQLI_TYPE_DECIMAL && column->type != SQLI_TYPE_MONEY)
         return SQLI_TYPE_MISMATCH;
     if (column->encoded_length > UINT16_MAX)
         return SQLI_PROTO_ERROR;
-    size_t start = result->cur_col_data_start[index];
-    size_t length = result->cur_col_data_len[index];
-    if (start > result->tuple_len || length > result->tuple_len - start)
+    return sqli_decimal_decode_wire(bytes, length, (uint16_t)column->encoded_length, out);
+}
+
+sqli_status sqli_result_get_date(sqli_result_t *result, size_t index, sqli_date_t *out)
+{
+    if (out == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    const sqli_column_info *column;
+    const uint8_t *bytes;
+    size_t length;
+    sqli_status status = native_result_span(result, index, &column, &bytes, &length);
+    if (status != SQLI_OK)
+        return status;
+    if (column->type != SQLI_TYPE_DATE)
+        return SQLI_TYPE_MISMATCH;
+    if (column->encoded_length != SQLI_DATE_WIRE_SIZE)
         return SQLI_PROTO_ERROR;
-    return sqli_decimal_decode_wire(result->tuple_buffer + start, length,
-                                    (uint16_t)column->encoded_length, out);
+    return sqli_date_decode_wire(bytes, length, out);
 }
 
 int sqli_result_row_number(sqli_result_t *result)

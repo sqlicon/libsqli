@@ -7,9 +7,10 @@ locale, timezone database or additional dependency. They expose semantic fields,
 not server epochs, packed qualifiers or decimal-pair encoding.
 
 [Checked temporal tuple codecs](NATIVE_TEMPORAL_CODECS.md) are implemented in
-the subsequent iteration. Statement getters/binders and descriptor migration
-remain subsequent steps. Existing statement accessors still use their previous
-types during this transition. The new values are not yet accepted by statement bind functions.
+the subsequent iteration. [Descriptor snapshots](DESCRIPTOR_SNAPSHOTS.md) and
+[native DATE result reads](NATIVE_DATE_GETTER.md) are now implemented. The DATE
+getter uses `sqli_date_t`; DATETIME/INTERVAL getters and public native binders
+remain subsequent migration steps.
 The experimental API may be changed or removed as that migration proceeds;
 there is no compatibility-wrapper requirement. Catalog implementation remains
 deferred until the native core is implemented and tested.

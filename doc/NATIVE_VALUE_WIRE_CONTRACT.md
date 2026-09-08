@@ -20,6 +20,9 @@ metadata with independent ownership; parameter association remains pending.
 row/EOF/error outcomes and rejects malformed native field layouts before delivery.
 The [native decimal getter](NATIVE_DECIMAL_GETTER.md) now connects public result
 access to the decimal codec, retaining independent value ownership.
+The subsequent [DATE getter migration](NATIVE_DATE_GETTER.md) removes the old
+epoch-bearing result structure and preserves ISO date conveniences through the
+native calendar codec and formatter.
 
 ## Evidence and scope
 

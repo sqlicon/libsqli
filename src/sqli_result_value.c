@@ -1013,16 +1013,18 @@ const char *sqli_result_get_decimal_string(sqli_result_t *result, int col_index)
 
 const char *sqli_result_get_date_string(sqli_result_t *result, int col_index)
 {
-    static _Thread_local char out[64];
+    static _Thread_local char out[SQLI_TEMPORAL_MAX_TEXT];
     out[0] = '\0';
-    sqli_date_value dv;
-    if (sqli_result_get_date(result, col_index, &dv) != SQLI_OK || dv.is_null)
+    if (col_index < 0)
         return out;
-    if (dv.year > 0 && dv.month > 0 && dv.day > 0) {
-        snprintf(out, sizeof(out), "%04d-%02d-%02d", dv.year, dv.month, dv.day);
-    } else {
-        snprintf(out, sizeof(out), "%d", dv.days_since_ifx_epoch);
-    }
+    sqli_date_t date;
+    if (sqli_result_get_date(result, (size_t)col_index, &date) != SQLI_OK)
+        return out;
+    size_t required;
+    bool is_null;
+    if (sqli_date_format(&date, out, sizeof(out), &required, &is_null) != SQLI_OK)
+        return out;
+    result->last_was_null = is_null;
     return out;
 }
 
@@ -1086,29 +1088,6 @@ const char *sqli_result_get_interval_string(sqli_result_t *result, int col_index
                                     iv.fraction, iv.fraction_scale, true, iv.negative))
         out[0] = '\0';
     return out;
-}
-
-sqli_status sqli_result_get_date(sqli_result_t *result, int col_index,
-                                 sqli_date_value *out)
-{
-    if (result == NULL || out == NULL)
-        return SQLI_INVALID_STATE;
-    memset(out, 0, sizeof(*out));
-    out->year = -1;
-    out->month = -1;
-    out->day = -1;
-
-    if (sqli_result_is_null_internal(result, col_index)) {
-        out->is_null = 1;
-        result->last_was_null = 1;
-        return SQLI_OK;
-    }
-
-    int32_t days = sqli_result_get_int(result, col_index);
-    out->days_since_ifx_epoch = days;
-    sqli_days_to_ymd_ifx(days, &out->year, &out->month, &out->day);
-    out->is_null = 0;
-    return SQLI_OK;
 }
 
 sqli_status sqli_result_get_datetime(sqli_result_t *result, int col_index,
@@ -1381,8 +1360,8 @@ sqli_status sqli_result_get_timestamp(sqli_result_t *result, int col_index,
     uint8_t type = (uint8_t)col->type;
 
     if (type == SQLI_TYPE_DATE) {
-        sqli_date_value date_val;
-        sqli_status rc = sqli_result_get_date(result, col_index, &date_val);
+        sqli_date_t date_val;
+        sqli_status rc = sqli_result_get_date(result, (size_t)col_index, &date_val);
         if (rc != SQLI_OK) return rc;
         out->is_null = date_val.is_null;
         out->year = date_val.year;

@@ -45,6 +45,14 @@ static const struct wire_fixture fixtures[] = {
      {0xff, 0xff, 0xff, 0xff}, 4, "1899-12-30", false},
     {"date_unix_epoch", "MDY(1,1,1970)", SQLI_TYPE_DATE, 4,
      {0, 0, 0x63, 0xe0}, 4, "1970-01-01", false},
+    {"date_first_year", "CAST(DATETIME(0001-01-01) YEAR TO DAY AS DATE)", SQLI_TYPE_DATE, 4,
+     {0xff, 0xf5, 0x6a, 0xa6}, 4, "0001-01-01", false},
+    {"date_last_year", "MDY(12,31,9999)", SQLI_TYPE_DATE, 4,
+     {0, 0x2d, 0x24, 0x80}, 4, "9999-12-31", false},
+    {"date_leap_century", "MDY(2,29,2000)", SQLI_TYPE_DATE, 4,
+     {0, 0, 0x8e, 0xe8}, 4, "2000-02-29", false},
+    {"date_common_century", "MDY(3,1,1900)", SQLI_TYPE_DATE, 4,
+     {0, 0, 0, 60}, 4, "1900-03-01", false},
     {"date_null", "CAST(NULL AS DATE)", SQLI_TYPE_DATE, 4,
      {0x80, 0, 0, 0}, 4, "", true},
     {"decimal_scale", "CAST(123.4500 AS DECIMAL(8,4))", SQLI_TYPE_DECIMAL, 0x0804,
@@ -182,9 +190,20 @@ static bool check_result(sqli_result_t *result, const struct wire_fixture *fixtu
     const char *text = NULL;
     char decimal_text[fixture_text_capacity];
     switch (fixture->type) {
-    case SQLI_TYPE_DATE:
-        text = sqli_result_get_date_string(result, value_column);
+    case SQLI_TYPE_DATE: {
+        sqli_date_t value;
+        size_t required;
+        bool is_null;
+        if (sqli_result_get_date(result, value_column, &value) != SQLI_OK ||
+            sqli_date_format(&value, decimal_text, sizeof(decimal_text), &required, &is_null) != SQLI_OK)
+            return false;
+        if (is_null)
+            decimal_text[0] = '\0';
+        if (strcmp(decimal_text, sqli_result_get_date_string(result, value_column)) != 0)
+            return false;
+        text = decimal_text;
         break;
+    }
     case SQLI_TYPE_DATETIME:
         text = sqli_result_get_datetime_string(result, value_column);
         break;

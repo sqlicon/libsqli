@@ -17,3 +17,4 @@ This directory contains the public reference documentation for the `libsqli` lib
 * [Immutable Descriptor Snapshots](DESCRIPTOR_SNAPSHOTS.md) - Complete raw server metadata, explicit availability and ownership beyond statement/result lifetime.
 * [Checked Result Fetching](CHECKED_RESULT_FETCH.md) - Explicit row/EOF/error outcomes, native layout validation and streaming failure propagation.
 * [Native Decimal Result Getter](NATIVE_DECIMAL_GETTER.md) - Exact owned decimal reads, explicit type/NULL/error handling and public-API live matrix coverage.
+* [Native DATE Result Getter](NATIVE_DATE_GETTER.md) - Calendar-only DATE reads, removal of the old epoch-bearing structure and preserved ISO conveniences.

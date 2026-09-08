@@ -134,7 +134,7 @@ static int verify_row_datatypes(sqli_result_t *res, stress_metrics_t *m)
         if (pattern == 1 && b_val) { fprintf(stderr, "FAIL: bool id=%d expected false\n", id); errors++; }
 
         /* 13. DATE (col 13) */
-        sqli_date_value date_val;
+        sqli_date_t date_val = {0};
         if (sqli_result_get_date(res, 13, &date_val) != SQLI_OK || date_val.year < 1900) {
             fprintf(stderr, "FAIL: date id=%d year=%d\n", id, date_val.year);
             errors++;
