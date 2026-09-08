@@ -215,12 +215,17 @@ static void print_markdown(FILE *out, const sqlicon_runtime *rt, const sqlicon_t
 /* Public API                                                       */
 /* ---------------------------------------------------------------- */
 
-void print_result_rows(FILE *out, const sqlicon_runtime *rt, sqli_result_t *result)
+sqli_status print_result_rows(FILE *out, const sqlicon_runtime *rt, sqli_result_t *result)
 {
     int cols = sqli_result_columns(result);
     sqlicon_table_buffer tb;
-    table_buffer_init(&tb, cols);
-    table_buffer_collect(&tb, result, rt);
+    sqli_status status = table_buffer_init(&tb, cols);
+    if (status == SQLI_OK)
+        status = table_buffer_collect(&tb, result, rt);
+    if (status != SQLI_OK) {
+        table_buffer_destroy(&tb);
+        return status;
+    }
 
     switch (rt->mode) {
     case SQLICON_OUTPUT_ALIGNED:
@@ -241,4 +246,5 @@ void print_result_rows(FILE *out, const sqlicon_runtime *rt, sqli_result_t *resu
     }
 
     table_buffer_destroy(&tb);
+    return ferror(out) ? SQLI_IO_ERROR : SQLI_OK;
 }

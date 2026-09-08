@@ -39,7 +39,8 @@ as `sqli_bind_date_string`, `sqli_bind_decimal_string`,
 `sqli_bind_datetime_string` and `sqli_bind_interval_string`. See the
 [API consistency migration](doc/API_CONSISTENCY.md) for native DATE/DECIMAL
 binding, checked buffer contracts, statement fetch status and opaque Smart-LOB
-handle ownership.
+handle ownership. The [checked query-output path](doc/CLI_VALUE_OUTPUT.md)
+preserves long text and renders explicit LOB placeholders in every output mode.
 
 ### Prerequisites
 

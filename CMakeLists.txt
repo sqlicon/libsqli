@@ -453,6 +453,19 @@ if (SQLI_BUILD_CLI)
     target_include_directories(sqlicon PRIVATE ${SQLI_INC_DIR} ${SQLI_TOOLS_DIR})
     configure_file(${SQLI_TOOLS_DIR}/sqlicon.1.in ${CMAKE_CURRENT_BINARY_DIR}/sqlicon.1 @ONLY)
     if(SQLI_BUILD_TESTS)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+            add_executable(sqlicon_output_test ${SQLI_TEST_DIR}/test_sqlicon_output_linux.c
+                ${SQLI_TEST_DIR}/allocation_test_linux.c ${UNITY_SRC}
+                ${SQLI_TOOLS_DIR}/sqlicon_table.c ${SQLI_TOOLS_DIR}/sqlicon_output.c)
+            target_include_directories(sqlicon_output_test PRIVATE
+                ${SQLI_TOOLS_DIR} ${SQLI_SRC_DIR} ${unity_SOURCE_DIR}/src)
+            target_link_libraries(sqlicon_output_test PRIVATE sqli)
+            target_link_options(sqlicon_output_test PRIVATE "LINKER:--wrap=malloc" "LINKER:--wrap=calloc")
+            add_test(NAME sqlicon_output COMMAND sqlicon_output_test)
+            if(SQLI_ENABLE_SANITIZERS)
+                set_tests_properties(sqlicon_output PROPERTIES ENVIRONMENT "LSAN_OPTIONS=detect_leaks=0")
+            endif()
+        endif()
         add_executable(sqlicon_cli_test ${SQLI_TEST_DIR}/test_sqlicon_cli.c
             ${SQLI_TOOLS_DIR}/sqlicon_cli.c ${SQLI_TOOLS_DIR}/sqlicon_profile.c
             ${SQLI_TOOLS_DIR}/sqlicon_crypto.c ${UNITY_SRC})

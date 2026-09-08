@@ -61,9 +61,17 @@ sqlicon_exit_code execute_sql_statement(sqli_conn_t *conn, const char *sql,
         return SQLICON_EXIT_MISUSE;
     }
 
-    print_result_rows(out, rt, result);
-    fflush(out);
+    rc = print_result_rows(out, rt, result);
+    if (fflush(out) != 0 && rc == SQLI_OK)
+        rc = SQLI_IO_ERROR;
     runtime_release_output(out, close_after);
+
+    if (rc != SQLI_OK) {
+        fprintf(stderr, "error: result output failed: status=%d\n", (int)rc);
+        sqli_result_destroy(result);
+        sqlicon_reset_interrupt_state();
+        return SQLICON_EXIT_SQL_ERROR;
+    }
 
     if (noisy) {
         fprintf(stderr, "%lld row(s) affected\n",

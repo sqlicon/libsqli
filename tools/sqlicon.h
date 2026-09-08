@@ -350,12 +350,12 @@ sqlicon_exit_code open_connection(const sqlicon_cli_options *opt, sqli_conn_t **
 
 /* table.c */
 const char *result_text_by_type(sqli_result_t *result, int col_index, int ctype);
-void table_buffer_init(sqlicon_table_buffer *tb, int cols);
+sqli_status table_buffer_init(sqlicon_table_buffer *tb, int cols);
 void table_buffer_destroy(sqlicon_table_buffer *tb);
-void table_buffer_collect(sqlicon_table_buffer *tb, sqli_result_t *result, const sqlicon_runtime *rt);
+sqli_status table_buffer_collect(sqlicon_table_buffer *tb, sqli_result_t *result, const sqlicon_runtime *rt);
 
 /* output.c */
-void print_result_rows(FILE *out, const sqlicon_runtime *rt, sqli_result_t *result);
+sqli_status print_result_rows(FILE *out, const sqlicon_runtime *rt, sqli_result_t *result);
 
 /* exec.c */
 sqlicon_exit_code execute_sql_statement(sqli_conn_t *conn, const char *sql,
