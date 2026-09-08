@@ -1,6 +1,8 @@
 #include "sqli_internal.h"
 #include "sqli_protocol_internal.h"
 #include "sqli_result_internal.h"
+#include "sqli_decimal_codec.h"
+#include "sqli_temporal_codec.h"
 
 #include <stdlib.h>
 #include "sqli_log.h"
@@ -31,6 +33,7 @@ void sqli_result_clear_rows(sqli_result_t *result)
     free(result->row_lens);
     result->row_lens = NULL;
     result->row_count = 0;
+    result->fetch_status = SQLI_OK;
     result->row_capacity = 0;
     result->cursor = -1;
     result->current_row = -1;
@@ -61,45 +64,23 @@ static size_t sqli_fixed_width_for_type(uint8_t type)
     }
 }
 
-static uint8_t sqli_decimal_precision_from_encoded(uint32_t encoded_length)
-{
-    uint8_t p = (uint8_t)((encoded_length >> 8) & 0xFFu);
-    if (p == 0 || p > 32)
-        return 0;
-    return p;
-}
-
 static size_t sqli_decimal_packed_width_from_encoded(uint32_t encoded_length)
 {
-    uint8_t precision = sqli_decimal_precision_from_encoded(encoded_length);
-    if (precision == 0)
+    size_t width;
+    if (encoded_length > UINT16_MAX ||
+        sqli_decimal_wire_size((uint16_t)encoded_length, &width) != SQLI_OK)
         return 0;
-    uint8_t scale = (uint8_t)(encoded_length & 0xFFu);
-    /* Spec §5.6: DECIMAL / MONEY packed-decimal wire width formula:
-     *   digitPairs = ((p + (s & 1) + 3) / 2) - 1
-     *   wireWidth  = digitPairs + 1 = (p + (s & 1) + 3) / 2
-     * This handles both fixed scale (s <= p) and floating scale (s == 255, 255 & 1 == 1). */
-    return (size_t)((precision + (scale & 1u) + 3u) / 2u);
+    return width;
 }
 
 static size_t sqli_temporal_packed_width_from_encoded(uint8_t type, uint32_t encoded_length)
 {
-    if (type != SQLI_TYPE_DATETIME && type != SQLI_TYPE_INTERVAL)
+    size_t width;
+    if (encoded_length > UINT16_MAX ||
+        sqli_temporal_wire_size((uint16_t)encoded_length, type == SQLI_TYPE_INTERVAL,
+                                &width) != SQLI_OK)
         return 0;
-    uint8_t qlen = (uint8_t)((encoded_length >> 8) & 0xFFu);
-    if (qlen == 0)
-        return 0;
-    /* Base-100 groups preserve the leading INTERVAL field boundary.
-     * An odd leading precision consumes an extra half-pair, independently
-     * of trailing fractional digits (e.g. DAY(3) TO FRACTION(5)). */
-    unsigned leading_pad = 0;
-    if (type == SQLI_TYPE_INTERVAL) {
-        unsigned start = (encoded_length >> 4) & 0xFu;
-        unsigned end = encoded_length & 0xFu;
-        if (end >= start && qlen >= end - start)
-            leading_pad = (qlen - (end - start)) & 1u;
-    }
-    return 1u + (size_t)((qlen + leading_pad + 1u) / 2u);
+    return width;
 }
 
 void sqli_base100_complement(uint8_t *digits, size_t ndgts)
@@ -162,14 +143,14 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
         if (width == 0 && col_info->encoded_length > 0)
             width = (size_t)col_info->encoded_length;
 
-        if (base + 1 <= tuple_len && width > 0) {
+        if (1 <= tuple_len - base && width > 0) {
             uint8_t len8 = tuple_buf[base];
             size_t payload = (size_t)len8;
             size_t start = base + 1;
             /* Only accept prefixed layout when span (1+payload) equals the
              * declared width, and the length byte is reasonable. */
             if (len8 > 0 && len8 < 32 && 1 + payload == width &&
-                start + payload <= tuple_len) {
+                payload <= tuple_len - start) {
                 *data_start = start;
                 *data_len = payload;
                 *span = width;
@@ -180,28 +161,30 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
 
     if (type == SQLI_TYPE_DECIMAL || type == SQLI_TYPE_MONEY) {
         size_t packed = sqli_decimal_packed_width_from_encoded(col_info->encoded_length);
-        if (packed > 0 && base + packed <= tuple_len) {
+        if (packed > 0 && packed <= tuple_len - base) {
             *data_start = base;
             *data_len = packed;
             *span = packed;
             return SQLI_OK;
         }
+        return SQLI_PROTO_ERROR;
     }
 
     if (type == SQLI_TYPE_DATETIME || type == SQLI_TYPE_INTERVAL) {
         size_t packed = sqli_temporal_packed_width_from_encoded(type, col_info->encoded_length);
-        if (packed > 0 && base + packed <= tuple_len) {
+        if (packed > 0 && packed <= tuple_len - base) {
             *data_start = base;
             *data_len = packed;
             *span = packed;
             return SQLI_OK;
         }
+        return SQLI_PROTO_ERROR;
     }
 
     if (type == SQLI_TYPE_BYTE || type == SQLI_TYPE_TEXT) {
         /* Spec §6.1.2: Legacy blob descriptor is fixed size in tuple (56 or 68 bytes) */
         size_t desc_len = col_info->encoded_length > 0 ? (size_t)col_info->encoded_length : 56;
-        if (base + desc_len <= tuple_len) {
+        if (desc_len <= tuple_len - base) {
             *data_start = base;
             *data_len = desc_len;
             *span = desc_len;
@@ -218,7 +201,7 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
          * nullMarker == 1 (or non-zero) signals NULL (length == 0, no payload, span = 5).
          * Any other nullMarker (0) signals present value with 32-bit BE length.
          * For BOOLEAN specifically: payload is 1 byte (0x01=true, 0x00=false). */
-        if (base + 5 <= tuple_len) {
+        if (5 <= tuple_len - base) {
             uint8_t null_marker = tuple_buf[base];
             uint32_t len32 = ((uint32_t)tuple_buf[base + 1] << 24) |
                              ((uint32_t)tuple_buf[base + 2] << 16) |
@@ -232,7 +215,7 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
             }
             size_t start = base + 5;
             size_t payload = (size_t)len32;
-            if (null_marker == 0 && start + payload <= tuple_len) {
+            if (null_marker == 0 && payload <= tuple_len - start) {
                 *data_start = start;
                 *data_len = payload;
                 *span = 5 + payload;
@@ -240,11 +223,11 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
             }
         }
         /* Fall back to a 2-byte header if the 5-byte interpretation doesn't fit */
-        if (base + 2 <= tuple_len) {
+        if (2 <= tuple_len - base) {
             uint16_t len16 = (uint16_t)((tuple_buf[base] << 8) | tuple_buf[base + 1]);
             size_t payload = (size_t)len16;
             size_t start = base + 2;
-            if (start + payload <= tuple_len) {
+            if (payload <= tuple_len - start) {
                 *data_start = start;
                 *data_len = payload;
                 *span = 2 + payload;
@@ -255,7 +238,7 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
     }
 
     if (width > 0) {
-        if (base + width > tuple_len)
+        if (width > tuple_len - base)
             return SQLI_PROTO_ERROR;
         *data_start = base;
         *data_len = width;
@@ -269,7 +252,7 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
         uint8_t len8 = tuple_buf[base];
         size_t payload = (size_t)len8;
         size_t start = base + 1;
-        if (start + payload > tuple_len)
+        if (payload > tuple_len - start)
             return SQLI_PROTO_ERROR;
         *data_start = start;
         *data_len = payload;
@@ -277,12 +260,12 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
         return SQLI_OK;
     }
 
-    if (base + 2 > tuple_len)
+    if (2 > tuple_len - base)
         return SQLI_PROTO_ERROR;
     uint16_t len16 = (uint16_t)((tuple_buf[base] << 8) | tuple_buf[base + 1]);
     size_t payload = (size_t)len16;
     size_t start = base + 2;
-    if (start + payload > tuple_len)
+    if (payload > tuple_len - start)
         return SQLI_PROTO_ERROR;
     *data_start = start;
     *data_len = payload;
@@ -297,16 +280,22 @@ bool sqli_is_stringy_type(uint8_t type)
            type == SQLI_TYPE_LVARCHAR;
 }
 
-void sqli_result_prepare_row_cache(sqli_result_t *result)
+sqli_status sqli_result_prepare_row_cache(sqli_result_t *result)
 {
-    if (result == NULL || result->column_count <= 0 || result->tuple_buffer == NULL) {
-        if (result != NULL)
-            result->cur_cache_row = -1;
-        return;
-    }
+    if (result == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    result->cur_cache_row = -1;
+    if (result->column_count <= 0 || result->columns == NULL ||
+        result->tuple_buffer == NULL || result->current_row < 0)
+        return SQLI_INVALID_STATE;
+    if ((size_t)result->column_count > SIZE_MAX / sizeof(size_t))
+        return SQLI_LIMIT_EXCEEDED;
 
     if (result->cur_col_data_start == NULL || result->cur_col_data_len == NULL ||
         result->cur_col_is_null == NULL) {
+        free(result->cur_col_data_start);
+        free(result->cur_col_data_len);
+        free(result->cur_col_is_null);
         result->cur_col_data_start = calloc((size_t)result->column_count, sizeof(size_t));
         result->cur_col_data_len = calloc((size_t)result->column_count, sizeof(size_t));
         result->cur_col_is_null = calloc((size_t)result->column_count, sizeof(uint8_t));
@@ -319,12 +308,14 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
             result->cur_col_data_len = NULL;
             result->cur_col_is_null = NULL;
             result->cur_cache_row = -1;
-            return;
+            return SQLI_ALLOC_FAIL;
         }
     }
 
     size_t offset = 0;
     for (int i = 0; i < result->column_count; i++) {
+        if (offset > UINT32_MAX)
+            return SQLI_LIMIT_EXCEEDED;
         result->columns[i].col_start_pos = (uint32_t)offset;
         const sqli_column_info *col = &result->columns[i];
         uint8_t type = (uint8_t)col->type;
@@ -340,14 +331,14 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
             /* Try fixed-width first. If the declared width exceeds the
              * remaining tuple, the server may use 1-byte length-prefixed
              * encoding instead (common for CHAR columns in projected tuples). */
-            if (width > 0 && offset + width <= result->tuple_len) {
+            if (width > 0 && width <= result->tuple_len - offset) {
                 data_start = offset;
                 data_len = width;
                 span = width;
             } else if (offset + 1 < result->tuple_len) {
                 size_t payload = (size_t)result->tuple_buffer[offset];
                 size_t start = offset + 1;
-                if (start + payload <= result->tuple_len) {
+                if (payload <= result->tuple_len - start) {
                     data_start = start;
                     data_len = payload;
                     span = 1 + payload;
@@ -359,7 +350,7 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
             }
         } else if (type == SQLI_TYPE_BYTE || type == SQLI_TYPE_TEXT) {
             size_t desc_len = col->encoded_length > 0 ? (size_t)col->encoded_length : 56;
-            if (offset + desc_len <= result->tuple_len) {
+            if (desc_len <= result->tuple_len - offset) {
                 data_start = offset;
                 data_len = desc_len;
                 span = desc_len;
@@ -375,7 +366,7 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
         } else {
             size_t width = sqli_fixed_width_for_type(type);
             if (width > 0) {
-                if (offset + width <= result->tuple_len) {
+                if (width <= result->tuple_len - offset) {
                     data_start = offset;
                     data_len = width;
                     span = width;
@@ -384,7 +375,7 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
                 }
             } else if (type == SQLI_TYPE_DECIMAL || type == SQLI_TYPE_MONEY) {
                 size_t packed = sqli_decimal_packed_width_from_encoded(col->encoded_length);
-                if (packed > 0 && offset + packed <= result->tuple_len) {
+                if (packed > 0 && packed <= result->tuple_len - offset) {
                     data_start = offset;
                     data_len = packed;
                     span = packed;
@@ -394,7 +385,7 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
                 }
             } else if (type == SQLI_TYPE_DATETIME || type == SQLI_TYPE_INTERVAL) {
                 size_t packed = sqli_temporal_packed_width_from_encoded(type, col->encoded_length);
-                if (packed > 0 && offset + packed <= result->tuple_len) {
+                if (packed > 0 && packed <= result->tuple_len - offset) {
                     data_start = offset;
                     data_len = packed;
                     span = packed;
@@ -405,7 +396,7 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
             } else if (type == SQLI_TYPE_VARCHAR || type == SQLI_TYPE_NVCHAR) {
                 size_t payload = (size_t)result->tuple_buffer[offset];
                 size_t start = offset + 1;
-                if (start + payload <= result->tuple_len) {
+                if (payload <= result->tuple_len - start) {
                     data_start = start;
                     data_len = payload;
                     span = 1 + payload;
@@ -415,7 +406,7 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
             } else if (!sqli_type_is_two_byte_prefixed(type)) {
                 size_t payload = (size_t)result->tuple_buffer[offset];
                 size_t start = offset + 1;
-                if (start + payload <= result->tuple_len) {
+                if (payload <= result->tuple_len - start) {
                     data_start = start;
                     data_len = payload;
                     span = 1 + payload;
@@ -423,12 +414,12 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
                     rc = SQLI_PROTO_ERROR;
                 }
             } else {
-                if (offset + 2 <= result->tuple_len) {
+                if (2 <= result->tuple_len - offset) {
                     uint16_t len16 = (uint16_t)((result->tuple_buffer[offset] << 8) |
                                                 result->tuple_buffer[offset + 1]);
                     size_t payload = (size_t)len16;
                     size_t start = offset + 2;
-                    if (start + payload <= result->tuple_len) {
+                    if (payload <= result->tuple_len - start) {
                         data_start = start;
                         data_len = payload;
                         span = 2 + payload;
@@ -441,12 +432,8 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
             }
         }
         if (rc != SQLI_OK || span == 0 || data_start > result->tuple_len ||
-            data_start + data_len > result->tuple_len) {
-            result->cur_col_data_start[i] = result->tuple_len;
-            result->cur_col_data_len[i] = 0;
-            result->cur_col_is_null[i] = 1;
-            offset = result->tuple_len;
-            continue;
+            data_len > result->tuple_len - data_start) {
+            return rc != SQLI_OK ? rc : SQLI_PROTO_ERROR;
         }
         result->cur_col_data_start[i] = data_start;
         result->cur_col_data_len[i] = data_len;
@@ -552,6 +539,7 @@ void sqli_result_prepare_row_cache(sqli_result_t *result)
         result->cur_col_is_null[i] = (uint8_t)is_null;
     }
     result->cur_cache_row = result->current_row;
+    return SQLI_OK;
 }
 
 bool sqli_result_is_null_internal(sqli_result_t *result, int col_index)
@@ -647,6 +635,7 @@ static void sqli_result_mark_closed(sqli_result_t *result)
     if (result == NULL)
         return;
     result->eof = 1;
+    result->cur_cache_row = -1;
     result->cursor = -1;
     result->current_row = -1;
     result->tuple_buffer = NULL;
@@ -662,6 +651,11 @@ static bool sqli_result_move_to_index(sqli_result_t *result, int row_index)
         return false;
     if (row_index < 0 || row_index >= result->row_count)
         return false;
+    if (result->rows == NULL || result->row_lens == NULL) {
+        result->fetch_status = SQLI_INVALID_STATE;
+        sqli_result_mark_closed(result);
+        return false;
+    }
 
     result->cursor = row_index;
     result->tuple_buffer = result->rows[row_index];
@@ -670,7 +664,12 @@ static bool sqli_result_move_to_index(sqli_result_t *result, int row_index)
     result->cur_cache_row = -1;
     result->at_before_first = false;
     result->at_after_last = false;
-    sqli_result_prepare_row_cache(result);
+    sqli_status status = sqli_result_prepare_row_cache(result);
+    if (status != SQLI_OK) {
+        result->fetch_status = status;
+        sqli_result_mark_closed(result);
+        return false;
+    }
     return true;
 }
 
@@ -697,6 +696,7 @@ static bool sqli_result_server_refetch(sqli_result_t *result, uint16_t scroll_ty
     sqli_status rc = sqli_send_scroll_fetch(result->owner_conn->socket_fd, result->stmt_id,
                                             result, scroll_type, index);
     if (rc != SQLI_OK) {
+        result->fetch_status = rc;
         result->at_after_last = true;
         result->at_before_first = false;
         result->absolute_row_num = 0;
@@ -706,6 +706,8 @@ static bool sqli_result_server_refetch(sqli_result_t *result, uint16_t scroll_ty
     set_error_context(result->owner_conn, "query/fetch_recv", SQLI_SQ_NFETCH);
     rc = sqli_receive_dispatch(result->owner_conn->socket_fd, result, result->owner_conn);
     if (rc != SQLI_OK || result->row_count <= 0) {
+        if (rc != SQLI_OK)
+            result->fetch_status = rc;
         result->at_after_last = true;
         result->at_before_first = false;
         result->absolute_row_num = 0;
@@ -894,7 +896,7 @@ bool sqli_result_previous(sqli_result_t *result)
     return sqli_result_absolute(result, target);
 }
 
-bool sqli_result_next(sqli_result_t *result)
+static bool sqli_result_next_internal(sqli_result_t *result)
 {
     if (result == NULL)
         return false;
@@ -912,12 +914,18 @@ bool sqli_result_next(sqli_result_t *result)
                 result->absolute_row_num = 1;
                 return true;
             }
+            return false;
         }
         return sqli_result_first(result);
     }
 
     int next_idx = result->cursor + 1;
     if (next_idx < result->row_count) {
+        if (result->absolute_row_num == INT32_MAX) {
+            result->fetch_status = SQLI_OUT_OF_RANGE;
+            sqli_result_mark_closed(result);
+            return false;
+        }
         if (sqli_result_move_to_index(result, next_idx)) {
             if (result->absolute_row_num > 0)
                 result->absolute_row_num++;
@@ -927,10 +935,17 @@ bool sqli_result_next(sqli_result_t *result)
             result->at_after_last = false;
             return true;
         }
+        return false;
     }
 
-    if (sqli_result_is_server_scrollable(result) && result->absolute_row_num > 0)
+    if (sqli_result_is_server_scrollable(result) && result->absolute_row_num > 0) {
+        if (result->absolute_row_num == INT32_MAX) {
+            result->fetch_status = SQLI_OUT_OF_RANGE;
+            sqli_result_mark_closed(result);
+            return false;
+        }
         return sqli_result_absolute(result, result->absolute_row_num + 1);
+    }
 
     result->at_after_last = true;
     result->at_before_first = false;
@@ -940,6 +955,37 @@ bool sqli_result_next(sqli_result_t *result)
     result->tuple_buffer = NULL;
     result->tuple_len = 0;
     return false;
+}
+
+sqli_status sqli_result_fetch(sqli_result_t *result)
+{
+    if (result == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    if (result->fetch_status != SQLI_OK) {
+        sqli_result_mark_closed(result);
+        return result->fetch_status;
+    }
+    if (sqli_result_is_closed_by_commit(result)) {
+        result->fetch_status = SQLI_INVALID_STATE;
+        sqli_result_mark_closed(result);
+        return result->fetch_status;
+    }
+    if (result->saw_error || result->error_code != 0) {
+        result->fetch_status = SQLI_PROTO_ERROR;
+        sqli_result_mark_closed(result);
+        return result->fetch_status;
+    }
+    bool row = sqli_result_next_internal(result);
+    if (result->fetch_status != SQLI_OK) {
+        sqli_result_mark_closed(result);
+        return result->fetch_status;
+    }
+    return row ? SQLI_OK : SQLI_EOF;
+}
+
+bool sqli_result_next(sqli_result_t *result)
+{
+    return sqli_result_fetch(result) == SQLI_OK;
 }
 
 int sqli_result_row_number(sqli_result_t *result)

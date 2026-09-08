@@ -666,7 +666,7 @@ static bool run_case(sqli_conn_t *conn, const struct temporal_case *c,
     for (int id = 1; id <= 3; id++) {
         *operation = id == 1 ? "literal row decode" :
                      id == 2 ? "text-bound row decode" : "native-bound row decode";
-        if (!sqli_result_next(result) || sqli_result_get_int(result, matrix_id_column) != id ||
+        if (sqli_result_fetch(result) != SQLI_OK || sqli_result_get_int(result, matrix_id_column) != id ||
             sqli_result_get_int(result, matrix_sentinel_column) != 2468 ||
             sqli_result_get_int(result, matrix_tail_column) != 1357 || sqli_result_get_int(result, matrix_equal_column) != 1 ||
             !check_wire(result, c) || !check_value(result, matrix_value_column, c) || !check_text(result, c))
@@ -677,7 +677,7 @@ static bool run_case(sqli_conn_t *conn, const struct temporal_case *c,
             goto cleanup;
     }
     *operation = "end of result";
-    ok = !sqli_result_next(result) && !result->saw_error;
+    ok = sqli_result_fetch(result) == SQLI_EOF;
 cleanup:
     if (!ok) {
         sqli_error_info error = {0};

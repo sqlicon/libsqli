@@ -16,6 +16,8 @@ extends precision/scale and exponent evidence and switches the decimal native
 probe to production encoding. The subsequent
 [descriptor snapshot iteration](DESCRIPTOR_SNAPSHOTS.md) preserves complete server
 metadata with independent ownership; parameter association remains pending.
+[Checked result fetching](CHECKED_RESULT_FETCH.md) subsequently adds explicit
+row/EOF/error outcomes and rejects malformed native field layouts before delivery.
 
 ## Evidence and scope
 

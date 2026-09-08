@@ -311,7 +311,8 @@ static sqli_status sqli_stream_deliver_rows(sqli_conn_t *conn, sqli_result_t *r,
     if (on_row == NULL)
         return SQLI_OK;
 
-    while (sqli_result_next(r)) {
+    sqli_status fetch_status;
+    while ((fetch_status = sqli_result_fetch(r)) == SQLI_OK) {
         if (on_row(r, ctx) != 0) {
             set_error_context(conn, "query/stream_callback", 0);
             set_error(conn, "row callback aborted streaming");
@@ -320,7 +321,7 @@ static sqli_status sqli_stream_deliver_rows(sqli_conn_t *conn, sqli_result_t *r,
         if (row_counter != NULL)
             (*row_counter)++;
     }
-    return SQLI_OK;
+    return fetch_status == SQLI_EOF ? SQLI_OK : fetch_status;
 }
 
 sqli_status sqli_query_stream(sqli_conn_t *conn, const char *sql,

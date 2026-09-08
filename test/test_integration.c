@@ -237,6 +237,7 @@ typedef struct {
     int conn_fd;
     int nfields;
     int ntuple;
+    bool short_second_row;
     int stmt_type;    /* statement type in DESCRIBE: 2=SELECT, else DML/DDL */
     int response_mode; /* 0=handshake, 1=query, 2=txn */
     int ready_pipe[2]; /* pipe for server-to-main signaling */
@@ -802,7 +803,8 @@ static void *mock_server_query_test(void *arg)
             /* SQ_NFETCH — send TUPLEs then DONE */
             if (tuples_sent < ctx->ntuple) {
                 for (int i = tuples_sent; i < ctx->ntuple; i++)
-                    rp += build_tuple_response(resp + rp, i + 1, ctx->nfields);
+                    rp += build_tuple_response(resp + rp, i + 1,
+                        ctx->short_second_row && i == 1 ? ctx->nfields - 1 : ctx->nfields);
                 tuples_sent = ctx->ntuple;
             }
             rp += build_done_response(resp + rp, ctx->ntuple);
@@ -1364,7 +1366,7 @@ static int stream_abort_test_cb(sqli_result_t *row_result, void *ctx)
     return 0;
 }
 
-void test_query_stream_abort_reports_delivered_count(void)
+static void check_query_stream_delivery(bool malformed)
 {
     mock_srv_ctx *ctx = calloc(1, sizeof(*ctx));
     TEST_ASSERT_NOT_NULL(ctx);
@@ -1374,6 +1376,7 @@ void test_query_stream_abort_reports_delivered_count(void)
 
     ctx->nfields = 2;
     ctx->ntuple = 5;
+    ctx->short_second_row = malformed;
     ctx->stmt_type = 2; /* SELECT */
 
     pthread_t thread;
@@ -1394,9 +1397,9 @@ void test_query_stream_abort_reports_delivered_count(void)
 
     sqli_status rc = sqli_query_stream(conn, "SELECT id, name FROM t",
                                        stream_abort_test_cb, &sctx, &out_rows);
-    TEST_ASSERT_EQUAL_INT(SQLI_ERR, rc);
-    TEST_ASSERT_EQUAL_INT(3, sctx.calls);
-    TEST_ASSERT_EQUAL_INT64(2, out_rows);
+    TEST_ASSERT_EQUAL_INT(malformed ? SQLI_PROTO_ERROR : SQLI_ERR, rc);
+    TEST_ASSERT_EQUAL_INT(malformed ? 1 : 3, sctx.calls);
+    TEST_ASSERT_EQUAL_INT64(malformed ? 1 : 2, out_rows);
 
     sqli_close(conn);
     sqli_destroy(conn);
@@ -1405,6 +1408,16 @@ void test_query_stream_abort_reports_delivered_count(void)
     close(ctx->listener_fd);
     mock_srv_ctx_destroy(ctx);
     free(ctx);
+}
+
+void test_query_stream_abort_reports_delivered_count(void)
+{
+    check_query_stream_delivery(false);
+}
+
+void test_query_stream_malformed_row_reports_failure(void)
+{
+    check_query_stream_delivery(true);
 }
 
 void test_prepare_execute_select_returns_rows(void)

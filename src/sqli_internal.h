@@ -430,6 +430,7 @@ struct sqli_result {
     size_t *cur_col_data_start; /* per-column data start for current row */
     size_t *cur_col_data_len;   /* per-column data len for current row */
     uint8_t *cur_col_is_null;   /* per-column null markers for current row */
+    sqli_status fetch_status; /* sticky fetch failure; cleared on row-storage reset */
     int cur_cache_row;          /* row index cached in arrays, -1 if invalid */
 
     /* Per-column string decode buffers for sqli_result_get_string().
@@ -486,6 +487,7 @@ static inline void sqli_result_cleanup(sqli_result_t *r)
     free(r->row_lens);
     r->row_lens = NULL;
     r->row_count = 0;
+    r->fetch_status = SQLI_OK;
     r->row_capacity = 0;
     r->cursor = -1;
     r->absolute_row_num = 0;

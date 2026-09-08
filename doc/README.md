@@ -15,3 +15,4 @@ This directory contains the public reference documentation for the `libsqli` lib
 * [Checked Temporal Wire Codecs](NATIVE_TEMPORAL_CODECS.md) - Exact binary DATE/DATETIME/INTERVAL conversion, qualifier validation and malformed-payload tests.
 * [Checked Decimal Wire Codecs](NATIVE_DECIMAL_CODECS.md) - Exact DECIMAL/NUMERIC/MONEY tuple conversion, fixed/floating scales and exponent-boundary validation.
 * [Immutable Descriptor Snapshots](DESCRIPTOR_SNAPSHOTS.md) - Complete raw server metadata, explicit availability and ownership beyond statement/result lifetime.
+* [Checked Result Fetching](CHECKED_RESULT_FETCH.md) - Explicit row/EOF/error outcomes, native layout validation and streaming failure propagation.

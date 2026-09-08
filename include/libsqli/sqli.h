@@ -613,6 +613,14 @@ sqli_status sqli_query_stream(sqli_conn_t *conn, const char *sql,
  * Advance to the next row. Returns true if a row is available,
  * false at end of result set or on error.
  */
+/** Advance with an explicit outcome: SQLI_OK means a validated row layout,
+ * SQLI_EOF means clean exhaustion, otherwise an error status. Failed fetches
+ * invalidate the current row and remain errors on subsequent fetch calls until
+ * the result is reset/re-executed. Payload conversion remains the getter's task.
+ * Synchronize all operations on the same result externally.
+ */
+sqli_status sqli_result_fetch(sqli_result_t *result);
+/** Compatibility convenience: true exactly when fetch returns SQLI_OK. */
 bool sqli_result_next(sqli_result_t *result);
 bool sqli_result_previous(sqli_result_t *result);
 bool sqli_result_first(sqli_result_t *result);

@@ -31,7 +31,7 @@ static bool check_case(sqli_conn_t *conn, sqli_decimal_t *source, sqli_decimal_t
     sqli_result_t *result = NULL;
     bool ok = sqli_decimal_parse(source, text, strlen(text), is_null) == SQLI_OK &&
         sqli_decimal_encode_wire(source, descriptor, encoded, sizeof(encoded), &length) == SQLI_OK &&
-        sqli_query(conn, sql, &result) == SQLI_OK && sqli_result_next(result) &&
+        sqli_query(conn, sql, &result) == SQLI_OK && sqli_result_fetch(result) == SQLI_OK &&
         result->column_count == projection_columns &&
         result->columns[decimal_column].type == SQLI_TYPE_DECIMAL &&
         result->columns[decimal_column].encoded_length == descriptor &&
@@ -46,7 +46,7 @@ static bool check_case(sqli_conn_t *conn, sqli_decimal_t *source, sqli_decimal_t
             int ordering = 1;
             ok = sqli_decimal_compare(source, decoded, &ordering) == SQLI_OK && ordering == 0;
         }
-        ok = ok && !sqli_result_next(result) && !result->saw_error;
+        ok = ok && sqli_result_fetch(result) == SQLI_EOF;
     }
     if (!ok)
         fprintf(stderr, "decimal matrix failed: %s value=%s\n", type, is_null ? "NULL" : text);

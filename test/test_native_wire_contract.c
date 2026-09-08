@@ -155,7 +155,7 @@ static bool codec_payload(const struct wire_fixture *fixture, uint8_t *encoded, 
 static bool check_result(sqli_result_t *result, const struct wire_fixture *fixture)
 {
     if (result == NULL || result->column_count != fixture_columns ||
-        !sqli_result_next(result))
+        sqli_result_fetch(result) != SQLI_OK)
         return false;
     const sqli_column_info *column = &result->columns[value_column];
     if (column->type != fixture->type || column->encoded_length != fixture->qualifier) {
@@ -213,7 +213,7 @@ static bool check_result(sqli_result_t *result, const struct wire_fixture *fixtu
                 fixture->name, fixture->text, text != NULL ? text : "(missing)");
         return false;
     }
-    return !sqli_result_next(result) && !result->saw_error;
+    return sqli_result_fetch(result) == SQLI_EOF;
 }
 
 static sqli_result_t *make_result(const struct wire_fixture *fixture)
@@ -323,7 +323,7 @@ static bool check_empty_result_descriptor(sqli_conn_t *conn)
     bool ok = sqli_query(conn, sql, &result) == SQLI_OK &&
         sqli_result_get_descriptor(result, &snapshot) == SQLI_OK &&
         sqli_descriptor_get_info(snapshot, &info) == SQLI_OK && info.field_count == 1 &&
-        !sqli_result_next(result) && !result->saw_error;
+        sqli_result_fetch(result) == SQLI_EOF;
     sqli_result_destroy(result);
     sqli_descriptor_field_t field;
     ok = ok && sqli_descriptor_get_field(snapshot, 0, &field) == SQLI_OK &&
