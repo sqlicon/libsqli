@@ -7,6 +7,7 @@
  */
 
 #define _GNU_SOURCE
+#include "libsqli/sqli_sblob.h"
 #include "unity.h"
 #include "libsqli/sqli.h"
 #include "sqli_internal.h"

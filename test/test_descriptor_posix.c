@@ -149,46 +149,52 @@ static void test_extended_fields_and_lifetime(void)
     TEST_ASSERT_EQUAL_INT(SQLI_OK, receive(frame, length, true));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_descriptor(&result, &held));
     sqli_descriptor_info_t info;
-    sqli_descriptor_field_t field;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_get_info(held, &info));
+    const sqli_descriptor_field_t *field;
+    info = held->info;
     TEST_ASSERT_TRUE(info.extended);
     TEST_ASSERT_EQUAL_UINT32(0xdeadbeef, info.cost_raw);
     TEST_ASSERT_EQUAL_UINT(42, info.statement_id);
     TEST_ASSERT_EQUAL_UINT(8, info.tuple_size);
     TEST_ASSERT_EQUAL_UINT(1, info.field_count);
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_get_field(held, 0, &field));
-    TEST_ASSERT_EQUAL_UINT32(UINT32_MAX, field.field_index);
-    TEST_ASSERT_EQUAL_UINT32(0xfedcba98, field.tuple_offset);
-    TEST_ASSERT_EQUAL_UINT(0x89fe, field.type_raw);
-    TEST_ASSERT_EQUAL_UINT32(0x11223344, field.extended_info);
-    TEST_ASSERT_EQUAL_UINT(0xabcd, field.reference);
-    TEST_ASSERT_EQUAL_UINT(0x1234, field.alignment);
-    TEST_ASSERT_EQUAL_UINT32(0xf1234567, field.source_type);
-    TEST_ASSERT_EQUAL_UINT32(0x89abcdef, field.encoded_length);
-    TEST_ASSERT_TRUE(field.name.available);
-    TEST_ASSERT_EQUAL_UINT(long_name_length, field.name.length);
-    TEST_ASSERT_EACH_EQUAL_UINT8('n', field.name.data, field.name.length);
-    TEST_ASSERT_EQUAL_UINT(type_string_length, field.type_owner.length);
-    TEST_ASSERT_EQUAL_UINT(type_string_length, field.type_name.length);
-    TEST_ASSERT_EQUAL_UINT8(0, field.type_owner.data[1]);
-    TEST_ASSERT_EQUAL_UINT8('t', field.type_name.data[type_string_length - 1]);
+    TEST_ASSERT_EQUAL_UINT32(UINT32_MAX, field->field_index);
+    TEST_ASSERT_EQUAL_UINT32(0xfedcba98, field->tuple_offset);
+    TEST_ASSERT_EQUAL_UINT(0x89fe, field->type_raw);
+    TEST_ASSERT_EQUAL_UINT32(0x11223344, field->extended_info);
+    TEST_ASSERT_EQUAL_UINT(0xabcd, field->reference);
+    TEST_ASSERT_EQUAL_UINT(0x1234, field->alignment);
+    TEST_ASSERT_EQUAL_UINT32(0xf1234567, field->source_type);
+    TEST_ASSERT_EQUAL_UINT32(0x89abcdef, field->encoded_length);
+    TEST_ASSERT_TRUE(field->name.available);
+    TEST_ASSERT_EQUAL_UINT(long_name_length, field->name.length);
+    TEST_ASSERT_EACH_EQUAL_UINT8('n', field->name.data, field->name.length);
+    TEST_ASSERT_EQUAL_UINT(type_string_length, field->type_owner.length);
+    TEST_ASSERT_EQUAL_UINT(type_string_length, field->type_name.length);
+    TEST_ASSERT_EQUAL_UINT8(0, field->type_owner.data[1]);
+    TEST_ASSERT_EQUAL_UINT8('t', field->type_name.data[type_string_length - 1]);
     TEST_ASSERT_EQUAL_UINT(127, strlen(result.columns[0].name));
     sqli_descriptor_bytes_t names;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_get_names(held, &names));
+    names = (sqli_descriptor_bytes_t){held->names, held->names_length, true};
     TEST_ASSERT_EQUAL_UINT(long_name_length + 3, names.length);
     TEST_ASSERT_EQUAL_UINT8(0x82, names.data[names.length - 1]);
     memset(frame, 0, sizeof(frame));
     result.columns[0].col_start_pos = 0;
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_get_field(held, 0, &field));
-    TEST_ASSERT_EQUAL_UINT32(0xfedcba98, field.tuple_offset);
-    TEST_ASSERT_EQUAL_UINT8('o', field.type_owner.data[0]);
+    TEST_ASSERT_EQUAL_UINT32(0xfedcba98, field->tuple_offset);
+    TEST_ASSERT_EQUAL_UINT8('o', field->type_owner.data[0]);
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_retain(held));
     second = held;
     sqli_result_cleanup(&result);
     sqli_destroy(connection);
     connection = NULL;
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_get_field(second, 0, &field));
-    TEST_ASSERT_EACH_EQUAL_UINT8('n', field.name.data, field.name.length);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_field_get_name(field, &names));
+    TEST_ASSERT_EACH_EQUAL_UINT8('n', names.data, names.length);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_field_get_type_owner(field, &names));
+    TEST_ASSERT_EQUAL_UINT(type_string_length, names.length);
+    TEST_ASSERT_EQUAL_UINT8(0, names.data[1]);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_field_get_type_name(field, &names));
+    TEST_ASSERT_EQUAL_UINT8('t', names.data[type_string_length - 1]);
 }
 
 static void test_empty_missing_names_and_availability(void)
@@ -198,14 +204,14 @@ static void test_empty_missing_names_and_availability(void)
     size_t length = legacy_frame(frame, false);
     TEST_ASSERT_EQUAL_INT(SQLI_OK, receive(frame, length, false));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_descriptor(&result, &held));
-    sqli_descriptor_field_t field;
+    const sqli_descriptor_field_t *field;
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_get_field(held, 0, &field));
-    TEST_ASSERT_TRUE(field.name.available);
-    TEST_ASSERT_EQUAL_UINT(0, field.name.length);
-    TEST_ASSERT_FALSE(field.type_name.available);
+    TEST_ASSERT_TRUE(field->name.available);
+    TEST_ASSERT_EQUAL_UINT(0, field->name.length);
+    TEST_ASSERT_FALSE(field->type_name.available);
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_get_field(held, 1, &field));
-    TEST_ASSERT_EQUAL_UINT(1, field.name.length);
-    TEST_ASSERT_EQUAL_UINT8('b', field.name.data[0]);
+    TEST_ASSERT_EQUAL_UINT(1, field->name.length);
+    TEST_ASSERT_EQUAL_UINT8('b', field->name.data[0]);
     length = 0;
     header(frame, &length, false, 1, 0);
     dword(frame, &length, 0);
@@ -216,7 +222,7 @@ static void test_empty_missing_names_and_availability(void)
     TEST_ASSERT_EQUAL_INT(SQLI_OK, receive(frame, length, false));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_descriptor(&result, &second));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_get_field(second, 0, &field));
-    TEST_ASSERT_FALSE(field.name.available);
+    TEST_ASSERT_FALSE(field->name.available);
     sqli_descriptor_release(second);
     second = NULL;
     length = 0;
@@ -225,9 +231,9 @@ static void test_empty_missing_names_and_availability(void)
     TEST_ASSERT_EQUAL_INT(SQLI_OK, receive(frame, length, false));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_descriptor(&result, &second));
     sqli_descriptor_info_t info;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_get_info(second, &info));
+    info = second->info;
     TEST_ASSERT_EQUAL_UINT(0, info.field_count);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_get_info(held, &info));
+    info = held->info;
     TEST_ASSERT_EQUAL_UINT(2, info.field_count);
     sqli_result_cleanup(&result);
     TEST_ASSERT_EQUAL_INT(SQLI_METADATA_UNAVAILABLE, sqli_result_get_descriptor(&result, &second));
@@ -265,11 +271,12 @@ static void test_argument_and_reference_limits(void)
 {
     sqli_descriptor_info_t info = {0};
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_create(&info, &held));
-    sqli_descriptor_field_t field = {.field_index = 7};
+    sqli_descriptor_field_t sentinel = {.field_index = 7};
+    const sqli_descriptor_field_t *field = &sentinel;
     TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_descriptor_get_field(held, 0, &field));
-    TEST_ASSERT_EQUAL_UINT(7, field.field_index);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_descriptor_get_info(held, NULL));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_descriptor_get_names(NULL, NULL));
+    TEST_ASSERT_EQUAL_UINT(7, field->field_index);
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_descriptor_get_field_count(held, NULL));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_descriptor_field_get_name(NULL, NULL));
     TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_descriptor_retain(NULL));
     TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_stmt_get_descriptor(NULL, &second));
     TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_result_get_descriptor(NULL, &second));
@@ -293,8 +300,8 @@ static void *exercise_reference(void *argument)
             worker->ok = false;
             break;
         }
-        sqli_descriptor_info_t info;
-        if (sqli_descriptor_get_info(worker->descriptor, &info) != SQLI_OK || info.field_count != 0)
+        size_t count;
+        if (sqli_descriptor_get_field_count(worker->descriptor, &count) != SQLI_OK || count != 0)
             worker->ok = false;
         sqli_descriptor_release(worker->descriptor);
     }
@@ -322,9 +329,110 @@ static void test_concurrent_reference_ownership(void)
     TEST_ASSERT_EQUAL_UINT(1, atomic_load(&held->references));
 }
 
+static void test_semantic_properties_and_failure_atomicity(void)
+{
+    const sqli_descriptor_info_t info = {.field_count = 1};
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_create(&info, &held));
+    /* Private builder inputs stand in for received qualifiers. Public callers
+     * only see the const field view acquired below. */
+    sqli_descriptor_field_t *raw = &held->fields[0];
+    const sqli_descriptor_field_t *field = NULL;
+    size_t count = 0;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_get_field_count(held, &count));
+    TEST_ASSERT_EQUAL_UINT(1, count);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_get_field(held, 0, &field));
+    TEST_ASSERT_EQUAL_PTR(raw, field);
+    raw->type_raw = SQLI_TYPE_DECIMAL | SQLI_BIT_NOTNULLABLE;
+    raw->encoded_length = 0x0802;
+    sqli_column_type type = SQLI_TYPE_INT;
+    uint8_t precision = 99, scale = 99;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_field_get_type(field, &type));
+    TEST_ASSERT_EQUAL_INT(SQLI_TYPE_DECIMAL, type);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_field_get_precision(field, &precision));
+    TEST_ASSERT_EQUAL_UINT8(8, precision);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_field_get_scale(field, &scale));
+    TEST_ASSERT_EQUAL_UINT8(2, scale);
+    raw->encoded_length = 0x08ff;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_field_get_precision(field, &precision));
+    TEST_ASSERT_EQUAL_INT(SQLI_METADATA_UNAVAILABLE, sqli_descriptor_field_get_scale(field, &scale));
+    TEST_ASSERT_EQUAL_UINT8(2, scale);
+    raw->encoded_length = 0x0809;
+    TEST_ASSERT_EQUAL_INT(SQLI_PROTO_ERROR, sqli_descriptor_field_get_precision(field, &precision));
+    TEST_ASSERT_EQUAL_UINT8(8, precision);
+    raw->encoded_length = UINT32_MAX;
+    TEST_ASSERT_EQUAL_INT(SQLI_PROTO_ERROR, sqli_descriptor_field_get_scale(field, &scale));
+    TEST_ASSERT_EQUAL_UINT8(2, scale);
+    raw->type_raw |= SQLI_BIT_DISTINCT;
+    TEST_ASSERT_EQUAL_INT(SQLI_METADATA_UNAVAILABLE, sqli_descriptor_field_get_type(field, &type));
+    TEST_ASSERT_EQUAL_INT(SQLI_TYPE_DECIMAL, type);
+    raw->type_raw = 0xfe;
+    TEST_ASSERT_EQUAL_INT(SQLI_METADATA_UNAVAILABLE, sqli_descriptor_field_get_type(field, &type));
+    TEST_ASSERT_EQUAL_INT(SQLI_TYPE_DECIMAL, type);
+    raw->type_raw = SQLI_TYPE_INT;
+    raw->extended = true;
+    raw->extended_info = UINT32_MAX;
+    TEST_ASSERT_EQUAL_INT(SQLI_METADATA_UNAVAILABLE, sqli_descriptor_field_get_type(field, &type));
+    raw->extended_info = 10; /* Server extended BLOB identifier. */
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_field_get_type(field, &type));
+    TEST_ASSERT_EQUAL_INT(SQLI_TYPE_BLOB, type);
+    TEST_ASSERT_EQUAL_INT(SQLI_METADATA_UNAVAILABLE, sqli_descriptor_field_get_scale(field, &scale));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_descriptor_field_get_type(NULL, &type));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_descriptor_field_get_precision(field, NULL));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_descriptor_field_get_scale(NULL, &scale));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_descriptor_get_field(held, 0, NULL));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_descriptor_get_field(held, 1, &field));
+    TEST_ASSERT_EQUAL_PTR(raw, field);
+}
+
+static void test_temporal_properties_and_name_availability(void)
+{
+    const sqli_descriptor_info_t info = {.field_count = 1};
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_create(&info, &held));
+    sqli_descriptor_field_t *raw = &held->fields[0];
+    const sqli_descriptor_field_t *field;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_get_field(held, 0, &field));
+    raw->type_raw = SQLI_TYPE_DATETIME;
+    raw->encoded_length = 0x130f; /* YEAR TO FRACTION(5). */
+    sqli_temporal_range_t range = {0};
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_field_get_temporal_range(field, &range));
+    TEST_ASSERT_EQUAL_INT(SQLI_FIELD_YEAR, range.first);
+    TEST_ASSERT_EQUAL_INT(SQLI_FIELD_FRACTION, range.last);
+    TEST_ASSERT_EQUAL_UINT8(5, range.fractional_digits);
+    raw->type_raw = SQLI_TYPE_INTERVAL;
+    raw->encoded_length = 0x094a; /* DAY(3) TO SECOND. */
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_field_get_temporal_range(field, &range));
+    TEST_ASSERT_EQUAL_INT(SQLI_FIELD_DAY, range.first);
+    TEST_ASSERT_EQUAL_INT(SQLI_FIELD_SECOND, range.last);
+    TEST_ASSERT_EQUAL_UINT8(0, range.fractional_digits);
+    raw->encoded_length = 0x130f; /* INTERVAL cannot mix YEAR and SECOND. */
+    TEST_ASSERT_EQUAL_INT(SQLI_PROTO_ERROR, sqli_descriptor_field_get_temporal_range(field, &range));
+    TEST_ASSERT_EQUAL_INT(SQLI_FIELD_DAY, range.first);
+    TEST_ASSERT_EQUAL_INT(SQLI_FIELD_SECOND, range.last);
+    raw->encoded_length = UINT32_MAX;
+    TEST_ASSERT_EQUAL_INT(SQLI_PROTO_ERROR, sqli_descriptor_field_get_temporal_range(field, &range));
+    raw->type_raw = SQLI_TYPE_INT;
+    TEST_ASSERT_EQUAL_INT(SQLI_METADATA_UNAVAILABLE, sqli_descriptor_field_get_temporal_range(field, &range));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_descriptor_field_get_temporal_range(NULL, &range));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_descriptor_field_get_temporal_range(field, NULL));
+    sqli_descriptor_bytes_t bytes = {NULL, 99, false};
+    TEST_ASSERT_EQUAL_INT(SQLI_METADATA_UNAVAILABLE, sqli_descriptor_field_get_name(field, &bytes));
+    TEST_ASSERT_EQUAL_UINT(99, bytes.length);
+    raw->name.available = true;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_field_get_name(field, &bytes));
+    TEST_ASSERT_TRUE(bytes.available);
+    TEST_ASSERT_EQUAL_UINT(0, bytes.length);
+    TEST_ASSERT_EQUAL_INT(SQLI_METADATA_UNAVAILABLE, sqli_descriptor_field_get_type_owner(field, &bytes));
+    TEST_ASSERT_EQUAL_INT(SQLI_METADATA_UNAVAILABLE, sqli_descriptor_field_get_type_name(field, &bytes));
+    TEST_ASSERT_TRUE(bytes.available);
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_descriptor_field_get_type_owner(NULL, &bytes));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_descriptor_field_get_type_name(field, NULL));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_semantic_properties_and_failure_atomicity);
+    RUN_TEST(test_temporal_properties_and_name_availability);
     RUN_TEST(test_extended_fields_and_lifetime);
     RUN_TEST(test_empty_missing_names_and_availability);
     RUN_TEST(test_malformed_replacement_preserves_snapshot);

@@ -337,16 +337,17 @@ static bool check_empty_result_descriptor(sqli_conn_t *conn)
         return false;
     sqli_result_t *result = NULL;
     sqli_descriptor_t *snapshot = NULL;
-    sqli_descriptor_info_t info;
+    size_t field_count;
     bool ok = sqli_query(conn, sql, &result) == SQLI_OK &&
         sqli_result_get_descriptor(result, &snapshot) == SQLI_OK &&
-        sqli_descriptor_get_info(snapshot, &info) == SQLI_OK && info.field_count == 1 &&
+        sqli_descriptor_get_field_count(snapshot, &field_count) == SQLI_OK && field_count == 1 &&
         sqli_result_fetch(result) == SQLI_EOF;
     sqli_result_destroy(result);
-    sqli_descriptor_field_t field;
+    const sqli_descriptor_field_t *field;
+    sqli_descriptor_bytes_t name;
     ok = ok && sqli_descriptor_get_field(snapshot, 0, &field) == SQLI_OK &&
-        field.name.available && field.name.length == alias_length &&
-        memcmp(field.name.data, alias, alias_length) == 0;
+        sqli_descriptor_field_get_name(field, &name) == SQLI_OK && name.length == alias_length &&
+        memcmp(name.data, alias, alias_length) == 0;
     sqli_descriptor_release(snapshot);
     return ok;
 }
@@ -395,21 +396,27 @@ static bool check_describe(sqli_conn_t *conn)
                       stmt->result.columns[col].encoded_length == cases[i].encoded[col];
         }
         sqli_descriptor_t *snapshot = NULL;
-        sqli_descriptor_info_t info = {0};
+        size_t field_count = 0;
         matches = matches && sqli_stmt_get_descriptor(stmt, &snapshot) == SQLI_OK &&
-                  sqli_descriptor_get_info(snapshot, &info) == SQLI_OK &&
-                  info.field_count == (size_t)cases[i].columns;
-        for (size_t col = 0; matches && col < info.field_count; col++) {
-            sqli_descriptor_field_t field;
+                  sqli_descriptor_get_field_count(snapshot, &field_count) == SQLI_OK &&
+                  field_count == (size_t)cases[i].columns;
+        for (size_t col = 0; matches && col < field_count; col++) {
+            const sqli_descriptor_field_t *field;
+            sqli_column_type type;
+            uint8_t precision, scale;
             matches = sqli_descriptor_get_field(snapshot, col, &field) == SQLI_OK &&
-                      (field.type_raw & 0xff) == cases[i].types[col] &&
-                      field.encoded_length == cases[i].encoded[col];
+                      sqli_descriptor_field_get_type(field, &type) == SQLI_OK &&
+                      type == cases[i].types[col];
+            if (matches && type == SQLI_TYPE_DECIMAL)
+                matches = sqli_descriptor_field_get_precision(field, &precision) == SQLI_OK &&
+                          precision == 8 && sqli_descriptor_field_get_scale(field, &scale) == SQLI_OK &&
+                          scale == 2;
         }
         sqli_stmt_destroy(stmt);
         stmt = NULL;
         /* Snapshot fields remain readable after closing the server statement. */
-        matches = matches && sqli_descriptor_get_info(snapshot, &info) == SQLI_OK &&
-                  info.field_count == (size_t)cases[i].columns;
+        matches = matches && sqli_descriptor_get_field_count(snapshot, &field_count) == SQLI_OK &&
+                  field_count == (size_t)cases[i].columns;
         sqli_descriptor_release(snapshot);
         if (!matches) {
             fprintf(stderr, "FAIL descriptor fixture: %zu\n", i);

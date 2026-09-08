@@ -461,7 +461,7 @@ install(TARGETS sqli
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
 )
-install(FILES ${SQLI_INC_DIR}/libsqli/sqli.h ${SQLI_GENERATED_INC_DIR}/libsqli/version.h
+install(FILES ${SQLI_INC_DIR}/libsqli/sqli.h ${SQLI_INC_DIR}/libsqli/sqli_sblob.h ${SQLI_GENERATED_INC_DIR}/libsqli/version.h
     DESTINATION include/libsqli)
 if (TARGET sqlicon)
     install(TARGETS sqlicon DESTINATION bin)

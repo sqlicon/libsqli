@@ -4,6 +4,7 @@
  * Tests DATE/DATETIME/DECIMAL encoding, row extraction, and column accessors.
  */
 
+#include "libsqli/sqli_sblob.h"
 #include "unity.h"
 #include "libsqli/sqli.h"
 #include "sqli_internal.h"

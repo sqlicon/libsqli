@@ -152,6 +152,17 @@ static sqli_status decode_range(uint16_t qualifier, bool interval, struct wire_r
     return SQLI_OK;
 }
 
+sqli_status sqli_temporal_decode_range(uint16_t qualifier, bool interval, sqli_temporal_range_t *out)
+{
+    if (out == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    struct wire_range range;
+    sqli_status status = decode_range(qualifier, interval, &range);
+    if (status == SQLI_OK)
+        *out = range.range;
+    return status;
+}
+
 sqli_status sqli_temporal_wire_size(uint16_t qualifier, bool interval, size_t *out)
 {
     if (out == NULL)

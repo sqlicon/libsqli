@@ -21,6 +21,16 @@ An experimental, lightweight C11 substitute for parts of the IBM Informix Client
 
 ## Getting Started
 
+### Public headers
+
+Include `<libsqli/sqli.h>` for connections, statements, native values and
+[opaque descriptor views](doc/DESCRIPTOR_SNAPSHOTS.md). Smart-LOB operations use
+`<libsqli/sqli_sblob.h>`, which includes the core header and can be included alone.
+It declares the Smart-LOB types, options, locator binding, streaming and low-level
+read/write functions. Existing Smart-LOB callers must add this explicit include;
+all functions remain in the same library. The options and existing Smart-LOB
+handle layout are unchanged by this header split.
+
 ### Prerequisites
 
 To build and run `libsqli`, ensure the following packages are installed on your Linux system:

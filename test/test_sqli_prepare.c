@@ -6,6 +6,7 @@
  * by constructing mock sqli_stmt_t objects.
  */
 
+#include "libsqli/sqli_sblob.h"
 #include "libsqli/sqli.h"
 #include "sqli_internal.h"
 

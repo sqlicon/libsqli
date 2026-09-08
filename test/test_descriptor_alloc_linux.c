@@ -48,12 +48,15 @@ static void test_acquisition_and_views_do_not_allocate(void)
     sqli_result_t result = {.descriptor = descriptor}; /* Borrows this test's reference. */
     sqli_test_fail_next_allocation();
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_descriptor(&result, &out));
-    sqli_descriptor_info_t info;
-    sqli_descriptor_field_t field;
+    sqli_descriptor_info_t info = {.field_count = 1};
+    size_t count;
+    const sqli_descriptor_field_t *field;
     sqli_descriptor_bytes_t names;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_get_info(out, &info));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_get_field_count(out, &count));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_get_field(out, 0, &field));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_get_names(out, &names));
+    TEST_ASSERT_EQUAL_INT(SQLI_METADATA_UNAVAILABLE, sqli_descriptor_field_get_name(field, &names));
+    sqli_column_type type;
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_descriptor_field_get_type(field, &type));
     sqli_descriptor_t *unchanged = descriptor;
     TEST_ASSERT_EQUAL_INT(SQLI_ALLOC_FAIL, sqli_descriptor_create(&info, &unchanged));
     TEST_ASSERT_EQUAL_PTR(descriptor, unchanged);

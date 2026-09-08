@@ -912,7 +912,6 @@ void sqli_stmt_destroy(sqli_stmt_t *stmt);
  * Immutable server descriptor snapshots
  * ---------------------------------------------------------------- */
 typedef struct sqli_descriptor sqli_descriptor_t;
-enum { SQLI_DESCRIPTOR_MAX_BYTES = 16 * 1024 * 1024 };
 
 /** Borrowed bytes in server encoding, not necessarily UTF-8 or NUL terminated.
  * available distinguishes missing information from a known empty byte span. */
@@ -922,31 +921,7 @@ typedef struct {
     bool available;
 } sqli_descriptor_bytes_t;
 
-typedef struct {
-    uint16_t statement_type;
-    uint16_t statement_id;
-    uint32_t cost_raw;
-    uint16_t tuple_size;
-    size_t field_count;
-    bool extended;
-} sqli_descriptor_info_t;
-
-/** Raw server fields. Extended members are available only when info.extended
- * is true. Unknown type codes and flags are retained without normalization.
- * A server-described field is not proof of an input-parameter ordinal. */
-typedef struct {
-    uint32_t field_index;
-    uint32_t tuple_offset;
-    uint16_t type_raw;
-    uint32_t encoded_length;
-    uint32_t extended_info;
-    uint16_t reference;
-    uint16_t alignment;
-    uint32_t source_type;
-    sqli_descriptor_bytes_t name;
-    sqli_descriptor_bytes_t type_owner;
-    sqli_descriptor_bytes_t type_name;
-} sqli_descriptor_field_t;
+typedef struct sqli_descriptor_field sqli_descriptor_field_t;
 
 /** Acquisition returns an owned reference, usable after result/statement close
  * or destruction. SQLI_METADATA_UNAVAILABLE means no complete DESCRIBE has
@@ -961,12 +936,29 @@ sqli_status sqli_result_get_descriptor(const sqli_result_t *result, sqli_descrip
 sqli_status sqli_stmt_get_descriptor(const sqli_stmt_t *stmt, sqli_descriptor_t **out);
 sqli_status sqli_descriptor_retain(sqli_descriptor_t *descriptor);
 void sqli_descriptor_release(sqli_descriptor_t *descriptor);
-sqli_status sqli_descriptor_get_info(const sqli_descriptor_t *descriptor, sqli_descriptor_info_t *out);
-/** Field indices are zero-based. */
+sqli_status sqli_descriptor_get_field_count(const sqli_descriptor_t *descriptor, size_t *out);
+/** Zero-based index; borrows a field from the snapshot without allocating.
+ * The view and its byte spans remain valid while a snapshot reference is held.
+ * Property getters return SQLI_METADATA_UNAVAILABLE for missing or unsupported
+ * information (including unknown types), SQLI_PROTO_ERROR for malformed known
+ * qualifiers. All failures preserve outputs. No SQL or text conversion occurs.
+ */
 sqli_status sqli_descriptor_get_field(const sqli_descriptor_t *descriptor, size_t index,
-                                      sqli_descriptor_field_t *out);
-/** Entire original names table, including terminators and unused trailing bytes. */
-sqli_status sqli_descriptor_get_names(const sqli_descriptor_t *descriptor, sqli_descriptor_bytes_t *out);
+                                      const sqli_descriptor_field_t **out);
+sqli_status sqli_descriptor_field_get_name(const sqli_descriptor_field_t *field,
+                                           sqli_descriptor_bytes_t *out);
+sqli_status sqli_descriptor_field_get_type_owner(const sqli_descriptor_field_t *field,
+                                                 sqli_descriptor_bytes_t *out);
+sqli_status sqli_descriptor_field_get_type_name(const sqli_descriptor_field_t *field,
+                                                sqli_descriptor_bytes_t *out);
+sqli_status sqli_descriptor_field_get_type(const sqli_descriptor_field_t *field,
+                                           sqli_column_type *out);
+/** DECIMAL/MONEY precision and fixed scale. Floating scale is unavailable. */
+sqli_status sqli_descriptor_field_get_precision(const sqli_descriptor_field_t *field, uint8_t *out);
+sqli_status sqli_descriptor_field_get_scale(const sqli_descriptor_field_t *field, uint8_t *out);
+/** DATETIME/INTERVAL field range, including fractional precision. */
+sqli_status sqli_descriptor_field_get_temporal_range(const sqli_descriptor_field_t *field,
+                                                     sqli_temporal_range_t *out);
 
 /* ----------------------------------------------------------------
  * Callable statements (stored procedures/functions)
@@ -1481,219 +1473,6 @@ sqli_status sqli_parse_sqlhosts(const char *filepath,
 const sqli_sqlhosts_entry *sqli_find_sqlhosts_entry(
     const sqli_sqlhosts_entry *entries, int count,
     const char *server_name);
-
-/* ----------------------------------------------------------------
- * Smart Large Object (BLOB / CLOB) API
- * ---------------------------------------------------------------- */
-
-#define SQLI_LO_APPEND       1
-#define SQLI_LO_WRONLY       2
-#define SQLI_LO_RDONLY       4
-#define SQLI_LO_RDWR         8
-
-#define SQLI_LO_SEEK_SET     0
-#define SQLI_LO_SEEK_CUR     1
-#define SQLI_LO_SEEK_END     2
-
-#define SQLI_SBLOB_LOCATOR_MAX 72
-
-typedef enum {
-    SQLI_SBLOB_BLOB = 0,
-    SQLI_SBLOB_CLOB = 1
-} sqli_sblob_type;
-
-typedef struct {
-    const char *sbspace;      /* NULL: server/column default */
-    int64_t estimated_bytes;  /* -1: unspecified */
-    int64_t maximum_bytes;    /* -1: unspecified */
-    int32_t extent_kib;       /* -1: unspecified */
-    uint32_t create_flags;    /* 0: inherited defaults */
-    int open_mode;            /* normally SQLI_LO_WRONLY or SQLI_LO_RDWR */
-} sqli_sblob_options;
-
-#define SQLI_SBLOB_OPTIONS_INIT { NULL, -1, -1, -1, 0, SQLI_LO_WRONLY }
-
-typedef struct {
-    int lofd;
-    sqli_sblob_type type;
-    unsigned char locator[SQLI_SBLOB_LOCATOR_MAX];
-    size_t locator_len;
-    bool open;
-} sqli_sblob_t;
-
-typedef sqli_status (*sqli_sblob_reader)(
-    void *context,
-    unsigned char *buffer,
-    size_t capacity,
-    size_t *bytes_read);
-
-/**
- * @brief Create a new smart large object on the server and return an open handle.
- *
- * Invokes the server routine informix.ifx_lo_create to allocate a new Smart-LOB,
- * opens it with the requested mode (default SQLI_LO_WRONLY), and retrieves the
- * 72-byte locator.
- *
- * @param[in] conn Active connection.
- * @param[in] type SQLI_SBLOB_BLOB or SQLI_SBLOB_CLOB.
- * @param[in] options Optional creation parameters (can be NULL for server defaults).
- * @param[out] out Output Smart-LOB structure.
- * @return SQLI_OK on success.
- */
-sqli_status sqli_sblob_create(sqli_conn_t *conn, sqli_sblob_type type,
-                              const sqli_sblob_options *options, sqli_sblob_t *out);
-
-/**
- * @brief Write an in-memory buffer to an open created Smart Large Object.
- *
- * @param[in] conn Active connection.
- * @param[in,out] lob Created Smart-LOB handle.
- * @param[in] data Buffer containing data to upload.
- * @param[in] length Number of bytes to write.
- * @return SQLI_OK on success.
- */
-sqli_status sqli_sblob_write_buffer(sqli_conn_t *conn, sqli_sblob_t *lob,
-                                    const void *data, size_t length);
-
-/**
- * @brief Stream data to an open created Smart Large Object via reader callback.
- *
- * Synchronously invokes @p reader with library scratch buffers until @p reader
- * reports EOF (0 bytes read) or returns an error. Does not accept or open file paths.
- *
- * @param[in] conn Active connection.
- * @param[in,out] lob Created Smart-LOB handle.
- * @param[in] reader Reader callback function.
- * @param[in] context User context passed to callback.
- * @param[out] bytes_written Optional confirmed byte count, initialized to zero
- * before argument validation and updated after each write. Preserved on reader,
- * protocol and short-write errors. Includes any partial count confirmed by the
- * underlying write operation; excludes unacknowledged data and data returned by
- * a failing reader. Counts progress in the current transaction, not committed
- * durability. This function does not automatically close/release the LOB or
- * request a transaction rollback on failure.
- * @return SQLI_OK on success.
- */
-sqli_status sqli_sblob_write_stream(sqli_conn_t *conn, sqli_sblob_t *lob,
-                                    sqli_sblob_reader reader, void *context,
-                                    uint64_t *bytes_written);
-
-/**
- * @brief Close an open descriptor in a created Smart Large Object handle.
- *
- * Idempotent locally; subsequent calls return SQLI_OK. The locator remains
- * available in @p lob for statement binding.
- *
- * @param[in] conn Active connection.
- * @param[in,out] lob Created Smart-LOB handle.
- * @return SQLI_OK on success.
- */
-sqli_status sqli_sblob_close_created(sqli_conn_t *conn, sqli_sblob_t *lob);
-
-/**
- * @brief Release an unreferenced Smart Large Object on the server and invalidate the handle.
- *
- * Fails if the object is already referenced by a table column.
- *
- * @param[in] conn Active connection.
- * @param[in,out] lob Created Smart-LOB handle.
- * @return SQLI_OK on success.
- */
-sqli_status sqli_sblob_release(sqli_conn_t *conn, sqli_sblob_t *lob);
-
-/**
- * @brief Bind a Smart Large Object locator to a prepared statement parameter.
- *
- * @param[in] stmt Prepared statement handle.
- * @param[in] parameter_index 1-based parameter index.
- * @param[in] lob Created Smart-LOB handle with valid locator (or NULL for NULL).
- * @return SQLI_OK on success.
- */
-sqli_status sqli_bind_sblob(sqli_stmt_t *stmt, int parameter_index, const sqli_sblob_t *lob);
-
-/**
- * @brief Open a smart large object from its hexadecimal locator string (for BLOB).
- * @param[in] conn Active connection.
- * @param[in] locator_hex Hexadecimal locator string obtained from result set.
- * @param[in] mode Open mode (e.g. SQLI_LO_RDONLY, SQLI_LO_RDWR).
- * @param[out] out_lofd Output file descriptor handle.
- * @return SQLI_OK on success.
- */
-sqli_status sqli_sblob_open(sqli_conn_t *conn, const char *locator_hex, int mode, int *out_lofd);
-
-/**
- * @brief Open a smart large object from its hexadecimal locator string (for CLOB).
- * @param[in] conn Active connection.
- * @param[in] locator_hex Hexadecimal locator string obtained from result set.
- * @param[in] mode Open mode (e.g. SQLI_LO_RDONLY, SQLI_LO_RDWR).
- * @param[out] out_lofd Output file descriptor handle.
- * @return SQLI_OK on success.
- */
-sqli_status sqli_sblob_open_clob(sqli_conn_t *conn, const char *locator_hex, int mode, int *out_lofd);
-
-/**
- * @brief Open a smart large object using a custom query returning a file descriptor handle.
- * @param[in] conn Active connection.
- * @param[in] open_sql SQL query (e.g. "SELECT ifx_lo_open(b, 4) FROM tbl WHERE id=1").
- * @param[out] out_lofd Output file descriptor handle.
- * @return SQLI_OK on success.
- */
-sqli_status sqli_sblob_open_query(sqli_conn_t *conn, const char *open_sql, int *out_lofd);
-
-/**
- * @brief Close an open smart large object file descriptor handle.
- * @param[in] conn Active connection.
- * @param[in] lofd File descriptor handle to close.
- * @return SQLI_OK on success.
- */
-sqli_status sqli_sblob_close(sqli_conn_t *conn, int lofd);
-
-/**
- * @brief Read data from an open smart large object using SQ_LODATA (subCom = 0).
- * @param[in] conn Active connection.
- * @param[in] lofd Open file descriptor handle.
- * @param[out] buf Destination buffer.
- * @param[in] nbytes Maximum bytes to read.
- * @param[out] bytes_read Number of bytes actually read.
- * @return SQLI_OK on success.
- */
-sqli_status sqli_sblob_read(sqli_conn_t *conn, int lofd, void *buf, size_t nbytes, size_t *bytes_read);
-
-/**
- * @brief Seek and read data from an open smart large object using SQ_LODATA (subCom = 1).
- * @param[in] conn Active connection.
- * @param[in] lofd Open file descriptor handle.
- * @param[in] offset Byte offset to seek to.
- * @param[out] buf Destination buffer.
- * @param[in] nbytes Maximum bytes to read.
- * @param[out] bytes_read Number of bytes actually read.
- * @return SQLI_OK on success.
- */
-sqli_status sqli_sblob_read_seek(sqli_conn_t *conn, int lofd, int64_t offset,
-                                 void *buf, size_t nbytes, size_t *bytes_read);
-
-/**
- * @brief Write data to an open smart large object using SQ_LODATA (subCom = 2).
- * @param[in] conn Active connection.
- * @param[in] lofd Open file descriptor handle.
- * @param[in] buf Source buffer to write.
- * @param[in] nbytes Number of bytes to write.
- * @param[out] bytes_written Number of bytes written confirmed by server.
- * @return SQLI_OK on success.
- */
-sqli_status sqli_sblob_write(sqli_conn_t *conn, int lofd, const void *buf, size_t nbytes, size_t *bytes_written);
-
-/**
- * @brief Convenience function to read a smart large object directly from a result column.
- * @param[in] res Result handle with active row.
- * @param[in] col_index 0-based column index of BLOB or CLOB.
- * @param[out] buf Destination buffer.
- * @param[in] nbytes Maximum bytes to read.
- * @param[out] bytes_read Number of bytes actually read.
- * @return SQLI_OK on success.
- */
-sqli_status sqli_result_read_sblob(sqli_result_t *res, int col_index,
-                                   void *buf, size_t nbytes, size_t *bytes_read);
 
 /* ----------------------------------------------------------------
  * Logging levels (for configuration)

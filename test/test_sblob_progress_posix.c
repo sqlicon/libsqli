@@ -1,3 +1,4 @@
+#include "libsqli/sqli_sblob.h"
 #include "libsqli/sqli.h"
 #include "unity.h"
 #include "sqli_internal.h"

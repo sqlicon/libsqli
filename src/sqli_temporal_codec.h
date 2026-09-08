@@ -13,6 +13,7 @@ enum { SQLI_DATE_WIRE_SIZE = 4, SQLI_TEMPORAL_WIRE_CAPACITY = 12 };
  * the descriptor width. Encode accepts at least that capacity and returns width.
  * Qualifiers support server fractions 1..5 and interval leading precision 1..9.
  */
+sqli_status sqli_temporal_decode_range(uint16_t qualifier, bool interval, sqli_temporal_range_t *out);
 sqli_status sqli_temporal_wire_size(uint16_t qualifier, bool interval, size_t *out);
 sqli_status sqli_date_decode_wire(const uint8_t *bytes, size_t length, sqli_date_t *out);
 sqli_status sqli_date_encode_wire(const sqli_date_t *value, uint8_t *bytes,

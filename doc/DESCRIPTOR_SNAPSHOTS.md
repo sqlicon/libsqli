@@ -15,14 +15,18 @@ target association remain pending. The catalog component remains deferred.
 | `sqli_stmt_get_descriptor(stmt, &snapshot)` | Acquire the statement result's current server descriptor. |
 | `sqli_descriptor_retain(snapshot)` | Acquire another reference without allocation; reference-count overflow returns `SQLI_LIMIT_EXCEEDED`. |
 | `sqli_descriptor_release(snapshot)` | Release one reference; NULL is allowed. |
-| `sqli_descriptor_get_info(snapshot, &info)` | Copy the preserved header attributes. |
-| `sqli_descriptor_get_field(snapshot, index, &field)` | Copy one field's attributes using a zero-based index. |
-| `sqli_descriptor_get_names(snapshot, &names)` | Borrow the complete original names table. |
+| `sqli_descriptor_get_field_count(snapshot, &count)` | Read the number of server-described fields. |
+| `sqli_descriptor_get_field(snapshot, index, &field)` | Borrow an opaque const field view using a zero-based index. |
+| `sqli_descriptor_field_get_name(field, &name)` | Borrow the complete field name. |
+| `sqli_descriptor_field_get_type_owner/type_name(field, &bytes)` | Borrow the named type identity, when supplied. |
+| `sqli_descriptor_field_get_type(field, &type)` | Read a supported semantic column type. |
+| `sqli_descriptor_field_get_precision/scale(field, &value)` | Read validated DECIMAL/MONEY precision or fixed scale. |
+| `sqli_descriptor_field_get_temporal_range(field, &range)` | Read the validated DATETIME/INTERVAL range and fractional precision. |
 
 Successful acquisition requires a matching release. A reference remains valid
 after result or statement close/destruction, connection destruction, and receipt
 of a replacement descriptor. Replacement does not modify previously acquired
-snapshots. Getters copy small structures; their byte spans borrow snapshot storage.
+snapshots. Field views and byte spans borrow snapshot storage; no per-field allocation occurs.
 Do not free these spans or use them after releasing the reference that keeps them
 alive. A successful acquisition overwrites its output; release any previous owned
 reference first or use a separate output variable.
@@ -46,7 +50,23 @@ All public failures leave output arguments unchanged. Invalid pointers return
 Acquisition and getters do not allocate. These statuses describe local outcomes;
 they do not fabricate server SQL diagnostics.
 
-## Preserved information
+Property getters also return `SQLI_METADATA_UNAVAILABLE` when the server did not
+supply a property, its type is unknown or unsupported, or the property does not
+apply to that type. Floating DECIMAL scale is unavailable, not 255. Unknown type
+flags and extended identifiers are not silently discarded. Malformed known
+DECIMAL or temporal qualifiers return `SQLI_PROTO_ERROR`; validation shares the
+native wire codecs. No hidden SQL or text conversion is performed.
+
+The experimental API deliberately removes `sqli_descriptor_get_info` and
+`sqli_descriptor_get_names`, moves `sqli_descriptor_info_t` into the private
+header, and makes `sqli_descriptor_field_t` incomplete in the public header.
+Migrate field variables to `const sqli_descriptor_field_t *` and use property
+getters instead of member access. Field pointers must never be freed separately.
+Public DATE values, temporal ranges and native import/export parts remain plain
+value structures. Legacy DATETIME/INTERVAL result structures remain transitional
+until their getter migration; hiding them now would introduce a second handle API.
+
+## Internally preserved information
 
 | Structure | Preserved attributes |
 |---|---|
@@ -72,8 +92,8 @@ span need not have a non-NULL data pointer. Each consumed name must terminate
 inside the received table; missing termination is a protocol error.
 
 The existing `sqli_column_info` remains a transitional projection with its
-127-byte display-name limit and existing type normalization. Full names and raw
-types are available through snapshots. An absent field name is not replaced with
+127-byte display-name limit and existing type normalization. Full names are available through public snapshot views; raw
+types remain available internally for future verified interpretation. An absent field name is not replaced with
 an extended type owner in the snapshot, even where legacy display code uses that
 fallback.
 
@@ -86,7 +106,7 @@ replacement and preserves the preceding descriptor and column projection.
 This metadata guarantee does not promise connection reuse after a receive error
 or redesign multiple-result handling.
 
-`SQLI_DESCRIPTOR_MAX_BYTES` limits each snapshot's retained allocations to 16 MiB:
+The private `SQLI_DESCRIPTOR_MAX_BYTES` limits each snapshot's retained allocations to 16 MiB:
 its object, field array, owner/type strings and original names table together.
 Padding is consumed but not retained. The legacy column projection is a separate
 allocation. Length arithmetic is checked before allocation; exceeding the budget
@@ -117,6 +137,10 @@ beyond result/connection lifetime. Four threads exercise concurrent reference
 operations and getters. The high-bit fixtures also exposed and verified a fix
 for signed-shift undefined behavior in the shared 32-bit receive helper.
 
+Semantic getter tests cover fixed/floating decimals, invalid qualifiers, unknown
+flags and extended types, temporal ranges, missing and empty names, and unchanged
+outputs on failure.
+
 Linux allocation-failure tests verify unchanged outputs and budgets, storage
 limits, and allocation-free acquisition/getters. Debug tests use ASan/UBSan;
 direct descriptor and allocation tests also run with LeakSanitizer enabled.
@@ -124,7 +148,7 @@ Release builds exercise the same descriptor and allocation tests without sanitiz
 
 Live probes retain snapshots across destruction for four PREPARE statement forms
 and an empty SELECT with a 128-byte alias. The native wire executable additionally
-passes all 32 fixed receive and 32 native bind fixtures against the test server,
+covers 36 fixed receive and 36 native bind fixtures against the test server,
 with ASan/UBSan and LeakSanitizer enabled. These probes verify the available server
 configuration; they do not establish every server version or descriptor mode.
 
