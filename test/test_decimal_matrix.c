@@ -38,7 +38,7 @@ static bool check_case(sqli_conn_t *conn, sqli_decimal_t *source, sqli_decimal_t
         result->tuple_buffer != NULL && result->tuple_len == length + integer_width &&
         memcmp(encoded, result->tuple_buffer, length) == 0 &&
         sqli_result_get_int(result, sentinel_column) == sentinel &&
-        sqli_decimal_decode_wire(result->tuple_buffer, length, descriptor, decoded) == SQLI_OK;
+        sqli_result_get_decimal(result, decimal_column, decoded) == SQLI_OK;
     if (ok) {
         bool actual_null = false;
         ok = sqli_decimal_is_null(decoded, &actual_null) == SQLI_OK && actual_null == is_null;

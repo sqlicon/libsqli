@@ -235,6 +235,17 @@ if (SQLI_BUILD_TESTS)
     target_link_libraries(sqli_decimal_test PRIVATE sqli)
     add_test(NAME sqli_decimal_values COMMAND sqli_decimal_test)
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        add_executable(sqli_native_decimal_getter_test
+            ${SQLI_TEST_DIR}/test_native_decimal_getter_linux.c
+            ${SQLI_TEST_DIR}/allocation_test_linux.c ${UNITY_SRC})
+        target_include_directories(sqli_native_decimal_getter_test PRIVATE ${unity_SOURCE_DIR}/src ${SQLI_SRC_DIR})
+        target_link_libraries(sqli_native_decimal_getter_test PRIVATE sqli)
+        target_link_options(sqli_native_decimal_getter_test PRIVATE
+            "LINKER:--wrap=malloc" "LINKER:--wrap=calloc")
+        add_test(NAME sqli_native_decimal_getter COMMAND sqli_native_decimal_getter_test)
+        if (SQLI_ENABLE_SANITIZERS)
+            set_tests_properties(sqli_native_decimal_getter PROPERTIES ENVIRONMENT "LSAN_OPTIONS=detect_leaks=0")
+        endif()
         add_executable(sqli_result_fetch_test
             ${SQLI_TEST_DIR}/test_result_fetch_linux.c
             ${SQLI_TEST_DIR}/allocation_test_linux.c ${UNITY_SRC})

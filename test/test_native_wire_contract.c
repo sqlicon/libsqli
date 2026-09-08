@@ -196,8 +196,7 @@ static bool check_result(sqli_result_t *result, const struct wire_fixture *fixtu
         size_t required = 0;
         bool is_null = false;
         bool ok = sqli_decimal_create(&value) == SQLI_OK &&
-            sqli_decimal_decode_wire(result->tuple_buffer, fixture->wire_length,
-                                     (uint16_t)fixture->qualifier, value) == SQLI_OK &&
+            sqli_result_get_decimal(result, value_column, value) == SQLI_OK &&
             sqli_decimal_format(value, decimal_text, sizeof(decimal_text), &required, &is_null) == SQLI_OK;
         sqli_decimal_destroy(value);
         if (!ok)

@@ -16,3 +16,4 @@ This directory contains the public reference documentation for the `libsqli` lib
 * [Checked Decimal Wire Codecs](NATIVE_DECIMAL_CODECS.md) - Exact DECIMAL/NUMERIC/MONEY tuple conversion, fixed/floating scales and exponent-boundary validation.
 * [Immutable Descriptor Snapshots](DESCRIPTOR_SNAPSHOTS.md) - Complete raw server metadata, explicit availability and ownership beyond statement/result lifetime.
 * [Checked Result Fetching](CHECKED_RESULT_FETCH.md) - Explicit row/EOF/error outcomes, native layout validation and streaming failure propagation.
+* [Native Decimal Result Getter](NATIVE_DECIMAL_GETTER.md) - Exact owned decimal reads, explicit type/NULL/error handling and public-API live matrix coverage.

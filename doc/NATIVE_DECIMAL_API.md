@@ -150,7 +150,9 @@ ctest --test-dir build -R '^sqli_decimal_' --output-on-failure
 
 No database is needed for these tests. Existing wire fixtures remain the separate
 baseline for integration. Subsequent [checked decimal tuple codecs](NATIVE_DECIMAL_CODECS.md)
-implement binary conversion; public result/bind migration remains pending.
+implement binary conversion. The [native result getter](NATIVE_DECIMAL_GETTER.md)
+now reads owned decimal values; legacy getter and public bind migration remain
+pending.
 
 Validation recorded for this iteration (2026-09-07): Debug and Release builds
 passed with the project warning flags. All seven Debug CTest entries passed,

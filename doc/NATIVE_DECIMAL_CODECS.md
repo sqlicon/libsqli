@@ -7,10 +7,12 @@ numeric object. No currency is inferred for MONEY. The implementation requires
 no connection, text conversion, floating-point intermediate, locale or external
 arithmetic library. It does not allocate after the caller creates value objects.
 
-The public result getters and bind functions have not yet migrated. Descriptor
-snapshots, explicit parameter targets and binding snapshots remain separate
-work, followed by consumer migration and only then the catalog component.
-This is an internal codec API, not an additional public compatibility API.
+This codec iteration did not yet migrate public result getters or bind functions.
+Subsequent [descriptor snapshots](DESCRIPTOR_SNAPSHOTS.md) and the
+[native decimal getter](NATIVE_DECIMAL_GETTER.md) now provide owned metadata and
+public binary decimal reads. Explicit parameter targets, binding snapshots and
+legacy consumer migration remain separate work, followed by the catalog.
+The codec itself remains an internal API.
 
 ## Descriptor and buffer contracts
 

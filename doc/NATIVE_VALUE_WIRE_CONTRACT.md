@@ -18,6 +18,8 @@ probe to production encoding. The subsequent
 metadata with independent ownership; parameter association remains pending.
 [Checked result fetching](CHECKED_RESULT_FETCH.md) subsequently adds explicit
 row/EOF/error outcomes and rejects malformed native field layouts before delivery.
+The [native decimal getter](NATIVE_DECIMAL_GETTER.md) now connects public result
+access to the decimal codec, retaining independent value ownership.
 
 ## Evidence and scope
 

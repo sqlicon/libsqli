@@ -42,7 +42,8 @@ typedef enum {
     SQLI_BUFFER_TOO_SMALL,
     SQLI_NULL_VALUE,
     SQLI_LIMIT_EXCEEDED,
-    SQLI_METADATA_UNAVAILABLE
+    SQLI_METADATA_UNAVAILABLE,
+    SQLI_TYPE_MISMATCH
 } sqli_status;
 /** @} */
 
@@ -1038,6 +1039,19 @@ int sqli_result_column_type(sqli_result_t *result, int col_index);
 /* ----------------------------------------------------------------
  * Row data extractors (only valid between sqli_result_next() == 1 calls)
  * ---------------------------------------------------------------- */
+
+/** Read a DECIMAL/NUMERIC/MONEY column directly into an existing native object.
+ * The index is zero-based. No implicit conversion from other column types:
+ * SQLI_TYPE_MISMATCH also applies to a NULL column of the wrong type.
+ * Requires a successfully positioned, validated row. SQL NULL returns SQLI_OK
+ * and sets the object's NULL state. Malformed bytes/descriptors return
+ * SQLI_PROTO_ERROR. Every failure leaves the destination unchanged.
+ * No allocation or text conversion is performed. The owned value survives row
+ * advancement and result destruction. The legacy was_null flag is unchanged;
+ * use sqli_decimal_is_null on the destination. Synchronize access to the result
+ * and destination externally; destination must not overlap result storage.
+ */
+sqli_status sqli_result_get_decimal(sqli_result_t *result, size_t index, sqli_decimal_t *out);
 
 /* Extract an int32 value from column col_index (0-based). */
 int32_t sqli_result_get_int(sqli_result_t *result, int col_index);
