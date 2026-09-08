@@ -1170,8 +1170,25 @@ sqli_status sqli_sblob_write_stream(sqli_conn_t *conn, sqli_sblob_t *lob,
             return SQLI_ERR;
         }
 
+        if (nread > UINT64_MAX - total) {
+            set_error(conn, "smart large object stream byte count exceeds supported range");
+            return SQLI_LIMIT_EXCEEDED;
+        }
+
         size_t written = 0;
         rc = sqli_sblob_write(conn, lob->lofd, chunk, nread, &written);
+        /* Count only progress reported by the write operation, including a
+         * confirmed partial write. Reader output alone is not confirmation. */
+        if (written <= nread) {
+            total += written;
+            if (bytes_written != NULL)
+                *bytes_written = total;
+        } else {
+            if (rc != SQLI_OK)
+                return rc;
+            set_error(conn, "smart large object write reported excessive progress");
+            return SQLI_PROTO_ERROR;
+        }
         if (rc != SQLI_OK)
             return rc;
 
@@ -1179,8 +1196,6 @@ sqli_status sqli_sblob_write_stream(sqli_conn_t *conn, sqli_sblob_t *lob,
             set_error(conn, "short write to smart large object");
             return SQLI_ERR;
         }
-
-        total += written;
     }
 
     if (bytes_written != NULL)

@@ -1567,7 +1567,13 @@ sqli_status sqli_sblob_write_buffer(sqli_conn_t *conn, sqli_sblob_t *lob,
  * @param[in,out] lob Created Smart-LOB handle.
  * @param[in] reader Reader callback function.
  * @param[in] context User context passed to callback.
- * @param[out] bytes_written Optional pointer to receive confirmed total bytes written.
+ * @param[out] bytes_written Optional confirmed byte count, initialized to zero
+ * before argument validation and updated after each write. Preserved on reader,
+ * protocol and short-write errors. Includes any partial count confirmed by the
+ * underlying write operation; excludes unacknowledged data and data returned by
+ * a failing reader. Counts progress in the current transaction, not committed
+ * durability. This function does not automatically close/release the LOB or
+ * request a transaction rollback on failure.
  * @return SQLI_OK on success.
  */
 sqli_status sqli_sblob_write_stream(sqli_conn_t *conn, sqli_sblob_t *lob,
