@@ -139,7 +139,7 @@ after any urgent-send attempt. A generation alone is not a wire barrier.
 The pool must wait for both execution and the accepted sender before recycling
 a slot, including when descriptor numbers can be reused by the operating system.
 
-### Completion and pool experiments
+### Original completion and pool experiments (ab059dc)
 
 The manual `sqli_cancel_race_probe` uses a one-slot pool and two independently
 locked table rows. `--late-reuse` deliberately releases a completed operation's
@@ -175,7 +175,7 @@ SQLI_IO_TIMEOUT_SEC=10 LSAN_OPTIONS=detect_leaks=1 build/sqli_cancel_race_probe 
 SQLI_IO_TIMEOUT_SEC=10 LSAN_OPTIONS=detect_leaks=1 build/sqli_cancel_race_probe --race-discard
 ```
 
-### TLS follow-up (2026-09-08)
+### Original TLS follow-up (2026-09-08, ab059dc)
 
 The configured server's TLS listener accepted the native test account. The
 separate PAM listener and the TLS listener have different authentication
@@ -203,7 +203,7 @@ server, not a synchronization barrier or general cancellation support.
 The initial TLS discard experiment terminated with SIGPIPE (exit status 141).
 The existing TLS detach implementation calls `SSL_shutdown`, which can write
 close_notify even after the probe has shut down the socket. The manual race
-probe now ignores SIGPIPE explicitly for its own process so it can complete the
+probe at that revision ignored SIGPIPE explicitly for its own process so it can complete the
 experiment. This is a probe-only policy, not a library fix or a recommendation
 for applications. Production disposal needs a no-I/O TLS teardown, bounded
 transport termination and safe signal handling without changing application-wide
@@ -214,3 +214,18 @@ own tables.
 The final TLS probes pass with ASan/UBSan and LeakSanitizer. All 19 selected local
 non-unit CTest suites pass in the Debug sanitizer build. The public API remains
 unchanged; this iteration adds evidence and the proposed lifecycle contract.
+
+## Safe-disposal implementation follow-up
+
+The [lifecycle document](CANCELLATION_LIFECYCLE.md) now records implemented private
+operation lifetime management, an atomic connection/lease pin and abortive TLS
+teardown without SSL_shutdown. The current `--race-discard` probe uses those
+primitives, checks release rejection while pinned, and issues a terminal request
+after the next pool acquisition. It no longer installs a SIGPIPE handler.
+
+The current timings include 300 ms in addition to 90/100/110 ms. Plain TCP and
+TLS both passed: every attempted send caused a new physical session, even when
+SQL succeeded; completion before the 300 ms request caused no send and preserved
+the session. The following locked operation reached its normal lock timeout in
+all cases. The earlier raw-reuse modes remain explicitly negative experiments.
+There is still no public cancellation API or bounded cleanup-deadline guarantee.

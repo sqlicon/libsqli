@@ -192,6 +192,23 @@ void sqli_tcp_close(int fd)
         sqli_log(SQLI_LOG_WARN, "closesocket(fd=%d) failed", fd);
 }
 
+sqli_status sqli_tcp_discard(int fd)
+{
+    if (fd < 0)
+        return SQLI_OK;
+    sqli_status status = sqli_tcp_tls_discard(fd);
+    if (status != SQLI_OK)
+        return status;
+    if (shutdown((SOCKET)fd, SD_BOTH) != 0) {
+        int socket_error = WSAGetLastError();
+        if (socket_error != WSAENOTCONN)
+            status = SQLI_IO_ERROR;
+    }
+    if (closesocket((SOCKET)fd) != 0)
+        status = SQLI_IO_ERROR;
+    return status;
+}
+
 static ssize_t sqli_socket_recv_loop(int fd, unsigned char *buf, size_t count, bool exact)
 {
     size_t total = 0;

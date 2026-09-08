@@ -90,7 +90,10 @@ sqli_status sqli_sblob_reader_read(sqli_sblob_read_cursor_t *reader, void *buffe
 /** Seek relative to this reader's position and read. Zero capacity does not seek. */
 sqli_status sqli_sblob_reader_read_seek(sqli_sblob_read_cursor_t *reader, int64_t relative_offset,
                                          void *buffer, size_t capacity, size_t *bytes_read);
-/** Close the independent server descriptor; repeat close succeeds. */
+/** Close the independent server descriptor; repeat close succeeds.
+ * After transport disposal, only invalidate the local reader; success does not
+ * confirm a server close or transaction rollback. The connection must stay alive.
+ */
 sqli_status sqli_sblob_reader_close(sqli_sblob_read_cursor_t *reader);
 /** Free client storage only, after close or connection termination; NULL allowed. */
 void sqli_sblob_reader_destroy(sqli_sblob_read_cursor_t *reader);

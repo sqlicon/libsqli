@@ -230,6 +230,32 @@ void sqli_tcp_close(int fd)
     }
 }
 
+sqli_status sqli_tcp_discard(int fd)
+{
+    if (fd < 0)
+        return SQLI_OK;
+    sqli_status status = sqli_tcp_tls_discard(fd);
+    if (status != SQLI_OK)
+        return status; /* Do not recycle a descriptor still registered with TLS. */
+    if (shutdown(fd, SHUT_RDWR) != 0) {
+        int saved_errno = errno;
+        if (saved_errno != ENOTCONN)
+            status = SQLI_IO_ERROR;
+    }
+    if (close(fd) != 0)
+        status = SQLI_IO_ERROR; /* Never retry close on a potentially reused fd. */
+    return status;
+}
+
+sqli_status sqli_tcp_interrupt(int fd)
+{
+    const unsigned char interrupt_byte = 0x42;
+    /* No retry, blocking wait, TLS access or process-wide signal change. */
+    ssize_t sent = send(fd, &interrupt_byte, sizeof(interrupt_byte),
+                        MSG_OOB | MSG_DONTWAIT | MSG_NOSIGNAL);
+    return sent == (ssize_t)sizeof(interrupt_byte) ? SQLI_OK : SQLI_IO_ERROR;
+}
+
 /* ----------------------------------------------------------------
  * sqli_tcp_read
  * ---------------------------------------------------------------- */

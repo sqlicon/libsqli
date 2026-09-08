@@ -2,10 +2,11 @@
 #include "libsqli/sqli.h"
 #include "sqli_internal.h"
 #include "sqli_tcp.h"
+#include "sqli_cancel.h"
 
 #include <errno.h>
 #include <pthread.h>
-#include <signal.h>
+
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
@@ -21,6 +22,7 @@ struct delayed_action {
     int socket_fd;
     unsigned delay_ms;
     bool interrupt;
+    sqli_cancel_operation *operation;
     sqli_status status;
 };
 
@@ -83,8 +85,13 @@ static void *run_delayed(void *context)
         }
     }
     if (action->interrupt) {
+        if (action->operation != NULL) {
+            sqli_cancel_disposition disposition;
+            action->status = sqli_cancel_operation_request(action->operation, &disposition);
+            return NULL;
+        }
         const unsigned char request = interrupt_byte;
-        ssize_t sent = send(action->socket_fd, &request, sizeof(request), MSG_OOB);
+        ssize_t sent = send(action->socket_fd, &request, sizeof(request), MSG_OOB | MSG_NOSIGNAL);
         action->status = sent == (ssize_t)sizeof(request) ? SQLI_OK : SQLI_IO_ERROR;
     } else {
         action->status = sqli_rollback(action->connection);
@@ -115,6 +122,9 @@ static sqli_status run_case(sqli_conn_t *holder, sqli_pool_t *pool, const char *
                             bool late, bool discard, unsigned cancel_delay_ms)
 {
     sqli_conn_t *worker = NULL;
+    sqli_cancel_operation *operation = NULL;
+    bool operation_active = false;
+    bool send_attempted = false;
     sqli_status status = sqli_pool_acquire(pool, &worker);
     if (status != SQLI_OK)
         return status;
@@ -129,9 +139,24 @@ static sqli_status run_case(sqli_conn_t *holder, sqli_pool_t *pool, const char *
     if (status != SQLI_OK)
         goto cleanup;
 
+    if (discard) {
+        status = sqli_cancel_operation_create(&operation);
+        if (status != SQLI_OK)
+            goto cleanup;
+        status = sqli_cancel_operation_begin(operation, worker, &operation_active);
+        if (status != SQLI_OK || !operation_active) {
+            status = SQLI_ERR;
+            goto cleanup;
+        }
+        if (sqli_pool_release(pool, worker) != SQLI_INVALID_STATE) {
+            status = SQLI_ERR;
+            goto cleanup;
+        }
+    }
+
     /* Capture the old operation's socket before it finishes. */
     struct delayed_action cancel = {.socket_fd = worker->socket_fd,
-        .delay_ms = cancel_delay_ms, .interrupt = true};
+        .delay_ms = cancel_delay_ms, .interrupt = true, .operation = operation};
     struct delayed_action release = {.connection = holder, .delay_ms = release_delay_ms};
     pthread_t release_thread, cancel_thread;
     if (pthread_create(&release_thread, NULL, run_delayed, &release) != 0) {
@@ -151,10 +176,14 @@ static sqli_status run_case(sqli_conn_t *holder, sqli_pool_t *pool, const char *
     snprintf(sql, sizeof(sql), "UPDATE %s SET amount = amount + 10 WHERE id = 1", table);
     int first_code = 0;
     sqli_status first_status = execute_sql(worker, sql, &first_code);
+    if (operation_active) {
+        status = sqli_cancel_operation_finish(operation, first_status);
+        operation_active = false;
+    }
     join_action(release_thread);
     if (cancel_running)
         join_action(cancel_thread);
-    if (release.status != SQLI_OK || (!late && cancel.status != SQLI_OK) ||
+    if (status != SQLI_OK || release.status != SQLI_OK || (!late && cancel.status != SQLI_OK) ||
         (late && first_status != SQLI_OK) ||
         (first_status != SQLI_OK && first_code != interruption_code)) {
         status = SQLI_ERR;
@@ -162,15 +191,11 @@ static sqli_status run_case(sqli_conn_t *holder, sqli_pool_t *pool, const char *
     }
 
     if (discard) {
-        /* No ordinary SQL or TLS I/O remains active; discard this physical session. */
-        int fd = worker->socket_fd;
-        if (shutdown(fd, SHUT_RDWR) != 0) {
-            status = SQLI_IO_ERROR;
+        sqli_cancel_snapshot snapshot;
+        status = sqli_cancel_operation_snapshot(operation, &snapshot);
+        if (status != SQLI_OK)
             goto cleanup;
-        }
-        sqli_tcp_close(fd);
-        worker->socket_fd = -1;
-        worker->state = SQLI_CONN_CLOSED;
+        send_attempted = snapshot.send_attempted;
     }
     status = sqli_pool_release(pool, worker);
     if (status != SQLI_OK)
@@ -185,6 +210,14 @@ static sqli_status run_case(sqli_conn_t *holder, sqli_pool_t *pool, const char *
     status = session_id(worker, &next_session);
     if (status != SQLI_OK)
         goto cleanup;
+    if (operation != NULL) {
+        sqli_cancel_disposition disposition;
+        status = sqli_cancel_operation_request(operation, &disposition);
+        if (status != SQLI_OK || disposition != SQLI_CANCEL_COMPLETED) {
+            status = SQLI_ERR;
+            goto cleanup;
+        }
+    }
     status = lock_row(holder, table, 2);
     if (status != SQLI_OK)
         goto cleanup;
@@ -199,17 +232,21 @@ static sqli_status run_case(sqli_conn_t *holder, sqli_pool_t *pool, const char *
     sqli_status next_status = execute_sql(worker, sql, &next_code);
     if (late)
         join_action(cancel_thread);
-    printf("mode=%s delay_ms=%u first=%s first_code=%d next=%s next_code=%d same_session=%d\n",
+    printf("mode=%s delay_ms=%u first=%s first_code=%d next=%s next_code=%d same_session=%d send_attempted=%d\n",
         late ? "late-reuse" : discard ? "race-discard" : "race-reuse", cancel_delay_ms,
         sqli_status_name(first_status), first_code, sqli_status_name(next_status), next_code,
-        initial_session == next_session);
-    if (next_status == SQLI_OK || (discard && initial_session == next_session) ||
+        initial_session == next_session, send_attempted);
+    if (next_status == SQLI_OK || (discard && ((initial_session != next_session) != send_attempted)) ||
         (!discard && initial_session != next_session) ||
         (late && (cancel.status != SQLI_OK || next_code != interruption_code)) ||
         (!late && next_code != lock_timeout_code && next_code != interruption_code) ||
         (discard && next_code == interruption_code))
         status = SQLI_ERR;
 cleanup:
+    if (operation_active && sqli_cancel_operation_finish(operation, status) != SQLI_OK)
+        status = SQLI_ERR;
+    if (sqli_cancel_operation_destroy(operation) != SQLI_OK)
+        status = SQLI_ERR;
     if (holder->in_transaction && sqli_rollback(holder) != SQLI_OK)
         status = SQLI_ERR;
     if (worker != NULL && sqli_pool_release(pool, worker) != SQLI_OK)
@@ -223,16 +260,6 @@ int main(int argc, char **argv)
     bool discard = argc == 2 && strcmp(argv[1], "--race-discard") == 0;
     if (!late && !discard && !(argc == 2 && strcmp(argv[1], "--race-reuse") == 0)) {
         fprintf(stderr, "Usage: %s --late-reuse|--race-reuse|--race-discard\n", argv[0]);
-        return EXIT_FAILURE;
-    }
-    /* Probe-only policy: TLS detach currently sends close_notify after shutdown.
-     * Keep SIGPIPE from terminating this experiment; production discard needs
-     * a separate no-I/O TLS teardown and must not change process signal policy.
-     */
-    struct sigaction pipe_action = {.sa_handler = SIG_IGN};
-    if (sigemptyset(&pipe_action.sa_mask) != 0 ||
-        sigaction(SIGPIPE, &pipe_action, NULL) != 0) {
-        fputs("Cannot configure probe SIGPIPE policy\n", stderr);
         return EXIT_FAILURE;
     }
     sqli_conn_t *holder = NULL;
@@ -266,7 +293,7 @@ int main(int argc, char **argv)
     status = execute_sql(holder, sql, NULL);
     if (status != SQLI_OK)
         goto cleanup;
-    const unsigned delays[] = {90, 100, 110};
+    const unsigned delays[] = {90, 100, 110, 300};
     for (size_t i = 0; i < (late ? 1 : sizeof(delays) / sizeof(delays[0])); i++) {
         status = run_case(holder, pool, table, late, discard, delays[i]);
         if (status != SQLI_OK)

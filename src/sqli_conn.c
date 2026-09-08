@@ -3,6 +3,7 @@
 #include "sqli_internal.h"
 
 #include "sqli_log.h"
+#include "sqli_tcp.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -309,6 +310,7 @@ sqli_status sqli_create(sqli_conn_t **conn)
         return SQLI_ALLOC_FAIL;
     }
 
+    atomic_init(&c->lifecycle, 0);
     clear_error(c);
     c->socket_fd = -1;
     c->autocommit = true;
@@ -373,6 +375,10 @@ void sqli_destroy(sqli_conn_t *conn)
     if (conn == NULL)
         return;
 
+    if (atomic_load(&conn->lifecycle) & SQLI_CONN_PINNED) {
+        sqli_log(SQLI_LOG_ERROR, "cannot destroy a connection pinned by an operation");
+        return;
+    }
     /* Honor the public lifecycle contract and release transport resources too. */
     sqli_close(conn);
     sqli_charset_decoder_close(&conn->decode_cs);
@@ -400,6 +406,26 @@ void sqli_destroy(sqli_conn_t *conn)
 
     sqli_log(SQLI_LOG_DEBUG, "destroying connection");
     free(conn);
+}
+
+sqli_status sqli_conn_discard(sqli_conn_t *conn)
+{
+    if (conn == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    atomic_fetch_or(&conn->lifecycle, SQLI_CONN_DISCARDED);
+    sqli_status status = sqli_tcp_discard(conn->socket_fd);
+    if (status == SQLI_ERR)
+        return status; /* TLS registry synchronization failed; retain ownership. */
+    conn->socket_fd = -1;
+    conn->state = SQLI_CONN_ERROR;
+    conn->database_open = false;
+    conn->read_buf_len = 0;
+    conn->read_buf_pos = 0;
+    conn->write_buf_len = 0;
+    conn->lo_create_fphandle = -1;
+    conn->lo_create_dbname[0] = '\0';
+    /* No rollback claim or transaction epoch change after transport loss. */
+    return status;
 }
 
 /* ----------------------------------------------------------------

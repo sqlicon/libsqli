@@ -110,6 +110,7 @@ if (NOT WIN32)
     target_sources(sqli PRIVATE
         ${SQLI_SRC_DIR}/sqli_charset_posix.c
         ${SQLI_SRC_DIR}/sqli_tcp_posix.c
+        ${SQLI_SRC_DIR}/sqli_cancel_posix.c
         ${SQLI_SRC_DIR}/sqli_unix_posix.c
     )
 else()
@@ -342,6 +343,19 @@ if (SQLI_BUILD_TESTS)
         add_test(NAME sqli_native_bind_live COMMAND sqli_native_wire_contract --live-bind)
         set_tests_properties(sqli_native_wire_live sqli_native_bind_live PROPERTIES
             LABELS "live;native" SKIP_RETURN_CODE 77 TIMEOUT 120)
+    endif()
+
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(sqli_cancel_lifecycle_test
+            ${SQLI_TEST_DIR}/test_cancel_lifecycle_posix.c ${UNITY_SRC})
+        target_include_directories(sqli_cancel_lifecycle_test PRIVATE
+            ${unity_SOURCE_DIR}/src ${SQLI_SRC_DIR})
+        target_link_libraries(sqli_cancel_lifecycle_test PRIVATE sqli)
+        target_link_options(sqli_cancel_lifecycle_test PRIVATE
+            "LINKER:--wrap=SSL_shutdown" "LINKER:--wrap=sqli_tcp_interrupt"
+            "LINKER:--wrap=sqli_connect")
+        add_test(NAME sqli_cancel_lifecycle COMMAND sqli_cancel_lifecycle_test)
+        set_tests_properties(sqli_cancel_lifecycle PROPERTIES TIMEOUT 20)
     endif()
 
     # Manual protocol experiment; deliberately excluded from automatic CTest runs.

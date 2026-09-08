@@ -22,6 +22,8 @@ extern pthread_mutex_t g_tls_mutex;
 tls_entry *find_tls_entry(int fd);
 int sqli_tcp_tls_attach(int fd, void *ssl_ctx, void *ssl);
 void sqli_tcp_tls_detach(int fd);
+/* Caller has joined all TLS users. Free registry/session state without I/O. */
+sqli_status sqli_tcp_tls_discard(int fd);
 
 /* TLS connection setup */
 

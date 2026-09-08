@@ -110,6 +110,7 @@ static sqli_status ensure_slot_connected(sqli_pool_t *pool, size_t idx)
 
     sqli_pool_slot *slot = &pool->slots[idx];
     if (slot->conn != NULL &&
+        !(atomic_load(&slot->conn->lifecycle) & SQLI_CONN_DISCARDED) &&
         slot->conn->state == SQLI_CONN_READY &&
         slot->conn->socket_fd >= 0) {
         return SQLI_OK;
@@ -199,6 +200,7 @@ sqli_status sqli_pool_create(sqli_pool_t **pool,
             sqli_pool_destroy(p);
             return rc;
         }
+        atomic_fetch_or(&conn->lifecycle, SQLI_CONN_RELEASED);
         p->slots[i].conn = conn;
     }
 
@@ -243,9 +245,11 @@ sqli_status sqli_pool_acquire_timeout(sqli_pool_t *pool, sqli_conn_t **conn,
             slot->in_use = true;
 
             if (slot->conn != NULL &&
+                !(atomic_load(&slot->conn->lifecycle) & SQLI_CONN_DISCARDED) &&
                 slot->conn->state == SQLI_CONN_READY &&
                 slot->conn->socket_fd >= 0) {
                 if (is_socket_alive(slot->conn->socket_fd)) {
+                    atomic_fetch_and(&slot->conn->lifecycle, ~SQLI_CONN_RELEASED);
                     *conn = slot->conn;
                     pthread_mutex_unlock(&pool->mu);
                     return SQLI_OK;
@@ -312,6 +316,13 @@ sqli_status sqli_pool_release(sqli_pool_t *pool, sqli_conn_t *conn)
 
     for (size_t i = 0; i < pool->size; i++) {
         if (pool->slots[i].conn == conn) {
+            unsigned expected = atomic_load(&conn->lifecycle);
+            if (!pool->slots[i].in_use || (expected & SQLI_CONN_PINNED) ||
+                !atomic_compare_exchange_strong(&conn->lifecycle, &expected,
+                                                expected | SQLI_CONN_RELEASED)) {
+                pthread_mutex_unlock(&pool->mu);
+                return SQLI_INVALID_STATE;
+            }
             pool->slots[i].in_use = false;
             pthread_cond_signal(&pool->cv);
             pthread_mutex_unlock(&pool->mu);
@@ -329,6 +340,13 @@ void sqli_pool_destroy(sqli_pool_t *pool)
         return;
 
     pthread_mutex_lock(&pool->mu);
+    for (size_t i = 0; i < pool->size; i++) {
+        if (pool->slots[i].in_use) {
+            pthread_mutex_unlock(&pool->mu);
+            sqli_log(SQLI_LOG_ERROR, "cannot destroy a pool with outstanding leases");
+            return;
+        }
+    }
     pool->shutting_down = true;
     pthread_cond_broadcast(&pool->cv);
     pthread_mutex_unlock(&pool->mu);

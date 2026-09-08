@@ -10,6 +10,7 @@
 #include "sqli_temporal_codec.h"
 #include "sqli_decimal_codec.h"
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stddef.h>
 #include <stdarg.h>
 #include <string.h>
@@ -159,7 +160,15 @@ typedef struct {
  * Connection structure (opaque to callers)
  * ---------------------------------------------------------------- */
 
+/* Atomic lease gate. Ordinary connection fields remain execution-thread owned.
+ * A pin covers both the operation and its serialized interrupt sender.
+ */
+enum { SQLI_CONN_PINNED = 1u << 0, SQLI_CONN_DISCARDED = 1u << 1,
+       SQLI_CONN_RELEASED = 1u << 2 };
+
 struct sqli_conn {
+    atomic_uint lifecycle;
+
     /* --- Error handling --- */
     char errmsg[512];
     sqli_error_info error_info;
@@ -237,6 +246,11 @@ struct sqli_batch_result {
 /* ----------------------------------------------------------------
  * Buffer helpers (sqli_conn.c)
  * ---------------------------------------------------------------- */
+
+/* Exclusive execution owner; no active sender. Preserves diagnostics and
+ * transaction knowledge, rejects reuse of this connection object permanently.
+ */
+sqli_status sqli_conn_discard(sqli_conn_t *conn);
 
 /* Grow a buffer to at least `min_size` bytes. */
 sqli_status sqli_conn_grow_buf(sqli_conn_t *c, uint8_t **buf, size_t *len,

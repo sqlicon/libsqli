@@ -6,7 +6,7 @@ It does not introduce provisional function names into the public API.
 
 | Request | Decision | Current deliverable / next gate |
 | --- | --- | --- |
-| FR-1: active-operation cancellation | Plain TCP/TLS lock-wait and pool-race evidence; lifecycle contract proposed | See [cancellation evidence and design gates](CANCELLATION_FEASIBILITY.md); public cancellation remains unimplemented |
+| FR-1: active-operation cancellation | Private lifecycle and safe disposal implemented; public operation integration pending | See [cancellation evidence and design gates](CANCELLATION_FEASIBILITY.md); public cancellation remains unimplemented |
 | FR-2: child detach after fork | Establish a strict process contract first | [Process lifecycle](PROCESS_LIFECYCLE.md); comprehensive PID rejection and detach require a separate implementation |
 | FR-3: XA integration | Deferred until a concrete transaction-manager use case | Verify server/protocol support, recovery and branch states before defining an optional adapter |
 | FR-4: application API consistency | Implemented in `6bf8b86` | Checked scalars, local status text, zero-based parameter indices, private legacy codecs, independent Smart-LOB readers and checked introductory examples |
@@ -48,6 +48,7 @@ probes pass with ASan/UBSan and LeakSanitizer, including independent visibility
 after explicit rollback. No public cancellation or detach behavior was added.
 
 Cancellation follow-up: [handle lifetime and operation boundaries](CANCELLATION_LIFECYCLE.md)
-now specify single-use ownership and disposal after an interrupt attempt. TLS
-lock-wait cancellation works in the configured environment; safe no-I/O TLS
-disposal and public lifecycle enforcement remain implementation gates.
+now have private POSIX implementation and deterministic tests. TLS and plain TCP
+live probes verify safe disposal, pool handoff and suppressed post-terminal sends.
+Public operation integration and bounded cleanup deadlines remain implementation
+gates. See the lifecycle document for the precise scope and limitations.

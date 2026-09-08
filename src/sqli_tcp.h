@@ -9,6 +9,7 @@
  */
 
 #include <stddef.h>
+#include "libsqli/sqli.h"
 #include "sqli_platform.h"
 
 /*
@@ -26,6 +27,11 @@ int sqli_tcp_connect(const char *hostname, const char *service);
  * Safe to call with fd == -1 (no-op).
  */
 void sqli_tcp_close(int fd);
+
+/* Exclusive owner only: abort transport without SQLI EXIT or TLS close_notify. */
+sqli_status sqli_tcp_discard(int fd);
+/* One nonblocking urgent-send attempt; caller must pin the descriptor. POSIX only. */
+sqli_status sqli_tcp_interrupt(int fd);
 
 /*
  * Read exactly `count` bytes from the socket.

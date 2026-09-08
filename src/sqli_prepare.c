@@ -174,7 +174,9 @@ static void sqli_stmt_batch_fill_error_item(sqli_conn_t *conn, sqli_batch_item_r
 
 static void sqli_stmt_best_effort_control(sqli_stmt_t *stmt, uint8_t opcode)
 {
-    if (stmt == NULL || stmt->conn == NULL || stmt->socket_fd < 0 || stmt->stmt_id < 0)
+    if (stmt == NULL || stmt->conn == NULL || stmt->socket_fd < 0 || stmt->stmt_id < 0 ||
+        (atomic_load(&stmt->conn->lifecycle) & SQLI_CONN_DISCARDED) ||
+        stmt->conn->socket_fd != stmt->socket_fd)
         return;
 
     uint16_t sid = (uint16_t)stmt->stmt_id;
@@ -201,7 +203,8 @@ static sqli_status sqli_stmt_close_cursor_if_open(sqli_stmt_t *stmt)
 
     sqli_status rc = SQLI_OK;
     if (stmt->conn != NULL && stmt->conn->socket_fd > 0 &&
-        stmt->conn->state == SQLI_CONN_READY && stmt->stmt_id >= 0) {
+        stmt->conn->state == SQLI_CONN_READY && stmt->stmt_id >= 0 &&
+        !(atomic_load(&stmt->conn->lifecycle) & SQLI_CONN_DISCARDED)) {
         /* Preserve any active error info on connection across SQ_CLOSE */
         sqli_error_info saved_info;
         char saved_errmsg[sizeof(stmt->conn->errmsg)];
@@ -1437,7 +1440,8 @@ static sqli_status sqli_stmt_execute_select(sqli_stmt_t *stmt)
 
 sqli_status sqli_execute(sqli_stmt_t *stmt)
 {
-    if (stmt == NULL || stmt->conn == NULL)
+    if (stmt == NULL || stmt->conn == NULL ||
+        (atomic_load(&stmt->conn->lifecycle) & SQLI_CONN_DISCARDED))
         return SQLI_INVALID_STATE;
 
     clear_error(stmt->conn);
@@ -1635,7 +1639,8 @@ void sqli_stmt_close(sqli_stmt_t *stmt)
 
     /* Close and release statement on server; keep stream aligned. */
     if (stmt->conn != NULL && stmt->conn->socket_fd > 0 &&
-        stmt->conn->state == SQLI_CONN_READY && stmt->stmt_id >= 0) {
+        stmt->conn->state == SQLI_CONN_READY && stmt->stmt_id >= 0 &&
+        !(atomic_load(&stmt->conn->lifecycle) & SQLI_CONN_DISCARDED)) {
         sqli_stmt_close_release(stmt->conn, stmt->stmt_id);
     } else if (stmt->socket_fd > 0 && stmt->stmt_id >= 0) {
         sqli_stmt_best_effort_control(stmt, 10);              /* SQ_CLOSE */

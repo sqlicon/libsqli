@@ -1371,7 +1371,8 @@ static sqli_status reader_read(sqli_sblob_read_cursor_t *reader, bool seek, int6
 {
     if (reader == NULL || bytes_read == NULL || (buffer == NULL && capacity != 0))
         return SQLI_INVALID_ARGUMENT;
-    if (!reader->open)
+    if (!reader->open ||
+        (atomic_load(&reader->connection->lifecycle) & SQLI_CONN_DISCARDED))
         return SQLI_INVALID_STATE;
     if (capacity > INT32_MAX)
         return SQLI_OUT_OF_RANGE;
@@ -1406,6 +1407,11 @@ sqli_status sqli_sblob_reader_close(sqli_sblob_read_cursor_t *reader)
         return SQLI_INVALID_ARGUMENT;
     if (!reader->open)
         return SQLI_OK;
+    if (atomic_load(&reader->connection->lifecycle) & SQLI_CONN_DISCARDED) {
+        reader->open = false;
+        reader->descriptor = -1;
+        return SQLI_OK; /* Local invalidation only; no server-close claim. */
+    }
     sqli_status status = sqli_sblob_close(reader->connection, reader->descriptor);
     if (status == SQLI_OK) {
         reader->open = false;

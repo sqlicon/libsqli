@@ -597,6 +597,9 @@ sqli_status sqli_connect(sqli_conn_t *c, const sqli_connect_params *params)
     if (c == NULL || params == NULL)
         return SQLI_INVALID_STATE;
 
+    if (atomic_load(&c->lifecycle) != 0)
+        return SQLI_INVALID_STATE;
+
     clear_error(c);
 
     if (c->state != SQLI_CONN_CLOSED) {
@@ -1204,6 +1207,15 @@ void sqli_close(sqli_conn_t *conn)
 {
     if (conn == NULL)
         return;
+    if (atomic_load(&conn->lifecycle) & SQLI_CONN_PINNED) {
+        sqli_log(SQLI_LOG_ERROR, "cannot close a connection pinned by an operation");
+        return;
+    }
+    if (atomic_load(&conn->lifecycle) & SQLI_CONN_DISCARDED) {
+        if (sqli_conn_discard(conn) != SQLI_OK)
+            sqli_log(SQLI_LOG_ERROR, "discarded connection teardown failed");
+        return;
+    }
 
     if (conn->socket_fd >= 0) {
         if (conn->state == SQLI_CONN_READY) {

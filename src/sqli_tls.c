@@ -59,9 +59,10 @@ int sqli_tcp_tls_attach(int fd, void *ssl_ctx, void *ssl)
     return 0;
 }
 
-void sqli_tcp_tls_detach(int fd)
+static sqli_status tls_detach(int fd, bool graceful)
 {
-    pthread_mutex_lock(&g_tls_mutex);
+    if (pthread_mutex_lock(&g_tls_mutex) != 0)
+        return SQLI_ERR;
     tls_entry *prev = NULL;
     tls_entry *cur = g_tls_entries;
     while (cur != NULL) {
@@ -70,17 +71,29 @@ void sqli_tcp_tls_detach(int fd)
                 prev->next = cur->next;
             else
                 g_tls_entries = cur->next;
-            SSL_shutdown(cur->ssl);
+            if (graceful)
+                SSL_shutdown(cur->ssl);
             SSL_free(cur->ssl);
             SSL_CTX_free(cur->ctx);
             free(cur);
-            pthread_mutex_unlock(&g_tls_mutex);
-            return;
+            return pthread_mutex_unlock(&g_tls_mutex) == 0 ? SQLI_OK : SQLI_ERR;
         }
         prev = cur;
         cur = cur->next;
     }
-    pthread_mutex_unlock(&g_tls_mutex);
+    return pthread_mutex_unlock(&g_tls_mutex) == 0 ? SQLI_OK : SQLI_ERR;
+}
+
+void sqli_tcp_tls_detach(int fd)
+{
+    if (tls_detach(fd, true) != SQLI_OK)
+        sqli_log(SQLI_LOG_ERROR, "TLS detach synchronization failed");
+}
+
+sqli_status sqli_tcp_tls_discard(int fd)
+{
+    /* Abortive disposal: SSL_free only, never SSL_shutdown or protocol I/O. */
+    return tls_detach(fd, false);
 }
 
 /* ----------------------------------------------------------------

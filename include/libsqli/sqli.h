@@ -365,14 +365,18 @@ sqli_status sqli_pool_acquire_timeout(sqli_pool_t *pool, sqli_conn_t **conn,
  *
  * @param[in] pool Pool handle.
  * @param[in] conn Connection previously returned by @ref sqli_pool_acquire.
- * @return SQLI_OK on success.
+ * Release requires all connection operations and dependent handles to be finished.
+ * @return SQLI_OK on success, SQLI_INVALID_STATE for an unleased connection or
+ * an active internally registered operation. A rejected lease remains owned.
  */
 sqli_status sqli_pool_release(sqli_pool_t *pool, sqli_conn_t *conn);
 
 /**
  * @brief Destroy a pool and close all managed connections.
  *
- * Connections still in use by other threads become invalid after destroy.
+ * Return all leases and stop all pool users before destruction. If a lease is
+ * outstanding, destruction is rejected with a diagnostic and the pool remains
+ * alive; return the lease and call again. Concurrent destruction is unsupported.
  *
  * @param[in,out] pool Pool handle (NULL is allowed).
  */

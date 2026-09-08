@@ -963,6 +963,11 @@ sqli_status sqli_result_fetch(sqli_result_t *result)
 {
     if (result == NULL)
         return SQLI_INVALID_ARGUMENT;
+    if (result->owner_conn != NULL &&
+        (atomic_load(&result->owner_conn->lifecycle) & SQLI_CONN_DISCARDED)) {
+        sqli_result_mark_closed(result);
+        return SQLI_INVALID_STATE;
+    }
     if (result->fetch_status != SQLI_OK) {
         sqli_result_mark_closed(result);
         return result->fetch_status;
@@ -1145,6 +1150,7 @@ void sqli_result_destroy(sqli_result_t *result)
         return;
     if (result->owner_conn != NULL &&
         result->owner_conn->state == SQLI_CONN_READY &&
+        !(atomic_load(&result->owner_conn->lifecycle) & SQLI_CONN_DISCARDED) &&
         result->statement_type == 2 && result->stmt_id >= 0) {
         sqli_stmt_close_release(result->owner_conn, result->stmt_id);
     }
