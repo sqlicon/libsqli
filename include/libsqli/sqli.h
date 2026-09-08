@@ -19,7 +19,8 @@
  * connection use. Immutable descriptor reference/get operations are thread-safe
  * while a live reference is held. Standalone value rules are in the domain files.
  * Status text, error catalog lookup and logging-level updates are reentrant.
- * No public function is promised async-signal-safe.
+ * sqli_cancel_operation_request() in libsqli/sqli_cancel.h is the explicit
+ * cross-thread cancellation exception. No function is promised async-signal-safe.
  *
  * @par Process ownership
  * Handles belong to the process that created them. After fork from a process
@@ -29,7 +30,8 @@
  * currently guaranteed. See @ref md_doc_2PROCESS__LIFECYCLE for supported worker models.
  *
  * @par Cancellation
- * No public query-cancellation or absolute operation-deadline API exists yet.
+ * Prepared DML cancellation is declared in libsqli/sqli_cancel.h.
+ * No absolute operation-deadline API exists yet.
  * I/O timeout does not confirm server interruption or transaction rollback.
  * See @ref md_doc_2CANCELLATION__FEASIBILITY for evidence and remaining implementation gates.
  */
@@ -63,7 +65,9 @@ typedef enum {
     SQLI_NULL_VALUE, /**< Value is SQL NULL. */
     SQLI_LIMIT_EXCEEDED, /**< Resource limit exceeded. */
     SQLI_METADATA_UNAVAILABLE, /**< Requested metadata is unavailable. */
-    SQLI_TYPE_MISMATCH /**< SQL MISMATCH column type. */
+    SQLI_TYPE_MISMATCH, /**< SQL MISMATCH column type. */
+    SQLI_CANCELED, /**< Execution skipped locally or server-confirmed interrupted; inspect cancel outcome. */
+    SQLI_UNSUPPORTED /**< Requested operation or transport is not supported. */
 } sqli_status;
 
 /** Reentrant, allocation-free local status diagnostics. Returned immutable
@@ -313,6 +317,9 @@ void sqli_close(sqli_conn_t *conn);
  * @param[out] pool Destination pointer receiving the allocated pool.
  * @param[in] params Connection settings used for all pool connections.
  * @param[in] pool_size Number of pooled connections (> 0).
+ * On partial-creation cleanup failure, *pool is non-NULL and owned by the caller
+ * solely for retrying sqli_pool_destroy(); no lease can be acquired from it.
+ * Otherwise failure leaves *pool NULL. Always inspect it even on error.
  * @return SQLI_OK on success.
  */
 sqli_status sqli_pool_create(sqli_pool_t **pool,
@@ -366,21 +373,28 @@ sqli_status sqli_pool_acquire_timeout(sqli_pool_t *pool, sqli_conn_t **conn,
  * @param[in] pool Pool handle.
  * @param[in] conn Connection previously returned by @ref sqli_pool_acquire.
  * Release requires all connection operations and dependent handles to be finished.
+ * A disposal error leaves the lease owned by the caller; retry release after
+ * inspecting the error. Successful release invalidates the borrowed pointer.
  * @return SQLI_OK on success, SQLI_INVALID_STATE for an unleased connection or
  * an active internally registered operation. A rejected lease remains owned.
  */
 sqli_status sqli_pool_release(sqli_pool_t *pool, sqli_conn_t *conn);
 
 /**
- * @brief Destroy a pool and close all managed connections.
+ * @brief Destroy a pool and abortively close all managed connections.
  *
  * Return all leases and stop all pool users before destruction. If a lease is
- * outstanding, destruction is rejected with a diagnostic and the pool remains
+ * outstanding, destruction returns SQLI_INVALID_STATE and the pool remains
  * alive; return the lease and call again. Concurrent destruction is unsupported.
+ * Cleanup sends no SQLI EXIT or TLS close_notify and confirms no rollback.
+ * Once teardown starts, an error leaves the pool closed to acquisition; retry
+ * destruction to finish cleanup. Outstanding-lease rejection does not shut it down.
  *
  * @param[in,out] pool Pool handle (NULL is allowed).
+ * @return SQLI_OK when destroyed, SQLI_INVALID_STATE with outstanding leases,
+ * or a cleanup error. On failure the pool remains alive for a later retry.
  */
-void sqli_pool_destroy(sqli_pool_t *pool);
+sqli_status sqli_pool_destroy(sqli_pool_t *pool);
 
 /** @} */
 

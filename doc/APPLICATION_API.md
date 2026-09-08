@@ -11,6 +11,7 @@ Catalog work remains deferred; no ODBC or external decimal dependency is added.
 | `libsqli/sqli.h` | Connections, statements, descriptors, checked scalars and buffers, status text |
 | `libsqli/sqli_decimal.h` | Opaque decimal values, semantic parts, parsing, formatting, native read/bind |
 | `libsqli/sqli_temporal.h` | Calendar DATE, opaque DATETIME/INTERVAL, semantic parts, native read/bind and text conveniences |
+| `libsqli/sqli_cancel.h` | Prepared-DML cancellation, owned outcomes and lifecycle contract |
 | `libsqli/sqli_sblob.h` | Opaque upload handles and independent read cursors, explicit descriptor operations |
 
 Create reusable decimal/datetime/interval objects, fill them through checked
@@ -132,3 +133,10 @@ with LeakSanitizer enabled; the expanded seven Smart-LOB socket regressions also
 pass directly with LeakSanitizer. The five installed public headers compile
 independently as C11 and C++11, and both introductory README functions compile
 as C11 with strict warnings. Live evidence applies to the configured server.
+
+## Cancellation and pool cleanup
+
+See [the cancellation API](CANCELLATION_API.md) for the prepared-DML subset.
+`sqli_pool_destroy()` now returns sqli_status: check lease rejection and transport
+cleanup errors. Failed release retains the lease; failed teardown retains the
+pool for a destruction retry. Recompile consumers for this experimental change.

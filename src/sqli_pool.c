@@ -152,6 +152,17 @@ static ssize_t find_available_slot_locked(sqli_pool_t *pool)
     return -1;
 }
 
+static sqli_status failed_pool_creation(sqli_pool_t **out, sqli_pool_t *pool,
+                                        sqli_status creation_status)
+{
+    sqli_status cleanup_status = sqli_pool_destroy(pool);
+    if (cleanup_status != SQLI_OK) {
+        *out = pool; /* Keep failed cleanup reachable for an explicit retry. */
+        return cleanup_status;
+    }
+    return creation_status;
+}
+
 sqli_status sqli_pool_create(sqli_pool_t **pool,
                              const sqli_connect_params *params,
                              size_t pool_size)
@@ -190,15 +201,12 @@ sqli_status sqli_pool_create(sqli_pool_t **pool,
     for (size_t i = 0; i < pool_size; i++) {
         sqli_conn_t *conn = NULL;
         rc = sqli_create(&conn);
-        if (rc != SQLI_OK) {
-            sqli_pool_destroy(p);
-            return rc;
-        }
+        if (rc != SQLI_OK)
+            return failed_pool_creation(pool, p, rc);
         rc = sqli_connect(conn, &p->params);
         if (rc != SQLI_OK) {
             sqli_destroy(conn);
-            sqli_pool_destroy(p);
-            return rc;
+            return failed_pool_creation(pool, p, rc);
         }
         atomic_fetch_or(&conn->lifecycle, SQLI_CONN_RELEASED);
         p->slots[i].conn = conn;
@@ -323,6 +331,14 @@ sqli_status sqli_pool_release(sqli_pool_t *pool, sqli_conn_t *conn)
                 pthread_mutex_unlock(&pool->mu);
                 return SQLI_INVALID_STATE;
             }
+            if (expected & SQLI_CONN_DISCARDED) {
+                sqli_status cleanup_status = sqli_conn_discard(conn);
+                if (cleanup_status != SQLI_OK) {
+                    atomic_fetch_and(&conn->lifecycle, ~SQLI_CONN_RELEASED);
+                    pthread_mutex_unlock(&pool->mu);
+                    return cleanup_status; /* Caller retains the lease for retry. */
+                }
+            }
             pool->slots[i].in_use = false;
             pthread_cond_signal(&pool->cv);
             pthread_mutex_unlock(&pool->mu);
@@ -334,17 +350,17 @@ sqli_status sqli_pool_release(sqli_pool_t *pool, sqli_conn_t *conn)
     return SQLI_INVALID_STATE;
 }
 
-void sqli_pool_destroy(sqli_pool_t *pool)
+sqli_status sqli_pool_destroy(sqli_pool_t *pool)
 {
     if (pool == NULL)
-        return;
+        return SQLI_OK;
 
-    pthread_mutex_lock(&pool->mu);
+    if (pthread_mutex_lock(&pool->mu) != 0)
+        return SQLI_ERR;
     for (size_t i = 0; i < pool->size; i++) {
         if (pool->slots[i].in_use) {
             pthread_mutex_unlock(&pool->mu);
-            sqli_log(SQLI_LOG_ERROR, "cannot destroy a pool with outstanding leases");
-            return;
+            return SQLI_INVALID_STATE;
         }
     }
     pool->shutting_down = true;
@@ -354,6 +370,9 @@ void sqli_pool_destroy(sqli_pool_t *pool)
     if (pool->slots != NULL) {
         for (size_t i = 0; i < pool->size; i++) {
             if (pool->slots[i].conn != NULL) {
+                sqli_status status = sqli_conn_discard(pool->slots[i].conn);
+                if (status != SQLI_OK)
+                    return status; /* Pool stays shut down; retry destruction. */
                 sqli_close(pool->slots[i].conn);
                 sqli_destroy(pool->slots[i].conn);
                 pool->slots[i].conn = NULL;
@@ -367,4 +386,5 @@ void sqli_pool_destroy(sqli_pool_t *pool)
     pthread_cond_destroy(&pool->cv);
     pthread_mutex_destroy(&pool->mu);
     free(pool);
+    return SQLI_OK;
 }

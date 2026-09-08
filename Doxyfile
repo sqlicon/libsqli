@@ -1,7 +1,7 @@
 PROJECT_NAME           = libsqli
 PROJECT_BRIEF          = "Experimental C11 Informix client API"
 OUTPUT_DIRECTORY       = build/doxygen
-INPUT                  = include/libsqli doc/PROCESS_LIFECYCLE.md doc/CANCELLATION_FEASIBILITY.md doc/FEATURE_REQUEST_STATUS.md doc/APPLICATION_API.md doc/CANCELLATION_LIFECYCLE.md
+INPUT                  = include/libsqli doc/PROCESS_LIFECYCLE.md doc/CANCELLATION_FEASIBILITY.md doc/FEATURE_REQUEST_STATUS.md doc/APPLICATION_API.md doc/CANCELLATION_LIFECYCLE.md doc/CANCELLATION_API.md
 FILE_PATTERNS          = *.h *.h.in *.md
 EXTENSION_MAPPING      = in=C
 RECURSIVE              = NO

@@ -229,3 +229,12 @@ SQL succeeded; completion before the 300 ms request caused no send and preserved
 the session. The following locked operation reached its normal lock timeout in
 all cases. The earlier raw-reuse modes remain explicitly negative experiments.
 There is still no public cancellation API or bounded cleanup-deadline guarantee.
+
+## Public prepared-DML integration
+
+The [public API and demo](CANCELLATION_API.md) now expose the verified prepared
+INSERT/UPDATE/DELETE response-wait subset. Requests during request writes are
+latched, execution/disposal outcomes are separate, and pool cleanup errors are
+returned with retained ownership for retry. SELECT/FETCH/LOB and absolute
+deadlines remain separate gates. Earlier "no public API" statements describe
+the historical probe revisions, not the current prepared-DML subset.

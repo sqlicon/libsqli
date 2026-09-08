@@ -413,6 +413,8 @@ sqli_status sqli_conn_discard(sqli_conn_t *conn)
     if (conn == NULL)
         return SQLI_INVALID_ARGUMENT;
     atomic_fetch_or(&conn->lifecycle, SQLI_CONN_DISCARDED);
+    conn->state = SQLI_CONN_ERROR;
+    conn->database_open = false;
     sqli_status status = sqli_tcp_discard(conn->socket_fd);
     if (status == SQLI_ERR)
         return status; /* TLS registry synchronization failed; retain ownership. */

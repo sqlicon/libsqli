@@ -28,6 +28,7 @@ An experimental, lightweight C11 substitute for parts of the IBM Informix Client
 | `<libsqli/sqli.h>` | Connections, statements, generic results and descriptor views |
 | `<libsqli/sqli_decimal.h>` | DECIMAL/NUMERIC/MONEY values, result access, binding and decimal metadata |
 | `<libsqli/sqli_temporal.h>` | DATE/DATETIME/INTERVAL values, result access, binding, temporal metadata and timestamp/epoch conveniences |
+| `<libsqli/sqli_cancel.h>` | Single-use prepared-DML cancellation, terminal outcomes and cleanup status |
 | `<libsqli/sqli_sblob.h>` | Smart-LOB handles, options, locator binding, streaming and low-level I/O |
 
 Each domain header includes the core header and can be included alone. The core
@@ -301,5 +302,6 @@ symbols and Doxygen references. The generated files remain local.
 
 See [process ownership and fork restrictions](doc/PROCESS_LIFECYCLE.md),
 [cancellation feasibility](doc/CANCELLATION_FEASIBILITY.md), and
-[feature request decisions](doc/FEATURE_REQUEST_STATUS.md). Cancellation and
+[feature request decisions](doc/FEATURE_REQUEST_STATUS.md). Prepared DML has a
+[public cancellation API and demo](doc/CANCELLATION_API.md). General cancellation and
 child-detach APIs are not yet public capabilities.

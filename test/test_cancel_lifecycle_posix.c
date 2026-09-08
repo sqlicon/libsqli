@@ -23,6 +23,49 @@ static sqli_cancel_operation *operation;
 sqli_status __real_sqli_tcp_interrupt(int fd);
 sqli_status __real_sqli_connect(sqli_conn_t *conn, const sqli_connect_params *params);
 
+ssize_t __real_sqli_tcp_send(int fd, const unsigned char *bytes, size_t length);
+sqli_status __real_sqli_receive_dispatch(int fd, sqli_result_t *result, sqli_conn_t *conn);
+sqli_status __real_sqli_tcp_tls_discard(int fd);
+static bool public_execution, request_during_write, fail_write, fail_disposal;
+static int server_sqlcode;
+static unsigned connect_calls, fail_connect_call;
+static bool omit_done;
+static sqli_status response_status;
+static sqli_cancel_disposition write_disposition;
+
+ssize_t __wrap_sqli_tcp_send(int fd, const unsigned char *bytes, size_t length)
+{
+    if (!public_execution)
+        return __real_sqli_tcp_send(fd, bytes, length);
+    if (request_during_write) {
+        request_during_write = false;
+        if (sqli_cancel_operation_request(operation, &write_disposition) != SQLI_OK)
+            return -1;
+    }
+    return fail_write ? -1 : (ssize_t)length;
+}
+
+sqli_status __wrap_sqli_receive_dispatch(int fd, sqli_result_t *result, sqli_conn_t *conn)
+{
+    if (!public_execution)
+        return __real_sqli_receive_dispatch(fd, result, conn);
+    if (response_status != SQLI_OK)
+        return response_status;
+    result->saw_done = !omit_done;
+    if (server_sqlcode != 0) {
+        conn->error_info.sqlcode = server_sqlcode;
+        conn->error_info.has_error = true;
+        conn->error_info.status = SQLI_PROTO_ERROR;
+        return SQLI_PROTO_ERROR;
+    }
+    return SQLI_OK;
+}
+
+sqli_status __wrap_sqli_tcp_tls_discard(int fd)
+{
+    return fail_disposal ? SQLI_ERR : __real_sqli_tcp_tls_discard(fd);
+}
+
 static unsigned shutdown_calls;
 static unsigned send_calls;
 static bool fail_send, pause_send, sender_entered, release_sender;
@@ -60,6 +103,9 @@ sqli_status __wrap_sqli_tcp_interrupt(int fd)
 sqli_status __wrap_sqli_connect(sqli_conn_t *conn, const sqli_connect_params *params)
 {
     (void)params;
+    connect_calls++;
+    if (connect_calls == fail_connect_call)
+        return SQLI_IO_ERROR;
     if (peer_count == peer_capacity)
         return SQLI_LIMIT_EXCEEDED;
     int listener = socket(AF_INET, SOCK_STREAM, 0);
@@ -98,6 +144,11 @@ cleanup:
 
 void setUp(void)
 {
+    public_execution = request_during_write = fail_write = fail_disposal = false;
+    server_sqlcode = 0;
+    connect_calls = fail_connect_call = 0;
+    omit_done = false;
+    response_status = SQLI_OK;
     peer_count = 0;
     connection = NULL;
     pool = NULL;
@@ -120,7 +171,7 @@ void tearDown(void)
         else
             sqli_destroy(connection);
     }
-    sqli_pool_destroy(pool);
+    TEST_ASSERT_EQUAL(SQLI_OK, sqli_pool_destroy(pool));
     for (size_t i = 0; i < peer_count; i++)
         TEST_ASSERT_EQUAL(0, close(peers[i]));
     TEST_ASSERT_EQUAL_UINT(0, shutdown_calls);
@@ -262,7 +313,7 @@ static void test_sender_pin_blocks_pool_close_and_finish(void)
     int fd = connection->socket_fd;
     sqli_close(connection);
     sqli_destroy(connection);
-    sqli_pool_destroy(pool);
+    TEST_ASSERT_EQUAL(SQLI_INVALID_STATE, sqli_pool_destroy(pool));
     TEST_ASSERT_EQUAL_INT(fd, connection->socket_fd);
     check_thread(pthread_create(&finisher, NULL, finish_thread, &finish));
     TEST_ASSERT_TRUE(atomic_load(&connection->lifecycle) & SQLI_CONN_PINNED);
@@ -367,9 +418,161 @@ static void test_reject_invalid_and_active_handle_use(void)
     TEST_ASSERT_EQUAL(SQLI_INVALID_STATE, sqli_cancel_operation_finish(operation, SQLI_OK));
 }
 
+static sqli_stmt_t public_statement(void)
+{
+    sqli_stmt_t stmt = {0};
+    stmt.conn = connection;
+    stmt.socket_fd = connection->socket_fd;
+    stmt.stmt_id = 17;
+    stmt.result.statement_type = 4; /* UPDATE */
+    return stmt;
+}
+
+static void test_public_prestart_and_unsupported(void)
+{
+    sqli_stmt_t stmt = public_statement();
+    stmt.result.statement_type = 2; /* SELECT is not supported by this version. */
+    TEST_ASSERT_EQUAL(SQLI_UNSUPPORTED, sqli_execute_cancelable(&stmt, operation));
+    sqli_cancel_disposition disposition;
+    TEST_ASSERT_EQUAL(SQLI_OK, sqli_cancel_operation_request(operation, &disposition));
+    stmt.result.statement_type = 4;
+    connection->autocommit = false;
+    TEST_ASSERT_EQUAL(SQLI_UNSUPPORTED, sqli_execute_cancelable(&stmt, operation));
+    connection->in_transaction = true;
+    TEST_ASSERT_EQUAL(SQLI_CANCELED, sqli_execute_cancelable(&stmt, operation));
+    sqli_cancel_snapshot snapshot;
+    TEST_ASSERT_EQUAL(SQLI_OK, sqli_cancel_operation_snapshot(operation, &snapshot));
+    TEST_ASSERT_EQUAL(SQLI_CANCEL_NOT_EXECUTED, snapshot.outcome);
+    TEST_ASSERT_FALSE(snapshot.started);
+    TEST_ASSERT_FALSE(snapshot.connection_discarded);
+    TEST_ASSERT_EQUAL_UINT(0, send_calls);
+}
+
+static void test_public_latches_until_execute_written(void)
+{
+    sqli_stmt_t stmt = public_statement();
+    public_execution = request_during_write = true;
+    server_sqlcode = -213;
+    TEST_ASSERT_EQUAL(SQLI_CANCELED, sqli_execute_cancelable(&stmt, operation));
+    TEST_ASSERT_EQUAL(SQLI_CANCEL_LATCHED, write_disposition);
+    TEST_ASSERT_EQUAL_UINT(1, send_calls);
+    sqli_cancel_snapshot snapshot;
+    TEST_ASSERT_EQUAL(SQLI_OK, sqli_cancel_operation_snapshot(operation, &snapshot));
+    TEST_ASSERT_EQUAL(SQLI_CANCEL_INTERRUPTED, snapshot.outcome);
+    TEST_ASSERT_EQUAL(SQLI_CANCELED, snapshot.operation_status);
+    TEST_ASSERT_TRUE(snapshot.connection_discarded);
+    sqli_stmt_close(&stmt);
+}
+
+static void test_public_partial_write_is_unknown(void)
+{
+    sqli_stmt_t stmt = public_statement();
+    public_execution = request_during_write = fail_write = true;
+    TEST_ASSERT_EQUAL(SQLI_IO_ERROR, sqli_execute_cancelable(&stmt, operation));
+    sqli_cancel_snapshot snapshot;
+    TEST_ASSERT_EQUAL(SQLI_OK, sqli_cancel_operation_snapshot(operation, &snapshot));
+    TEST_ASSERT_EQUAL(SQLI_CANCEL_UNKNOWN, snapshot.outcome);
+    TEST_ASSERT_FALSE(snapshot.send_attempted);
+    TEST_ASSERT_TRUE(snapshot.connection_discarded);
+    TEST_ASSERT_EQUAL_UINT(0, send_calls);
+    sqli_stmt_close(&stmt);
+}
+
+static void test_public_response_allocation_failure_is_unknown(void)
+{
+    sqli_stmt_t stmt = public_statement();
+    public_execution = true;
+    response_status = SQLI_ALLOC_FAIL;
+    TEST_ASSERT_EQUAL(SQLI_ALLOC_FAIL, sqli_execute_cancelable(&stmt, operation));
+    sqli_cancel_snapshot snapshot;
+    TEST_ASSERT_EQUAL(SQLI_OK, sqli_cancel_operation_snapshot(operation, &snapshot));
+    TEST_ASSERT_EQUAL(SQLI_CANCEL_UNKNOWN, snapshot.outcome);
+    TEST_ASSERT_TRUE(snapshot.connection_discarded);
+    TEST_ASSERT_FALSE(snapshot.send_attempted);
+    sqli_stmt_close(&stmt);
+}
+
+static void test_public_missing_terminal_is_unknown(void)
+{
+    sqli_stmt_t stmt = public_statement();
+    public_execution = omit_done = true;
+    TEST_ASSERT_EQUAL(SQLI_PROTO_ERROR, sqli_execute_cancelable(&stmt, operation));
+    sqli_cancel_snapshot snapshot;
+    TEST_ASSERT_EQUAL(SQLI_OK, sqli_cancel_operation_snapshot(operation, &snapshot));
+    TEST_ASSERT_EQUAL(SQLI_CANCEL_UNKNOWN, snapshot.outcome);
+    TEST_ASSERT_TRUE(snapshot.connection_discarded);
+    sqli_stmt_close(&stmt);
+}
+
+static void test_public_disposal_error_preserves_execution_and_lease(void)
+{
+    TEST_ASSERT_EQUAL(SQLI_OK, sqli_conn_discard(connection));
+    sqli_destroy(connection);
+    connection = NULL;
+    const sqli_connect_params params = {0};
+    TEST_ASSERT_EQUAL(SQLI_OK, sqli_pool_create(&pool, &params, 1));
+    TEST_ASSERT_EQUAL(SQLI_OK, sqli_pool_acquire(pool, &connection));
+    sqli_stmt_t stmt = public_statement();
+    public_execution = request_during_write = fail_disposal = true;
+    TEST_ASSERT_EQUAL(SQLI_ERR, sqli_execute_cancelable(&stmt, operation));
+    sqli_cancel_snapshot snapshot;
+    TEST_ASSERT_EQUAL(SQLI_OK, sqli_cancel_operation_snapshot(operation, &snapshot));
+    TEST_ASSERT_EQUAL(SQLI_CANCEL_EXECUTED, snapshot.outcome);
+    TEST_ASSERT_EQUAL(SQLI_OK, snapshot.operation_status);
+    TEST_ASSERT_EQUAL(SQLI_ERR, snapshot.disposal_status);
+    TEST_ASSERT_EQUAL(SQLI_CONN_ERROR, connection->state);
+    TEST_ASSERT_EQUAL(SQLI_ERR, sqli_pool_release(pool, connection));
+    TEST_ASSERT_EQUAL(SQLI_INVALID_STATE, sqli_pool_destroy(pool));
+    sqli_conn_t *other = NULL;
+    TEST_ASSERT_EQUAL(SQLI_TIMEOUT, sqli_pool_try_acquire(pool, &other));
+    sqli_stmt_close(&stmt);
+    fail_disposal = false;
+    TEST_ASSERT_EQUAL(SQLI_OK, sqli_pool_release(pool, connection));
+    connection = NULL;
+}
+
+static void test_partial_pool_creation_retains_failed_cleanup(void)
+{
+    const sqli_connect_params params = {0};
+    /* The setup connection is the first connect call; fail the pool's second. */
+    fail_connect_call = connect_calls + 2;
+    fail_disposal = true;
+    sqli_pool_t *partial = NULL;
+    TEST_ASSERT_EQUAL(SQLI_ERR, sqli_pool_create(&partial, &params, 2));
+    TEST_ASSERT_NOT_NULL(partial);
+    sqli_conn_t *borrowed = NULL;
+    TEST_ASSERT_EQUAL(SQLI_INVALID_STATE, sqli_pool_try_acquire(partial, &borrowed));
+    fail_disposal = false;
+    TEST_ASSERT_EQUAL(SQLI_OK, sqli_pool_destroy(partial));
+}
+
+static void test_pool_destroy_error_is_retryable(void)
+{
+    TEST_ASSERT_EQUAL(SQLI_OK, sqli_conn_discard(connection));
+    sqli_destroy(connection);
+    connection = NULL;
+    const sqli_connect_params params = {0};
+    TEST_ASSERT_EQUAL(SQLI_OK, sqli_pool_create(&pool, &params, 1));
+    fail_disposal = true;
+    TEST_ASSERT_EQUAL(SQLI_ERR, sqli_pool_destroy(pool));
+    TEST_ASSERT_EQUAL(SQLI_INVALID_STATE, sqli_pool_try_acquire(pool, &connection));
+    TEST_ASSERT_NULL(connection);
+    fail_disposal = false;
+    TEST_ASSERT_EQUAL(SQLI_OK, sqli_pool_destroy(pool));
+    pool = NULL;
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_public_prestart_and_unsupported);
+    RUN_TEST(test_public_latches_until_execute_written);
+    RUN_TEST(test_public_partial_write_is_unknown);
+    RUN_TEST(test_public_missing_terminal_is_unknown);
+    RUN_TEST(test_public_response_allocation_failure_is_unknown);
+    RUN_TEST(test_public_disposal_error_preserves_execution_and_lease);
+    RUN_TEST(test_pool_destroy_error_is_retryable);
+    RUN_TEST(test_partial_pool_creation_retains_failed_cleanup);
     RUN_TEST(test_reject_invalid_and_active_handle_use);
     RUN_TEST(test_prestart_and_single_use);
     RUN_TEST(test_terminal_snapshot_outlives_connection);

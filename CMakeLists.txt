@@ -117,6 +117,7 @@ else()
     target_sources(sqli PRIVATE
         ${SQLI_SRC_DIR}/sqli_charset_win.c
         ${SQLI_SRC_DIR}/sqli_tcp_win.c
+        ${SQLI_SRC_DIR}/sqli_cancel_stub.c
         ${SQLI_SRC_DIR}/sqli_unix_win.c
     )
     target_compile_definitions(sqli PUBLIC
@@ -353,13 +354,16 @@ if (SQLI_BUILD_TESTS)
         target_link_libraries(sqli_cancel_lifecycle_test PRIVATE sqli)
         target_link_options(sqli_cancel_lifecycle_test PRIVATE
             "LINKER:--wrap=SSL_shutdown" "LINKER:--wrap=sqli_tcp_interrupt"
-            "LINKER:--wrap=sqli_connect")
+            "LINKER:--wrap=sqli_connect" "LINKER:--wrap=sqli_tcp_send"
+            "LINKER:--wrap=sqli_receive_dispatch" "LINKER:--wrap=sqli_tcp_tls_discard")
         add_test(NAME sqli_cancel_lifecycle COMMAND sqli_cancel_lifecycle_test)
         set_tests_properties(sqli_cancel_lifecycle PROPERTIES TIMEOUT 20)
     endif()
 
     # Manual protocol experiment; deliberately excluded from automatic CTest runs.
     if (SQLI_ENABLE_LIVE_TESTS AND UNIX)
+        add_executable(sqli_cancel_demo ${SQLI_TEST_DIR}/cancel_demo_posix.c)
+        target_link_libraries(sqli_cancel_demo PRIVATE sqli Threads::Threads)
         add_executable(sqli_cancel_probe ${SQLI_TEST_DIR}/cancel_probe_posix.c)
         target_include_directories(sqli_cancel_probe PRIVATE ${SQLI_SRC_DIR})
         target_link_libraries(sqli_cancel_probe PRIVATE sqli Threads::Threads)
@@ -521,7 +525,7 @@ install(TARGETS sqli
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
 )
-install(FILES ${SQLI_INC_DIR}/libsqli/sqli.h ${SQLI_INC_DIR}/libsqli/sqli_sblob.h
+install(FILES ${SQLI_INC_DIR}/libsqli/sqli_cancel.h ${SQLI_INC_DIR}/libsqli/sqli.h ${SQLI_INC_DIR}/libsqli/sqli_sblob.h
     ${SQLI_INC_DIR}/libsqli/sqli_decimal.h ${SQLI_INC_DIR}/libsqli/sqli_temporal.h
     ${SQLI_GENERATED_INC_DIR}/libsqli/version.h
     DESTINATION include/libsqli)

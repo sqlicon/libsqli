@@ -20,7 +20,9 @@ static const struct {
     [SQLI_NULL_VALUE] = {"SQLI_NULL_VALUE", "Value is SQL NULL"},
     [SQLI_LIMIT_EXCEEDED] = {"SQLI_LIMIT_EXCEEDED", "Resource limit exceeded"},
     [SQLI_METADATA_UNAVAILABLE] = {"SQLI_METADATA_UNAVAILABLE", "Requested metadata is unavailable"},
-    [SQLI_TYPE_MISMATCH] = {"SQLI_TYPE_MISMATCH", "Column type does not support this conversion"}
+    [SQLI_TYPE_MISMATCH] = {"SQLI_TYPE_MISMATCH", "Column type does not support this conversion"},
+    [SQLI_CANCELED] = {"SQLI_CANCELED", "Execution canceled; inspect cancellation outcome"},
+    [SQLI_UNSUPPORTED] = {"SQLI_UNSUPPORTED", "Operation or transport is not supported"}
 };
 
 const char *sqli_status_name(sqli_status status)

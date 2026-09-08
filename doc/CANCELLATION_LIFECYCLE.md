@@ -1,7 +1,7 @@
 # Cancellation lifetime and operation boundaries
 
-This is a first-version contract with private POSIX lifecycle infrastructure,
-not an implemented public cancellation API. See implementation status below.
+The public prepared-DML subset is documented in [Cancellation API](CANCELLATION_API.md).
+The broader phase/deadline contract below still includes unimplemented scope.
 It refines [the feasibility investigation](CANCELLATION_FEASIBILITY.md) and
 chooses conservative connection disposal whenever an interrupt send is attempted.
 No server synchronization barrier has yet been established for urgent interrupts.
@@ -133,9 +133,10 @@ and prove fresh-session handoff after an interrupt attempt. Deadline cleanup
 uses an absolute monotonic deadline and a separately bounded termination phase.
 A passing timing sample alone is not proof that connection reuse is safe.
 
-## Implemented private infrastructure
+## Lifecycle foundation (implemented in 6a1b656)
 
-`src/sqli_cancel.h` is not installed. Its opaque, single-use operation records
+`src/sqli_cancel.h` keeps registration/phase helpers private. The public lifecycle
+declarations now live in `<libsqli/sqli_cancel.h>`. The opaque, single-use operation records
 fresh/active/terminal state under a lifecycle mutex. Only requesting cancellation
 may run concurrently with the execution owner. Request holds the mutex for one
 nonblocking urgent send; finish obtains the same mutex after operation I/O ends.
@@ -160,10 +161,11 @@ network writes, as documented by [OpenSSL](https://docs.openssl.org/3.1/man3/SSL
 Transport shutdown/close still performs operating-system connection termination;
 "no I/O" here means no additional SQLI or TLS reads/writes or protocol draining.
 
-The private snapshot distinguishes whether execution started, a request was
+The copied snapshot distinguishes whether execution started, a request was
 latched, sending was attempted, the send status, the operation result and disposal
 status. Pre-start cancellation reports `execute=false`; it does not invent a
-server cancellation diagnostic. No public canceled-status enum is introduced.
+server cancellation diagnostic. The public wrapper maps local pre-start and server-confirmed interruption to
+SQLI_CANCELED; its outcome enum distinguishes those cases.
 Transaction flags/epochs and existing diagnostics are not rewritten to claim a
 rollback after disposal. A discarded connection object cannot be reconnected;
 create a fresh object, or let the pool replace it after release.
@@ -194,10 +196,11 @@ normally in all eight samples. Session IDs establish physical session identity.
 These timings are observations on the configured server, not scheduling promises.
 TLS certificate verification remains disabled for the self-signed test endpoint.
 
-Public execute/fetch integration, between-phase request latching, PREPARE/FETCH/
-LOB phase verification, interrupted streaming progress and bounded deadlines
-remain open. Begin/finish currently surround the manual probe's operation; they
-are not automatically invoked by ordinary database calls. An active operation
+Public prepared-DML execution now registers a disarmed operation and arms
+interruption after transmitting EXECUTE/EOT; requests during writing are latched.
+See the API document for its restrictions and outcome/cleanup contract.
+PREPARE/SELECT/FETCH/LOB phase verification, interrupted streaming progress and
+bounded deadlines remain open. Ordinary database calls do not register cancellation. An active operation
 must return through its I/O timeout before finish can run: no deadline-driven
 concurrent shutdown is implemented. The existing global TLS registry mutex can
 also delay disposal behind an unrelated graceful TLS shutdown. Hard cleanup deadlines require

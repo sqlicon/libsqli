@@ -4,6 +4,7 @@
 #include "libsqli/sqli_decimal.h"
 #include "libsqli/sqli_sblob.h"
 #include "sqli_internal.h"
+#include "sqli_cancel.h"
 #include "sqli_protocol_internal.h"
 
 #include "sqli_tcp.h"
@@ -1226,7 +1227,8 @@ static sqli_status sqli_stmt_receive_execute_result(sqli_stmt_t *stmt)
 }
 
 static sqli_status sqli_stmt_execute_bound_params(sqli_stmt_t *stmt,
-                                                  const sqli_bound_param *params)
+                                                  const sqli_bound_param *params,
+                                                  sqli_cancel_operation *operation)
 {
     sqli_status txn_rc = sqli_autobegin(stmt->conn, stmt->result.statement_type);
     if (txn_rc != SQLI_OK)
@@ -1337,6 +1339,13 @@ static sqli_status sqli_stmt_execute_bound_params(sqli_stmt_t *stmt,
         }
     }
 
+    if (operation != NULL) {
+        sqli_status arm_status = sqli_cancel_operation_arm(operation);
+        if (arm_status != SQLI_OK) {
+            atomic_fetch_or(&stmt->conn->lifecycle, SQLI_CONN_DISCARDED);
+            return arm_status;
+        }
+    }
     sqli_stmt_prepare_result_for_execute(stmt);
     sqli_status rc = sqli_stmt_receive_execute_result(stmt);
     if (rc == SQLI_OK)
@@ -1462,7 +1471,54 @@ sqli_status sqli_execute(sqli_stmt_t *stmt)
         return rc;
     }
 
-    return sqli_stmt_execute_bound_params(stmt, stmt->params);
+    return sqli_stmt_execute_bound_params(stmt, stmt->params, NULL);
+}
+
+sqli_status sqli_execute_cancelable(sqli_stmt_t *stmt, sqli_cancel_operation *operation)
+{
+    if (stmt == NULL || operation == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    if (stmt->conn == NULL || stmt->conn->state != SQLI_CONN_READY ||
+        stmt->socket_fd < 0 || stmt->socket_fd != stmt->conn->socket_fd ||
+        stmt->stmt_id < 0 || stmt->stmt_id > UINT16_MAX)
+        return SQLI_INVALID_STATE;
+    /* DESCRIBE statement types, not wire opcodes (sqlstype.h). */
+    enum { statement_update = 4, statement_delete = 5, statement_insert = 6 };
+    unsigned type = stmt->result.statement_type;
+    if ((type != statement_update && type != statement_delete && type != statement_insert) ||
+        stmt->cursor_open || stmt->batch_count != 0 || stmt->conn->in_batch ||
+        (!stmt->conn->autocommit && !stmt->conn->in_transaction))
+        return SQLI_UNSUPPORTED;
+    for (int i = 0; i < stmt->param_count; i++) {
+        if (stmt->params == NULL)
+            return SQLI_INVALID_STATE;
+        if (sqli_stmt_param_needs_lob_streaming(stmt, stmt->params, (size_t)i) ||
+            stmt->params[i].type == SQLI_BIND_SBLOB)
+            return SQLI_UNSUPPORTED;
+    }
+    bool execute = false;
+    sqli_status status = sqli_cancel_operation_prepare(operation, stmt->conn, &execute);
+    if (status != SQLI_OK)
+        return status;
+    if (!execute) {
+        stmt->result_valid = false;
+        return SQLI_CANCELED;
+    }
+    clear_error(stmt->conn);
+    stmt->result_valid = false;
+    status = sqli_stmt_execute_bound_params(stmt, stmt->params, operation);
+    if (status == SQLI_OK && !stmt->result.saw_done) {
+        set_error_context(stmt->conn, "cancel/execute_terminal", SQLI_SQ_EXECUTE);
+        set_error(stmt->conn, "EXECUTE ended without a terminal DONE response");
+        status = SQLI_PROTO_ERROR;
+    }
+    if (status == SQLI_IO_ERROR || status == SQLI_TIMEOUT ||
+        (status == SQLI_PROTO_ERROR && stmt->conn->error_info.sqlcode == 0))
+        atomic_fetch_or(&stmt->conn->lifecycle, SQLI_CONN_DISCARDED);
+    if (status == SQLI_PROTO_ERROR && stmt->conn->error_info.sqlcode == -213)
+        status = SQLI_CANCELED;
+    sqli_status disposal_status = sqli_cancel_operation_finish(operation, status);
+    return disposal_status == SQLI_OK ? status : disposal_status;
 }
 
 sqli_status sqli_execute_with_retry(sqli_stmt_t *stmt, uint32_t max_retries)
@@ -1577,7 +1633,7 @@ sqli_status sqli_stmt_batch_execute(sqli_stmt_t *stmt, sqli_batch_result_t **out
     sqli_status rc = SQLI_OK;
 
     for (size_t i = 0; i < stmt->batch_count; i++) {
-        rc = sqli_stmt_execute_bound_params(stmt, stmt->batch_rows[i].params);
+        rc = sqli_stmt_execute_bound_params(stmt, stmt->batch_rows[i].params, NULL);
         if (rc != SQLI_OK) {
             if (stmt->conn->error_info.has_error && stmt->result.saw_error) {
                 sqli_stmt_batch_fill_error_item(stmt->conn, &batch->items[i], rc);
