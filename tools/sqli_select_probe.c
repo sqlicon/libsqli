@@ -68,7 +68,7 @@ static int run_prepare_count(sqli_conn_t *conn, const char *pattern)
         return 1;
     }
 
-    if (!sqli_stmt_next(stmt)) {
+    if (sqli_stmt_fetch(stmt) != SQLI_OK) {
         fprintf(stderr, "execute count returned no rows\n");
         sqli_stmt_destroy(stmt);
         return 1;
@@ -147,12 +147,18 @@ static int run_prepare_list(sqli_conn_t *conn, const char *pattern)
         return 1;
     }
 
-    while (sqli_stmt_next(stmt)) {
+    sqli_status fetch_status;
+    while ((fetch_status = sqli_stmt_fetch(stmt)) == SQLI_OK) {
         rows++;
         printf("prepare_list_row[%d]=%s\n", rows,
                sqli_result_get_string(sqli_stmt_result(stmt), 0));
     }
 
+    if (fetch_status != SQLI_EOF) {
+        fprintf(stderr, "fetch list failed: status=%d\n", (int)fetch_status);
+        sqli_stmt_destroy(stmt);
+        return 1;
+    }
     printf("prepare_list_rows=%d\n", rows);
     sqli_stmt_destroy(stmt);
     return rows > 0 ? 0 : 1;

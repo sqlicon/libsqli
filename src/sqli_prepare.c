@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include "sqli_sblob_internal.h"
 #include "libsqli/sqli_temporal.h"
 #include "libsqli/sqli_decimal.h"
 #include "libsqli/sqli_sblob.h"
@@ -83,9 +84,9 @@ static sqli_status sqli_clone_bound_param(sqli_bound_param *dst, const sqli_boun
     dst->value = src->value;
     dst->blen = src->blen;
     dst->is_null = src->is_null;
-    dst->temporal_qualifier = src->temporal_qualifier;
-    dst->temporal_length = src->temporal_length;
-    memcpy(dst->temporal_bytes, src->temporal_bytes, sizeof(dst->temporal_bytes));
+    dst->native_qualifier = src->native_qualifier;
+    dst->native_length = src->native_length;
+    memcpy(dst->native_bytes, src->native_bytes, sizeof(dst->native_bytes));
 
     if (src->sval != NULL) {
         size_t n = strlen(src->sval) + 1u;
@@ -532,20 +533,68 @@ sqli_status sqli_bind_string(sqli_stmt_t *stmt, int param_index, const char *val
     return set_param_string(stmt, param_index, SQLI_BIND_STRING, value);
 }
 
-sqli_status sqli_bind_decimal(sqli_stmt_t *stmt, int param_index, const char *value)
+sqli_status sqli_bind_decimal_string(sqli_stmt_t *stmt, int param_index, const char *value)
 {
     /* Client can transmit DECIMAL text and rely on server-side cast for target column type. */
     return set_param_string(stmt, param_index, SQLI_BIND_STRING, value);
 }
 
-sqli_status sqli_bind_date(sqli_stmt_t *stmt, int param_index, const char *value)
+sqli_status sqli_bind_date_string(sqli_stmt_t *stmt, int param_index, const char *value)
 {
-    return set_param_string(stmt, param_index, SQLI_BIND_DATE, value);
+    if (value == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    sqli_date_t date;
+    sqli_status status = sqli_date_parse(&date, value, strlen(value), false);
+    return status == SQLI_OK ? sqli_bind_date(stmt, param_index, &date) : status;
 }
 
 sqli_status sqli_bind_datetime_string(sqli_stmt_t *stmt, int param_index, const char *value)
 {
     return set_param_string(stmt, param_index, SQLI_BIND_STRING, value);
+}
+
+sqli_status sqli_bind_date(sqli_stmt_t *stmt, int param_index, const sqli_date_t *value)
+{
+    if (value == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    sqli_status status = validate_param_index(stmt, param_index);
+    if (status != SQLI_OK)
+        return status;
+    sqli_bound_param candidate = {.type = SQLI_BIND_DATE, .is_null = value->is_null};
+    status = sqli_date_encode_wire(value, candidate.native_bytes, sizeof(candidate.native_bytes),
+                                   &candidate.native_length);
+    if (status != SQLI_OK)
+        return status;
+    sqli_bound_param *parameter = &stmt->params[(size_t)(param_index - 1)];
+    sqli_free_bound_param(parameter);
+    *parameter = candidate;
+    return SQLI_OK;
+}
+
+sqli_status sqli_bind_decimal(sqli_stmt_t *stmt, int param_index, const sqli_decimal_t *value,
+                              const sqli_decimal_target_t *target)
+{
+    if (value == NULL || target == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    if (target->precision < 1 || target->precision > 32 ||
+        (!target->floating_scale && target->scale > target->precision))
+        return SQLI_OUT_OF_RANGE;
+    sqli_status status = validate_param_index(stmt, param_index);
+    if (status != SQLI_OK)
+        return status;
+    uint8_t scale = target->floating_scale ? UINT8_MAX : target->scale;
+    sqli_bound_param candidate = {.type = SQLI_BIND_DECIMAL, .native_qualifier = scale};
+    uint16_t descriptor = (uint16_t)(((unsigned)target->precision << 8) | scale);
+    status = sqli_decimal_encode_wire(value, descriptor, candidate.native_bytes,
+                                      sizeof(candidate.native_bytes), &candidate.native_length);
+    if (status == SQLI_OK)
+        status = sqli_decimal_is_null(value, &candidate.is_null);
+    if (status != SQLI_OK)
+        return status;
+    sqli_bound_param *parameter = &stmt->params[(size_t)(param_index - 1)];
+    sqli_free_bound_param(parameter);
+    *parameter = candidate;
+    return SQLI_OK;
 }
 
 static sqli_status temporal_qualifier(const sqli_temporal_range_t *target, bool interval,
@@ -587,10 +636,10 @@ sqli_status sqli_bind_datetime(sqli_stmt_t *stmt, int param_index, const sqli_da
     if (status != SQLI_OK)
         return status;
     sqli_bound_param candidate = {.type = SQLI_BIND_DATETIME};
-    status = temporal_qualifier(target, false, 0, &candidate.temporal_qualifier);
+    status = temporal_qualifier(target, false, 0, &candidate.native_qualifier);
     if (status == SQLI_OK)
-        status = sqli_datetime_encode_wire(value, candidate.temporal_qualifier, candidate.temporal_bytes,
-                                      sizeof(candidate.temporal_bytes), &candidate.temporal_length);
+        status = sqli_datetime_encode_wire(value, candidate.native_qualifier, candidate.native_bytes,
+                                      sizeof(candidate.native_bytes), &candidate.native_length);
     if (status == SQLI_OK)
         status = sqli_datetime_is_null(value, &candidate.is_null);
     if (status != SQLI_OK)
@@ -610,10 +659,10 @@ sqli_status sqli_bind_interval(sqli_stmt_t *stmt, int param_index, const sqli_in
     if (status != SQLI_OK)
         return status;
     sqli_bound_param candidate = {.type = SQLI_BIND_INTERVAL};
-    status = temporal_qualifier(target, true, leading_precision, &candidate.temporal_qualifier);
+    status = temporal_qualifier(target, true, leading_precision, &candidate.native_qualifier);
     if (status == SQLI_OK)
-        status = sqli_interval_encode_wire(value, candidate.temporal_qualifier, candidate.temporal_bytes,
-                                      sizeof(candidate.temporal_bytes), &candidate.temporal_length);
+        status = sqli_interval_encode_wire(value, candidate.native_qualifier, candidate.native_bytes,
+                                      sizeof(candidate.native_bytes), &candidate.native_length);
     if (status == SQLI_OK)
         status = sqli_interval_is_null(value, &candidate.is_null);
     if (status != SQLI_OK)
@@ -803,14 +852,16 @@ static size_t estimate_bind_msg_size(const sqli_stmt_t *stmt, const sqli_bound_p
         if (stmt->param_server_types != NULL && i < stmt->param_server_type_count)
             stype = stmt->param_server_types[(size_t)i];
         if ((stype == SQLI_TYPE_BYTE || stype == SQLI_TYPE_TEXT) &&
-            par->type != SQLI_BIND_DATETIME && par->type != SQLI_BIND_INTERVAL) {
+            par->type != SQLI_BIND_DATETIME && par->type != SQLI_BIND_INTERVAL &&
+            par->type != SQLI_BIND_DATE && par->type != SQLI_BIND_DECIMAL) {
             n += 56;
             continue;
         }
         switch (par->type) {
+        case SQLI_BIND_DECIMAL:
         case SQLI_BIND_DATETIME:
         case SQLI_BIND_INTERVAL:
-            n += 2 + par->temporal_length + (par->temporal_length & 1u);
+            n += 2 + par->native_length + (par->native_length & 1u);
             break;
         case SQLI_BIND_INT: n += 4; break;
         case SQLI_BIND_BIGINT:
@@ -821,12 +872,6 @@ static size_t estimate_bind_msg_size(const sqli_stmt_t *stmt, const sqli_bound_p
             size_t slen = (par->sval ? strlen(par->sval) : 0);
             size_t dlen = 2 + (slen * 8u) + 32u; /* worst-case locale conversion growth */
             n += dlen + (dlen & 1u);
-            break;
-        }
-        case SQLI_BIND_DECIMAL: {
-            size_t slen = (par->sval ? strlen(par->sval) : 0);
-            n += (slen + 8u);
-            n += ((slen + 8u) & 1u);
             break;
         }
         case SQLI_BIND_DATE: {
@@ -849,100 +894,6 @@ static size_t estimate_bind_msg_size(const sqli_stmt_t *stmt, const sqli_bound_p
     if (include_eot)
         n += 2;
     return n;
-}
-
-static int parse_iso_date_ymd(const char *s, int *year, int *month, int *day)
-{
-    if (s == NULL || year == NULL || month == NULL || day == NULL)
-        return 0;
-    if (!(isdigit((unsigned char)s[0]) && isdigit((unsigned char)s[1]) &&
-          isdigit((unsigned char)s[2]) && isdigit((unsigned char)s[3]) &&
-          s[4] == '-' &&
-          isdigit((unsigned char)s[5]) && isdigit((unsigned char)s[6]) &&
-          s[7] == '-' &&
-          isdigit((unsigned char)s[8]) && isdigit((unsigned char)s[9]) &&
-          s[10] == '\0'))
-        return 0;
-    *year = (s[0] - '0') * 1000 + (s[1] - '0') * 100 + (s[2] - '0') * 10 + (s[3] - '0');
-    *month = (s[5] - '0') * 10 + (s[6] - '0');
-    *day = (s[8] - '0') * 10 + (s[9] - '0');
-    if (*month < 1 || *month > 12 || *day < 1 || *day > 31)
-        return 0;
-    return 1;
-}
-
-static int is_gregorian_leap(int year)
-{
-    return ((year & 3) == 0) && ((year % 400 == 0) || (year % 100 != 0));
-}
-
-/* Mirror Java IfxToJavaType.convertDateToDays(Date). */
-static int32_t sqli_convert_ymd_to_ifx_days(int year, int month, int day)
-{
-    static const int mdays_norm[13] = {0,31,28,31,30,31,30,31,31,30,31,30,31};
-    int mdays[13];
-    memcpy(mdays, mdays_norm, sizeof(mdays));
-    if (is_gregorian_leap(year))
-        mdays[2] = 29;
-
-    int lyear = year - 1;
-    /* Informix wire DATE day 0 is 1899-12-31.
-     * Keep day-1 here to match server/Client conversion semantics. */
-    int jdate = (lyear / 100) * 146097 / 4 + (lyear % 100) * 1461 / 4 + (day - 1) - 693594;
-    for (int i = 1; i < month; i++)
-        jdate += mdays[i];
-    return (int32_t)jdate;
-}
-
-static int parse_decimal_ascii(const char *s, int *negative,
-                               uint8_t *digits, size_t digits_cap,
-                               uint8_t *precision, uint8_t *scale)
-{
-    if (s == NULL || negative == NULL || digits == NULL || precision == NULL || scale == NULL)
-        return 0;
-
-    const char *p = s;
-    while (*p != '\0' && isspace((unsigned char)*p))
-        p++;
-
-    *negative = 0;
-    if (*p == '+' || *p == '-') {
-        *negative = (*p == '-') ? 1 : 0;
-        p++;
-    }
-
-    size_t nd = 0;
-    size_t frac = 0;
-    int seen_dot = 0;
-    int seen_digit = 0;
-    while (*p != '\0') {
-        if (*p >= '0' && *p <= '9') {
-            if (nd >= digits_cap)
-                return 0;
-            digits[nd++] = (uint8_t)(*p - '0');
-            if (seen_dot)
-                frac++;
-            seen_digit = 1;
-            p++;
-            continue;
-        }
-        if (*p == '.' && !seen_dot) {
-            seen_dot = 1;
-            p++;
-            continue;
-        }
-        break;
-    }
-    while (*p != '\0' && isspace((unsigned char)*p))
-        p++;
-    if (*p != '\0' || !seen_digit)
-        return 0;
-    if (nd == 0 || nd > 31 || frac > nd)
-        return 0;
-
-    *precision = (uint8_t)nd;
-    *scale = (uint8_t)frac;
-    return 1;
 }
 
 static size_t build_bind_msg(sqli_stmt_t *stmt, const sqli_bound_param *params,
@@ -971,7 +922,8 @@ static size_t build_bind_msg(sqli_stmt_t *stmt, const sqli_bound_param *params,
             server_type = stmt->param_server_types[(size_t)i];
 
         bool is_legacy_lob = (server_type == SQLI_TYPE_BYTE || server_type == SQLI_TYPE_TEXT) &&
-            par->type != SQLI_BIND_DATETIME && par->type != SQLI_BIND_INTERVAL;
+            par->type != SQLI_BIND_DATETIME && par->type != SQLI_BIND_INTERVAL &&
+            par->type != SQLI_BIND_DATE && par->type != SQLI_BIND_DECIMAL;
         uint8_t wire_type = is_legacy_lob ? server_type : (uint8_t)par->type;
 
         /* Type code */
@@ -1028,16 +980,17 @@ static size_t build_bind_msg(sqli_stmt_t *stmt, const sqli_bound_param *params,
             buf[p++] = 0x00; buf[p++] = 0x00;
 
             switch (par->type) {
+            case SQLI_BIND_DECIMAL:
             case SQLI_BIND_DATETIME:
             case SQLI_BIND_INTERVAL: {
-                buf[p++] = (uint8_t)(par->temporal_qualifier >> 8);
-                buf[p++] = (uint8_t)par->temporal_qualifier;
-                size_t length = par->temporal_length;
-                while (length > 1 && par->temporal_bytes[length - 1] == 0)
+                buf[p++] = (uint8_t)(par->native_qualifier >> 8);
+                buf[p++] = (uint8_t)par->native_qualifier;
+                size_t length = par->native_length;
+                while (length > 1 && par->native_bytes[length - 1] == 0)
                     length--;
                 buf[p++] = 0;
                 buf[p++] = (uint8_t)length;
-                memcpy(buf + p, par->temporal_bytes, length);
+                memcpy(buf + p, par->native_bytes, length);
                 p += length;
                 if (length & 1u)
                     buf[p++] = 0;
@@ -1103,41 +1056,10 @@ static size_t build_bind_msg(sqli_stmt_t *stmt, const sqli_bound_param *params,
                     buf[p++] = 0;
                 break;
             }
-            case SQLI_BIND_DECIMAL: {
-                uint8_t digits[40];
-                uint8_t precision = 0, scale = 0;
-                int neg = 0;
-                if (par->sval == NULL ||
-                    !parse_decimal_ascii(par->sval, &neg, digits, sizeof(digits), &precision, &scale)) {
-                    buf[p++] = 0; buf[p++] = 0;
-                    break;
-                }
-                uint8_t packed[32];
-                size_t n = sqli_encode_decimal(packed, sizeof(packed), precision, scale, neg, digits);
-                if (n == 0) {
-                    buf[p++] = 0; buf[p++] = 0;
-                    break;
-                }
-                buf[p++] = 0;
-                buf[p++] = scale; /* Client writes IfxDecimal.getScale() */
-                memcpy(buf + p, packed, n);
-                p += n;
-                if (n & 1u)
-                    buf[p++] = 0;
-                break;
-            }
             case SQLI_BIND_DATE: {
-                int year = 0, month = 0, day = 0;
-                if (par->sval == NULL || !parse_iso_date_ymd(par->sval, &year, &month, &day)) {
-                    buf[p++] = 0; buf[p++] = 0;
-                    break;
-                }
-                int32_t d = sqli_convert_ymd_to_ifx_days(year, month, day);
-                buf[p++] = 0; buf[p++] = 0; /* encoded_length */
-                buf[p++] = (uint8_t)((d >> 24) & 0xFF);
-                buf[p++] = (uint8_t)((d >> 16) & 0xFF);
-                buf[p++] = (uint8_t)((d >> 8) & 0xFF);
-                buf[p++] = (uint8_t)(d & 0xFF);
+                buf[p++] = 0; buf[p++] = 0;
+                memcpy(buf + p, par->native_bytes, SQLI_DATE_WIRE_SIZE);
+                p += SQLI_DATE_WIRE_SIZE;
                 break;
             }
             case SQLI_BIND_BYTES: {
@@ -1676,11 +1598,18 @@ sqli_status sqli_stmt_batch_execute(sqli_stmt_t *stmt, sqli_batch_result_t **out
  * sqli_stmt_next
  * ---------------------------------------------------------------- */
 
+sqli_status sqli_stmt_fetch(sqli_stmt_t *stmt)
+{
+    if (stmt == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    if (!stmt->result_valid)
+        return SQLI_INVALID_STATE;
+    return sqli_result_fetch(&stmt->result);
+}
+
 bool sqli_stmt_next(sqli_stmt_t *stmt)
 {
-    if (stmt == NULL || !stmt->result_valid)
-        return false;
-    return sqli_result_next(&stmt->result);
+    return sqli_stmt_fetch(stmt) == SQLI_OK;
 }
 
 /* ----------------------------------------------------------------
@@ -1745,16 +1674,16 @@ void sqli_stmt_destroy(sqli_stmt_t *stmt)
  * Column accessors
  * ---------------------------------------------------------------- */
 
-const char *sqli_result_column_name(sqli_result_t *result, int col_index)
+const char *sqli_result_column_name(sqli_result_t *result, size_t col_index)
 {
-    if (result == NULL || col_index < 0 || col_index >= result->column_count)
+    if (result == NULL || col_index >= (size_t)result->column_count)
         return NULL;
     return result->columns[(size_t)col_index].name;
 }
 
-int sqli_result_column_type(sqli_result_t *result, int col_index)
+int sqli_result_column_type(sqli_result_t *result, size_t col_index)
 {
-    if (result == NULL || col_index < 0 || col_index >= result->column_count)
+    if (result == NULL || col_index >= (size_t)result->column_count)
         return -1;
     return (int)result->columns[(size_t)col_index].type;
 }

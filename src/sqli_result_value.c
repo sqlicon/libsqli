@@ -2,6 +2,7 @@
 #include "libsqli/sqli_temporal.h"
 #include "libsqli/sqli_decimal.h"
 #include "sqli_temporal_internal.h"
+#include "sqli_decimal_codec.h"
 #include "sqli_internal.h"
 #include "sqli_charset.h"
 #include "sqli_protocol_internal.h"
@@ -9,6 +10,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 
 sqli_status extract_value_from_tuple(const sqli_column_info *col_info,
@@ -32,11 +34,11 @@ sqli_status extract_value_from_tuple(const sqli_column_info *col_info,
     return SQLI_OK;
 }
 
-static sqli_status sqli_extract_current_value(sqli_result_t *result, int col_index,
+static sqli_status sqli_extract_current_value(sqli_result_t *result, size_t col_index,
                                               uint8_t *out, size_t *out_len)
 {
     if (result == NULL || out == NULL || out_len == NULL ||
-        col_index < 0 || col_index >= result->column_count ||
+        col_index >= (size_t)result->column_count ||
         result->tuple_buffer == NULL)
         return SQLI_INVALID_STATE;
 
@@ -51,7 +53,7 @@ static sqli_status sqli_extract_current_value(sqli_result_t *result, int col_ind
 
     size_t start = result->cur_col_data_start[col_index];
     size_t len = result->cur_col_data_len[col_index];
-    if (start > result->tuple_len || start + len > result->tuple_len)
+    if (start > result->tuple_len || len > result->tuple_len - start)
         return SQLI_PROTO_ERROR;
 
     size_t copy_len = *out_len < len ? *out_len : len;
@@ -118,22 +120,23 @@ static bool sqli_decimal_to_int64(const uint8_t *raw, size_t len, int64_t *out)
         return true;
     }
 
-    int64_t v = 0;
+    uint64_t v = 0;
+    const uint64_t limit = negative ? (uint64_t)INT64_MAX + 1 : (uint64_t)INT64_MAX;
     for (int i = 0; i < expon; i++) {
         uint8_t d = (i < (int)ndgts) ? digits[i] : 0;
-        if (d > 99)
+        if (d > 99 || v > (limit - d) / 100)
             return false;
         v = (v * 100) + d;
     }
-    if (negative)
-        v = -v;
-    *out = v;
+    *out = negative ? (v == (uint64_t)INT64_MAX + 1 ? INT64_MIN : -(int64_t)v) : (int64_t)v;
     return true;
 }
 
-int32_t sqli_result_get_int(sqli_result_t *result, int col_index)
+int32_t sqli_result_get_int(sqli_result_t *result, size_t col_index)
 {
-    if (result == NULL || col_index < 0 || col_index >= result->column_count)
+    if (result != NULL)
+        result->last_was_null = false;
+    if (result == NULL || col_index >= (size_t)result->column_count)
         return 0;
     if (result->current_row < 0 || result->tuple_len == 0)
         return 0;
@@ -145,15 +148,11 @@ int32_t sqli_result_get_int(sqli_result_t *result, int col_index)
     const sqli_column_info *col = &result->columns[(size_t)col_index];
     uint8_t type = (uint8_t)col->type;
 
-    if (type == SQLI_TYPE_DECIMAL || type == SQLI_TYPE_MONEY) {
-        uint8_t raw[64];
-        size_t raw_len = sizeof(raw);
-        if (sqli_extract_current_value(result, col_index, raw, &raw_len) != SQLI_OK)
+    if (type != SQLI_TYPE_BOOL && type != SQLI_TYPE_DBOOLEAN) {
+        int64_t value = sqli_result_get_int64(result, col_index);
+        if (value < INT32_MIN || value > INT32_MAX)
             return 0;
-        int64_t v64 = 0;
-        if (!sqli_decimal_to_int64(raw, raw_len, &v64))
-            return 0;
-        return (int32_t)v64;
+        return (int32_t)value;
     }
 
     if (result->cur_cache_row != result->current_row ||
@@ -165,7 +164,7 @@ int32_t sqli_result_get_int(sqli_result_t *result, int col_index)
 
     size_t start = result->cur_col_data_start[col_index];
     size_t len = result->cur_col_data_len[col_index];
-    if (len == 0 || start > result->tuple_len || start + len > result->tuple_len)
+    if (len == 0 || start > result->tuple_len || len > result->tuple_len - start)
         return 0;
     const uint8_t *buf = result->tuple_buffer + start;
 
@@ -184,33 +183,14 @@ int32_t sqli_result_get_int(sqli_result_t *result, int col_index)
         }
     }
 
-    if (type == SQLI_TYPE_INT8 || type == SQLI_TYPE_SERIAL8) {
-        if (len < 10)
-            return 0;
-        bool is_null = false;
-        int64_t v = sqli_decode_ifx_int8(buf, &is_null);
-        if (is_null)
-            return INT32_MIN;
-        return (int32_t)v;
-    }
-
-    if (len >= 4) {
-        uint32_t u = ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16) |
-                     ((uint32_t)buf[2] << 8)  | (uint32_t)buf[3];
-        return (int32_t)u;
-    }
-
-    uint32_t u = 0;
-    for (size_t i = 0; i < len; i++)
-        u = (u << 8) | (uint32_t)buf[i];
-    if ((buf[0] & 0x80) != 0)
-        u |= (~(uint32_t)0) << (len * 8);
-    return (int32_t)u;
+    return 0;
 }
 
-int64_t sqli_result_get_int64(sqli_result_t *result, int col_index)
+int64_t sqli_result_get_int64(sqli_result_t *result, size_t col_index)
 {
-    if (result == NULL || col_index < 0 || col_index >= result->column_count)
+    if (result != NULL)
+        result->last_was_null = false;
+    if (result == NULL || col_index >= (size_t)result->column_count)
         return 0;
     if (result->current_row < 0 || result->tuple_len == 0)
         return 0;
@@ -242,39 +222,57 @@ int64_t sqli_result_get_int64(sqli_result_t *result, int col_index)
 
     size_t start = result->cur_col_data_start[col_index];
     size_t len = result->cur_col_data_len[col_index];
-    if (len == 0 || start > result->tuple_len || start + len > result->tuple_len)
+    if (len == 0 || start > result->tuple_len || len > result->tuple_len - start)
         return 0;
     const uint8_t *buf = result->tuple_buffer + start;
 
     if (type == SQLI_TYPE_INT8 || type == SQLI_TYPE_SERIAL8) {
-        if (len < 10)
+        enum { int8_wire_width = 10 };
+        if (len != int8_wire_width)
             return 0;
-        bool is_null = false;
-        int64_t v = sqli_decode_ifx_int8(buf, &is_null);
-        if (is_null)
-            return INT64_MIN;
-        return v;
+        unsigned sign = ((unsigned)buf[0] << 8) | buf[1];
+        if (sign == 0) {
+            result->last_was_null = true;
+            return 0;
+        }
+        if (sign != 1 && sign != UINT16_MAX)
+            return 0;
+        uint32_t low = ((uint32_t)buf[2] << 24) | ((uint32_t)buf[3] << 16) |
+            ((uint32_t)buf[4] << 8) | buf[5];
+        uint32_t high = ((uint32_t)buf[6] << 24) | ((uint32_t)buf[7] << 16) |
+            ((uint32_t)buf[8] << 8) | buf[9];
+        uint64_t magnitude = ((uint64_t)high << 32) | low;
+        uint64_t limit = sign == 1 ? (uint64_t)INT64_MAX : (uint64_t)INT64_MAX + 1;
+        if (magnitude > limit)
+            return 0;
+        return sign == 1 ? (int64_t)magnitude :
+            magnitude == (uint64_t)INT64_MAX + 1 ? INT64_MIN : -(int64_t)magnitude;
     }
 
-    if (len >= 8)
-        return (int64_t)((uint64_t)buf[0] << 56 | (uint64_t)buf[1] << 48 |
-                         (uint64_t)buf[2] << 40 | (uint64_t)buf[3] << 32 |
-                         (uint64_t)buf[4] << 24 | (uint64_t)buf[5] << 16 |
-                         (uint64_t)buf[6] << 8  | (uint64_t)buf[7]);
-
-    if (len == 0)
+    size_t width;
+    switch (type) {
+    case SQLI_TYPE_SMALLINT: width = 2; break;
+    case SQLI_TYPE_INT: case SQLI_TYPE_SERIAL: case SQLI_TYPE_DATE: width = 4; break;
+    case SQLI_TYPE_BIGINT: case SQLI_TYPE_BIGSERIAL: width = 8; break;
+    case SQLI_TYPE_BOOL: case SQLI_TYPE_DBOOLEAN:
+        return sqli_result_get_int(result, col_index);
+    default: return 0;
+    }
+    if (len != width)
         return 0;
     uint64_t u = 0;
     for (size_t i = 0; i < len; i++)
-        u = (u << 8) | (uint64_t)buf[i];
+        u = (u << 8) | buf[i];
     if (len < 8 && (buf[0] & 0x80) != 0)
-        u |= (~(uint64_t)0) << (len * 8);
-    return (int64_t)u;
+        u |= UINT64_MAX << (len * 8);
+    return u <= INT64_MAX ? (int64_t)u : -1 - (int64_t)(UINT64_MAX - u);
 }
 
-double sqli_result_get_double(sqli_result_t *result, int col_index)
+double sqli_result_get_double(sqli_result_t *result, size_t col_index)
 {
-    if (result == NULL || col_index < 0 || col_index >= result->column_count)
+    if (result != NULL)
+        result->last_was_null = false;
+    if (result == NULL || col_index >= (size_t)result->column_count)
         return 0.0;
     if (result->current_row < 0 || result->tuple_len == 0)
         return 0.0;
@@ -314,12 +312,22 @@ double sqli_result_get_double(sqli_result_t *result, int col_index)
         }
 
         int frac_digits = (int)(ndgts * 2) - (expon * 2);
-        while (frac_digits-- > 0)
+        while (frac_digits > 0) {
             v /= 10.0L;
+            frac_digits--;
+        }
+        while (frac_digits < 0) {
+            v *= 10.0L;
+            frac_digits++;
+        }
         if (negative)
             v = -v;
-        return (double)v;
+        double converted = (double)v;
+        return isfinite(converted) ? converted : 0.0;
     }
+
+    if (type != SQLI_TYPE_FLOAT && type != SQLI_TYPE_SMFLOAT)
+        return (double)sqli_result_get_int64(result, col_index);
 
     if (result->cur_cache_row != result->current_row ||
         result->cur_col_data_start == NULL || result->cur_col_data_len == NULL)
@@ -330,27 +338,27 @@ double sqli_result_get_double(sqli_result_t *result, int col_index)
 
     size_t start = result->cur_col_data_start[col_index];
     size_t len = result->cur_col_data_len[col_index];
-    if (len < 4 || start > result->tuple_len || start + len > result->tuple_len)
+    if (len < 4 || start > result->tuple_len || len > result->tuple_len - start)
         return 0.0;
     const uint8_t *buf = result->tuple_buffer + start;
 
     /* Wire format is big-endian IEEE 754 (4-byte single or 8-byte double precision) */
-    if (len == 4 || type == SQLI_TYPE_SMFLOAT) {
+    if (len == 4 && type == SQLI_TYPE_SMFLOAT) {
         uint32_t bits32 = ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16) |
                           ((uint32_t)buf[2] << 8)  | (uint32_t)buf[3];
         float fval;
         memcpy(&fval, &bits32, 4);
-        return (double)fval;
+        return isfinite(fval) ? (double)fval : 0.0;
     }
 
-    if (len >= 8) {
+    if (len == 8 && type == SQLI_TYPE_FLOAT) {
         uint64_t bits = ((uint64_t)buf[0] << 56) | ((uint64_t)buf[1] << 48) |
                         ((uint64_t)buf[2] << 40) | ((uint64_t)buf[3] << 32) |
                         ((uint64_t)buf[4] << 24) | ((uint64_t)buf[5] << 16) |
                         ((uint64_t)buf[6] << 8)  | (uint64_t)buf[7];
         double val;
         memcpy(&val, &bits, 8);
-        return val;
+        return isfinite(val) ? val : 0.0;
     }
 
     return 0.0;
@@ -403,9 +411,9 @@ static bool sqli_result_ensure_col_bufs(sqli_result_t *result)
     return true;
 }
 
-const char *sqli_result_get_string(sqli_result_t *result, int col_index)
+const char *sqli_result_get_string(sqli_result_t *result, size_t col_index)
 {
-    if (result == NULL || col_index < 0 || col_index >= result->column_count)
+    if (result == NULL || col_index >= (size_t)result->column_count)
         return "";
     if (result->current_row < 0 || result->tuple_len == 0)
         return "";
@@ -532,242 +540,178 @@ const char *sqli_result_get_string(sqli_result_t *result, int col_index)
     return str_buf;
 }
 
-sqli_status sqli_result_get_string_len(sqli_result_t *result, int col_index,
-                                       char *out, size_t *out_len)
+static sqli_status copy_result_buffer(const void *data, size_t length, bool null_value,
+                                       bool text, void *out, size_t capacity,
+                                       size_t *required, bool *is_null)
 {
-    if (result == NULL || out == NULL || out_len == NULL || *out_len == 0)
-        return SQLI_INVALID_STATE;
-    if (col_index < 0 || col_index >= result->column_count)
-        return SQLI_INVALID_STATE;
-    if (result->current_row < 0 || result->tuple_len == 0)
-        return SQLI_INVALID_STATE;
-
-    const sqli_column_info *col = &result->columns[(size_t)col_index];
-    if (result->cur_cache_row != result->current_row ||
-        result->cur_col_data_start == NULL || result->cur_col_data_len == NULL ||
-        result->cur_col_is_null == NULL)
-        sqli_result_prepare_row_cache(result);
-    if (result->cur_cache_row != result->current_row ||
-        result->cur_col_data_start == NULL || result->cur_col_data_len == NULL ||
-        result->cur_col_is_null == NULL)
-        return SQLI_INVALID_STATE;
-
-    result->last_was_null = result->cur_col_is_null[col_index] ? true : false;
-    if (result->last_was_null) {
-        out[0] = '\0';
-        *out_len = 0;
-        return SQLI_OK;
+    if (text && length == SIZE_MAX)
+        return SQLI_LIMIT_EXCEEDED;
+    size_t needed = null_value ? 0 : length + (text ? 1u : 0u);
+    if (out != NULL && capacity < needed) {
+        *required = needed;
+        *is_null = null_value;
+        return SQLI_BUFFER_TOO_SMALL;
     }
-
-    if (sqli_is_legacy_lob_type((uint8_t)col->type)) {
-        uint8_t *lob = NULL;
-        size_t lob_len = 0;
-        sqli_status frc = sqli_fetchblob_materialize(result, col_index, &lob, &lob_len);
-        if (frc == SQLI_OK) {
-            if (lob_len == 0 || lob == NULL) {
-                out[0] = '\0';
-                *out_len = 0;
-                free(lob);
-                return SQLI_OK;
-            }
-            sqli_conn_t *conn = result->owner_conn;
-            if (conn != NULL && !conn->decode_locale_checked) {
-                sqli_charset_decoder_close(&conn->decode_cs);
-                conn->decode_cs_ready = false;
-                conn->decode_locale_checked = true;
-                if (conn->client_locale != NULL && conn->db_locale != NULL &&
-                    sqli_charset_decoder_open_locales(&conn->decode_cs,
-                                                      conn->client_locale,
-                                                      conn->db_locale))
-                    conn->decode_cs_ready = true;
-            }
-            if (col->type == SQLI_TYPE_TEXT && conn != NULL && conn->decode_cs_ready) {
-                char stack_buf[512];
-                char *conv_buf = stack_buf;
-                size_t conv_cap = sizeof(stack_buf);
-                bool allocated = false;
-                if (lob_len * 4 + 1 > conv_cap) {
-                    conv_cap = lob_len * 4 + 1;
-                    conv_buf = malloc(conv_cap);
-                    if (conv_buf == NULL) {
-                        free(lob);
-                        return SQLI_ALLOC_FAIL;
-                    }
-                    allocated = true;
-                }
-                size_t conv_len = conv_cap;
-                if (sqli_charset_decoder_convert(&conn->decode_cs, (const char *)lob, lob_len,
-                                                 conv_buf, &conv_len)) {
-                    size_t avail = *out_len - 1;
-                    size_t copy = conv_len < avail ? conv_len : avail;
-                    memcpy(out, conv_buf, copy);
-                    out[copy] = '\0';
-                    *out_len = copy;
-                    if (allocated)
-                        free(conv_buf);
-                    free(lob);
-                    return SQLI_OK;
-                }
-                if (allocated)
-                    free(conv_buf);
-            }
-            size_t avail = *out_len - 1;
-            size_t copy = lob_len < avail ? lob_len : avail;
-            memcpy(out, lob, copy);
-            out[copy] = '\0';
-            *out_len = copy;
-            free(lob);
-            return SQLI_OK;
-        }
-        free(lob);
-        out[0] = '\0';
-        *out_len = 0;
-        return SQLI_OK;
+    if (out != NULL && !null_value) {
+        if (length != 0)
+            memcpy(out, data, length);
+        if (text)
+            ((char *)out)[length] = '\0';
     }
+    *required = needed;
+    *is_null = null_value;
+    return SQLI_OK;
+}
 
-    if (col->type == SQLI_TYPE_DECIMAL || col->type == SQLI_TYPE_MONEY) {
-        const char *dec_str = sqli_result_get_decimal_string(result, col_index);
-        size_t dlen = strlen(dec_str);
-        size_t avail = *out_len - 1;
-        size_t copy = dlen < avail ? dlen : avail;
-        memcpy(out, dec_str, copy);
-        out[copy] = '\0';
-        *out_len = copy;
-        return SQLI_OK;
-    }
-
-    if (col->type == SQLI_TYPE_DATETIME) {
-        const char *dt_str = sqli_result_get_datetime_string(result, col_index);
-        size_t dlen = strlen(dt_str);
-        size_t avail = *out_len - 1;
-        size_t copy = dlen < avail ? dlen : avail;
-        memcpy(out, dt_str, copy);
-        out[copy] = '\0';
-        *out_len = copy;
-        return SQLI_OK;
-    }
-
-    if (col->type == SQLI_TYPE_INTERVAL) {
-        const char *iv_str = sqli_result_get_interval_string(result, col_index);
-        size_t ilen = strlen(iv_str);
-        size_t avail = *out_len - 1;
-        size_t copy = ilen < avail ? ilen : avail;
-        memcpy(out, iv_str, copy);
-        out[copy] = '\0';
-        *out_len = copy;
-        return SQLI_OK;
-    }
-
-    size_t data_start = result->cur_col_data_start[col_index];
-    size_t data_len = result->cur_col_data_len[col_index];
-    if (data_len == 0 || data_start > result->tuple_len || data_start + data_len > result->tuple_len) {
-        out[0] = '\0';
-        *out_len = 0;
-        return SQLI_OK;
-    }
-
-    const char *raw = (const char *)(result->tuple_buffer + data_start);
-    size_t raw_len = data_len;
+static sqli_status result_string_conversion(sqli_result_t *result, const uint8_t *raw,
+                                             size_t length, uint8_t **owned, size_t *out_length)
+{
     sqli_conn_t *conn = result->owner_conn;
-    bool trim_trailing_spaces = (conn == NULL) ? true : conn->trim_trailing_spaces;
-    if (trim_trailing_spaces && sqli_is_stringy_type((uint8_t)col->type)) {
-        while (raw_len > 0 && raw[raw_len - 1] == ' ')
-            raw_len--;
-    }
-
     if (conn != NULL && !conn->decode_locale_checked) {
         sqli_charset_decoder_close(&conn->decode_cs);
         conn->decode_cs_ready = false;
         conn->decode_locale_checked = true;
-        if (conn->client_locale != NULL && conn->db_locale != NULL &&
-            sqli_charset_decoder_open_locales(&conn->decode_cs,
-                                              conn->client_locale,
-                                              conn->db_locale))
-            conn->decode_cs_ready = true;
+        if (conn->client_locale != NULL && conn->db_locale != NULL)
+            conn->decode_cs_ready = sqli_charset_decoder_open_locales(&conn->decode_cs,
+                                                conn->client_locale, conn->db_locale);
     }
-
-    if (conn != NULL && conn->decode_cs_ready) {
-        char stack_buf[512];
-        char *conv_buf = stack_buf;
-        size_t conv_cap = sizeof(stack_buf);
-        bool allocated = false;
-        if (raw_len * 4 + 1 > conv_cap) {
-            conv_cap = raw_len * 4 + 1;
-            conv_buf = malloc(conv_cap);
-            if (conv_buf == NULL)
-                return SQLI_ALLOC_FAIL;
-            allocated = true;
+    if (length > (SIZE_MAX - 1) / 4)
+        return SQLI_LIMIT_EXCEEDED;
+    size_t capacity = length * 4 + 1;
+    uint8_t *converted = malloc(capacity);
+    if (converted == NULL)
+        return SQLI_ALLOC_FAIL;
+    size_t converted_length = length;
+    if (length != 0 && conn != NULL && conn->decode_cs_ready) {
+        converted_length = capacity;
+        if (!sqli_charset_decoder_convert(&conn->decode_cs, (const char *)raw, length,
+                                           (char *)converted, &converted_length)) {
+            free(converted);
+            return SQLI_PROTO_ERROR;
         }
-        size_t conv_len = conv_cap;
-        if (sqli_charset_decoder_convert(&conn->decode_cs, raw, raw_len,
-                                         conv_buf, &conv_len)) {
-            size_t avail = *out_len - 1;
-            size_t copy = conv_len < avail ? conv_len : avail;
-            memcpy(out, conv_buf, copy);
-            out[copy] = '\0';
-            *out_len = copy;
-            if (allocated)
-                free(conv_buf);
-            return SQLI_OK;
-        }
-        if (allocated)
-            free(conv_buf);
+    } else if (length != 0) {
+        memcpy(converted, raw, length);
     }
-
-    size_t avail = *out_len - 1;
-    size_t copy = raw_len < avail ? raw_len : avail;
-    memcpy(out, raw, copy);
-    out[copy] = '\0';
-    *out_len = copy;
+    *owned = converted;
+    *out_length = converted_length;
     return SQLI_OK;
 }
 
-sqli_status sqli_result_get_bytes(sqli_result_t *result, int col_index,
-                                  uint8_t *out, size_t *out_len)
+sqli_status sqli_result_get_string_len(sqli_result_t *result, size_t col_index,
+                                       char *out, size_t capacity, size_t *required, bool *is_null)
 {
-    if (result == NULL || out == NULL || out_len == NULL)
+    if (required == NULL || is_null == NULL || (out == NULL && capacity != 0))
+        return SQLI_INVALID_ARGUMENT;
+    const sqli_column_info *column;
+    const uint8_t *bytes;
+    size_t length;
+    sqli_status status = sqli_result_current_span(result, col_index, &column, &bytes, &length);
+    if (status != SQLI_OK)
+        return status;
+    if (result->cur_col_is_null == NULL)
         return SQLI_INVALID_STATE;
-
-    const sqli_column_info *col = NULL;
-
-    if (col_index >= 0 && col_index < result->column_count)
-        col = &result->columns[(size_t)col_index];
-
-    if (col != NULL) {
-        result->last_was_null = sqli_result_is_null_internal(result, col_index);
-        if (result->last_was_null) {
-            *out_len = 0;
-            return SQLI_OK;
+    bool null_value = result->cur_col_is_null[col_index] != 0;
+    if (null_value)
+        return copy_result_buffer(NULL, 0, true, true, out, capacity, required, is_null);
+    enum { scalar_text_capacity = 256 };
+    char formatted[scalar_text_capacity] = {0};
+    size_t needed;
+    uint8_t *lob = NULL, *converted = NULL;
+    if (column->type == SQLI_TYPE_DECIMAL || column->type == SQLI_TYPE_MONEY) {
+        sqli_decimal_t *value = NULL;
+        status = sqli_decimal_create(&value);
+        if (status == SQLI_OK)
+            status = sqli_result_get_decimal(result, col_index, value);
+        if (status == SQLI_OK)
+            status = sqli_decimal_format(value, formatted, sizeof(formatted), &needed, &null_value);
+        sqli_decimal_destroy(value);
+        if (status != SQLI_OK)
+            return status;
+        bytes = (const uint8_t *)formatted;
+        length = null_value ? 0 : needed - 1;
+    } else if (column->type == SQLI_TYPE_DATETIME || column->type == SQLI_TYPE_INTERVAL) {
+        if (column->type == SQLI_TYPE_DATETIME) {
+            struct sqli_datetime value = {0};
+            status = sqli_result_get_datetime(result, col_index, &value);
+            if (status == SQLI_OK)
+                status = sqli_datetime_format(&value, formatted, sizeof(formatted), &needed, &null_value);
+        } else {
+            struct sqli_interval value = {0};
+            status = sqli_result_get_interval(result, col_index, &value);
+            if (status == SQLI_OK)
+                status = sqli_interval_format(&value, formatted, sizeof(formatted), &needed, &null_value);
         }
-        if (sqli_is_lob_like_type((uint8_t)col->type)) {
-            uint8_t *lob = NULL;
-            size_t lob_len = 0;
-            sqli_status frc = sqli_fetchblob_materialize(result, col_index, &lob, &lob_len);
-            if (frc == SQLI_OK) {
-                if (lob_len == 0 || lob == NULL) {
-                    *out_len = 0;
-                    free(lob);
-                    return SQLI_OK;
-                }
-                size_t copy_len = *out_len < lob_len ? *out_len : lob_len;
-                memcpy(out, lob, copy_len);
-                *out_len = copy_len;
-                free(lob);
-                return SQLI_OK;
-            }
-            free(lob);
+        if (status != SQLI_OK)
+            return status;
+        bytes = (const uint8_t *)formatted;
+        length = null_value ? 0 : needed - 1;
+        char *separator = strchr(formatted, 'T');
+        if (separator != NULL)
+            *separator = ' ';
+    } else if (column->type == SQLI_TYPE_DATE) {
+        sqli_date_t value;
+        status = sqli_result_get_date(result, col_index, &value);
+        if (status == SQLI_OK)
+            status = sqli_date_format(&value, formatted, sizeof(formatted), &needed, &null_value);
+        if (status != SQLI_OK)
+            return status;
+        bytes = (const uint8_t *)formatted;
+        length = null_value ? 0 : needed - 1;
+    } else {
+        if (sqli_is_legacy_lob_type((uint8_t)column->type)) {
+            status = sqli_fetchblob_materialize(result, col_index, &lob, &length);
+            if (status != SQLI_OK)
+                goto cleanup;
+            bytes = lob;
+        } else if (!sqli_is_stringy_type((uint8_t)column->type)) {
+            return SQLI_TYPE_MISMATCH;
         }
-        return sqli_extract_current_value(result, col_index, out, out_len);
+        if ((result->owner_conn == NULL || result->owner_conn->trim_trailing_spaces) &&
+            sqli_is_stringy_type((uint8_t)column->type)) {
+            while (length > 0 && bytes[length - 1] == ' ')
+                length--;
+        }
+        status = result_string_conversion(result, bytes, length, &converted, &length);
+        if (status != SQLI_OK)
+            goto cleanup;
+        bytes = converted;
     }
-
-    size_t available = result->tuple_len;
-    size_t copy_len = *out_len < available ? *out_len : available;
-    memcpy(out, result->tuple_buffer, copy_len);
-    *out_len = copy_len;
-    return SQLI_OK;
+    status = copy_result_buffer(bytes, length, null_value, true, out, capacity, required, is_null);
+cleanup:
+    free(converted);
+    free(lob);
+    return status;
 }
 
-bool sqli_result_is_null(sqli_result_t *result, int col_index)
+sqli_status sqli_result_get_bytes(sqli_result_t *result, size_t col_index,
+                                  uint8_t *out, size_t capacity, size_t *required, bool *is_null)
+{
+    if (required == NULL || is_null == NULL || (out == NULL && capacity != 0))
+        return SQLI_INVALID_ARGUMENT;
+    const sqli_column_info *column;
+    const uint8_t *bytes;
+    size_t length;
+    sqli_status status = sqli_result_current_span(result, col_index, &column, &bytes, &length);
+    if (status != SQLI_OK)
+        return status;
+    if (result->cur_col_is_null == NULL)
+        return SQLI_INVALID_STATE;
+    bool null_value = result->cur_col_is_null[col_index] != 0;
+    uint8_t *lob = NULL;
+    if (!null_value && sqli_is_lob_like_type((uint8_t)column->type)) {
+        status = sqli_fetchblob_materialize(result, col_index, &lob, &length);
+        if (status != SQLI_OK) {
+            free(lob);
+            return status;
+        }
+        bytes = lob;
+    }
+    status = copy_result_buffer(bytes, length, null_value, false, out, capacity, required, is_null);
+    free(lob);
+    return status;
+}
+
+bool sqli_result_is_null(sqli_result_t *result, size_t col_index)
 {
     bool is_null = sqli_result_is_null_internal(result, col_index);
     if (result != NULL)
@@ -782,7 +726,7 @@ bool sqli_result_was_null(sqli_result_t *result)
     return result->last_was_null;
 }
 
-bool sqli_result_get_bool(sqli_result_t *result, int col_index)
+bool sqli_result_get_bool(sqli_result_t *result, size_t col_index)
 {
     int32_t v = sqli_result_get_int(result, col_index);
     return v != 0;
@@ -806,12 +750,12 @@ void sqli_days_to_ymd_ifx(int32_t ifx_days, int *y, int *m, int *d)
     if (d) *d = (int)dd;
 }
 
-const char *sqli_result_get_decimal_string(sqli_result_t *result, int col_index)
+const char *sqli_result_get_decimal_string(sqli_result_t *result, size_t col_index)
 {
     static _Thread_local char out[256];
     out[0] = '\0';
 
-    if (result == NULL || col_index < 0 || col_index >= result->column_count)
+    if (result == NULL || col_index >= (size_t)result->column_count)
         return out;
     if (result->current_row < 0 || result->tuple_len == 0)
         return out;
@@ -931,12 +875,10 @@ const char *sqli_result_get_decimal_string(sqli_result_t *result, int col_index)
     return out;
 }
 
-const char *sqli_result_get_date_string(sqli_result_t *result, int col_index)
+const char *sqli_result_get_date_string(sqli_result_t *result, size_t col_index)
 {
     static _Thread_local char out[SQLI_TEMPORAL_MAX_TEXT];
     out[0] = '\0';
-    if (col_index < 0)
-        return out;
     sqli_date_t date;
     if (sqli_result_get_date(result, (size_t)col_index, &date) != SQLI_OK)
         return out;
@@ -948,14 +890,14 @@ const char *sqli_result_get_date_string(sqli_result_t *result, int col_index)
     return out;
 }
 
-const char *sqli_result_get_datetime_string(sqli_result_t *result, int col_index)
+const char *sqli_result_get_datetime_string(sqli_result_t *result, size_t col_index)
 {
     static _Thread_local char out[SQLI_TEMPORAL_MAX_TEXT];
     out[0] = '\0';
     struct sqli_datetime value = {0};
     size_t required;
     bool is_null;
-    if (col_index < 0 || sqli_result_get_datetime(result, (size_t)col_index, &value) != SQLI_OK)
+    if (sqli_result_get_datetime(result, (size_t)col_index, &value) != SQLI_OK)
         return out;
     if (sqli_datetime_format(&value, out, sizeof(out), &required, &is_null) != SQLI_OK)
         out[0] = '\0';
@@ -968,14 +910,14 @@ const char *sqli_result_get_datetime_string(sqli_result_t *result, int col_index
     return out;
 }
 
-const char *sqli_result_get_interval_string(sqli_result_t *result, int col_index)
+const char *sqli_result_get_interval_string(sqli_result_t *result, size_t col_index)
 {
     static _Thread_local char out[SQLI_TEMPORAL_MAX_TEXT];
     out[0] = '\0';
     struct sqli_interval value = {0};
     size_t required;
     bool is_null;
-    if (col_index < 0 || sqli_result_get_interval(result, (size_t)col_index, &value) != SQLI_OK)
+    if (sqli_result_get_interval(result, (size_t)col_index, &value) != SQLI_OK)
         return out;
     if (sqli_interval_format(&value, out, sizeof(out), &required, &is_null) != SQLI_OK)
         out[0] = '\0';
@@ -984,13 +926,13 @@ const char *sqli_result_get_interval_string(sqli_result_t *result, int col_index
     return out;
 }
 
-sqli_status sqli_result_stream_bytes(sqli_result_t *result, int col_index,
+sqli_status sqli_result_stream_bytes(sqli_result_t *result, size_t col_index,
                                      size_t chunk_size, sqli_stream_chunk_cb cb,
                                      void *ctx)
 {
     if (result == NULL || cb == NULL || chunk_size == 0)
         return SQLI_INVALID_STATE;
-    if (col_index < 0 || col_index >= result->column_count)
+    if (col_index >= (size_t)result->column_count)
         return SQLI_INVALID_STATE;
 
     result->last_was_null = sqli_result_is_null_internal(result, col_index);
@@ -1043,10 +985,10 @@ sqli_status sqli_result_stream_bytes(sqli_result_t *result, int col_index,
     return SQLI_OK;
 }
 
-sqli_status sqli_result_get_timestamp(sqli_result_t *result, int col_index,
+sqli_status sqli_result_get_timestamp(sqli_result_t *result, size_t col_index,
                                       sqli_timestamp_t *out)
 {
-    if (result == NULL || out == NULL || col_index < 0 || col_index >= result->column_count)
+    if (result == NULL || out == NULL || col_index >= (size_t)result->column_count)
         return SQLI_INVALID_STATE;
 
     memset(out, 0, sizeof(*out));
@@ -1139,7 +1081,7 @@ sqli_status sqli_result_get_timestamp(sqli_result_t *result, int col_index,
     return SQLI_ERR;
 }
 
-sqli_status sqli_result_get_epoch_sec(sqli_result_t *result, int col_index, int64_t *out_sec)
+sqli_status sqli_result_get_epoch_sec(sqli_result_t *result, size_t col_index, int64_t *out_sec)
 {
     if (out_sec == NULL) return SQLI_INVALID_STATE;
     *out_sec = 0;
@@ -1151,7 +1093,7 @@ sqli_status sqli_result_get_epoch_sec(sqli_result_t *result, int col_index, int6
     return SQLI_OK;
 }
 
-sqli_status sqli_result_get_epoch_ms(sqli_result_t *result, int col_index, int64_t *out_ms)
+sqli_status sqli_result_get_epoch_ms(sqli_result_t *result, size_t col_index, int64_t *out_ms)
 {
     if (out_ms == NULL) return SQLI_INVALID_STATE;
     *out_ms = 0;
@@ -1163,7 +1105,7 @@ sqli_status sqli_result_get_epoch_ms(sqli_result_t *result, int col_index, int64
     return SQLI_OK;
 }
 
-sqli_status sqli_result_get_epoch_days(sqli_result_t *result, int col_index, int32_t *out_days)
+sqli_status sqli_result_get_epoch_days(sqli_result_t *result, size_t col_index, int32_t *out_days)
 {
     if (out_days == NULL) return SQLI_INVALID_STATE;
     *out_days = 0;

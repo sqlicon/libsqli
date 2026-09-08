@@ -1,3 +1,4 @@
+#include "sqli_sblob_internal.h"
 #include "libsqli/sqli_sblob.h"
 #include "libsqli/sqli.h"
 #include "sqli_internal.h"
@@ -524,11 +525,11 @@ sqli_status sqli_sblob_write(sqli_conn_t *conn, int lofd, const void *buf, size_
     return SQLI_OK;
 }
 
-sqli_status sqli_result_read_sblob(sqli_result_t *res, int col_index,
+sqli_status sqli_result_read_sblob(sqli_result_t *res, size_t col_index,
                                    void *buf, size_t nbytes, size_t *bytes_read)
 {
     if (res == NULL || buf == NULL || bytes_read == NULL ||
-        col_index < 0 || col_index >= res->column_count)
+        col_index >= (size_t)res->column_count)
         return SQLI_INVALID_STATE;
 
     *bytes_read = 0;
@@ -735,7 +736,7 @@ static sqli_status get_lo_create_fphandle(sqli_conn_t *conn, int32_t *out_handle
     return SQLI_OK;
 }
 
-sqli_status sqli_sblob_create(sqli_conn_t *conn, sqli_sblob_type type,
+static sqli_status sblob_create_into(sqli_conn_t *conn, sqli_sblob_type type,
                               const sqli_sblob_options *options, sqli_sblob_t *out)
 {
     if (conn == NULL || out == NULL)
@@ -1277,5 +1278,43 @@ sqli_status sqli_sblob_release(sqli_conn_t *conn, sqli_sblob_t *lob)
     lob->open = false;
     lob->lofd = -1;
 
+    return SQLI_OK;
+}
+
+sqli_status sqli_sblob_create(sqli_conn_t *conn, sqli_sblob_type type,
+                              const sqli_sblob_options *options, sqli_sblob_t **out)
+{
+    if (conn == NULL || out == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    sqli_sblob_t *lob = calloc(1, sizeof(*lob));
+    if (lob == NULL)
+        return SQLI_ALLOC_FAIL;
+    sqli_status status = sblob_create_into(conn, type, options, lob);
+    if (status != SQLI_OK) {
+        free(lob);
+        return status;
+    }
+    *out = lob;
+    return SQLI_OK;
+}
+
+void sqli_sblob_destroy(sqli_sblob_t *lob)
+{
+    free(lob);
+}
+
+sqli_status sqli_sblob_is_open(const sqli_sblob_t *lob, bool *out)
+{
+    if (lob == NULL || out == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    *out = lob->open;
+    return SQLI_OK;
+}
+
+sqli_status sqli_sblob_get_type(const sqli_sblob_t *lob, sqli_sblob_type *out)
+{
+    if (lob == NULL || out == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    *out = lob->type;
     return SQLI_OK;
 }

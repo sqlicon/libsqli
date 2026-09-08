@@ -206,7 +206,7 @@ static void *worker_legacy_lob_stress(void *arg)
             } else {
                 uint8_t *read_buf = malloc(byte_len + 512);
                 size_t read_len = byte_len + 512;
-                sqli_status brc = sqli_result_get_bytes(res, 1, read_buf, &read_len);
+                sqli_status brc = sqli_result_get_bytes(res, 1, read_buf, read_len, &read_len, &(bool){false});
                 if (brc == SQLI_OK && read_len == byte_len && verify_pattern(read_buf, byte_len, seed)) {
                     atomic_fetch_add_explicit(&task->metrics->legacy_byte_verifications, 1, memory_order_relaxed);
                     atomic_fetch_add_explicit(&task->metrics->total_bytes_read, read_len, memory_order_relaxed);
@@ -296,7 +296,7 @@ static void *worker_smart_lob_stress(void *arg)
         fill_pattern(payload, write_len, seed);
 
         /* 1. Create and populate smart BLOB and CLOB via path-blind API */
-        sqli_sblob_t sblob;
+        sqli_sblob_t *sblob = NULL;
         sqli_status rc = sqli_sblob_create(conn, SQLI_SBLOB_BLOB, NULL, &sblob);
         if (rc != SQLI_OK) {
             fprintf(stderr, "[Smart Worker %d] sqli_sblob_create failed on row %d: %s\n",
@@ -306,39 +306,43 @@ static void *worker_smart_lob_stress(void *arg)
             break;
         }
 
-        rc = sqli_sblob_write_buffer(conn, &sblob, payload, write_len);
+        rc = sqli_sblob_write_buffer(conn, sblob, payload, write_len);
         if (rc != SQLI_OK) {
             fprintf(stderr, "[Smart Worker %d] sqli_sblob_write_buffer failed on row %d: %s\n",
                     task->worker_id, base_row_id, sqli_error(conn));
-            (void)sqli_sblob_release(conn, &sblob);
+            (void)sqli_sblob_release(conn, sblob);
+            sqli_sblob_destroy(sblob);
             free(payload);
             atomic_fetch_add_explicit(&task->metrics->total_errors, 1, memory_order_relaxed);
             break;
         }
-        (void)sqli_sblob_close_created(conn, &sblob);
+        (void)sqli_sblob_close_created(conn, sblob);
 
-        sqli_sblob_t sclob;
+        sqli_sblob_t *sclob = NULL;
         rc = sqli_sblob_create(conn, SQLI_SBLOB_CLOB, NULL, &sclob);
         if (rc != SQLI_OK) {
             fprintf(stderr, "[Smart Worker %d] sqli_sblob_create CLOB failed on row %d: %s\n",
                     task->worker_id, base_row_id, sqli_error(conn));
-            (void)sqli_sblob_release(conn, &sblob);
+            (void)sqli_sblob_release(conn, sblob);
+            sqli_sblob_destroy(sblob);
             free(payload);
             atomic_fetch_add_explicit(&task->metrics->total_errors, 1, memory_order_relaxed);
             break;
         }
 
-        rc = sqli_sblob_write_buffer(conn, &sclob, payload, write_len);
+        rc = sqli_sblob_write_buffer(conn, sclob, payload, write_len);
         if (rc != SQLI_OK) {
             fprintf(stderr, "[Smart Worker %d] sqli_sblob_write_buffer CLOB failed on row %d: %s\n",
                     task->worker_id, base_row_id, sqli_error(conn));
-            (void)sqli_sblob_release(conn, &sclob);
-            (void)sqli_sblob_release(conn, &sblob);
+            (void)sqli_sblob_release(conn, sclob);
+            sqli_sblob_destroy(sclob);
+            (void)sqli_sblob_release(conn, sblob);
+            sqli_sblob_destroy(sblob);
             free(payload);
             atomic_fetch_add_explicit(&task->metrics->total_errors, 1, memory_order_relaxed);
             break;
         }
-        (void)sqli_sblob_close_created(conn, &sclob);
+        (void)sqli_sblob_close_created(conn, sclob);
 
         /* 2. Insert row attaching both Smart-LOBs */
         sqli_stmt_t *ins_stmt = NULL;
@@ -346,8 +350,8 @@ static void *worker_smart_lob_stress(void *arg)
         rc = sqli_prepare(conn, "INSERT INTO test_smart_stress (id, b, c) VALUES (?, ?, ?)", &pcount, &ins_stmt);
         if (rc == SQLI_OK && ins_stmt != NULL) {
             sqli_bind_int(ins_stmt, 1, base_row_id);
-            sqli_bind_sblob(ins_stmt, 2, &sblob);
-            sqli_bind_sblob(ins_stmt, 3, &sclob);
+            sqli_bind_sblob(ins_stmt, 2, sblob);
+            sqli_bind_sblob(ins_stmt, 3, sclob);
             rc = sqli_execute(ins_stmt);
             sqli_stmt_destroy(ins_stmt);
         }
@@ -355,13 +359,17 @@ static void *worker_smart_lob_stress(void *arg)
         if (rc != SQLI_OK) {
             fprintf(stderr, "[Smart Worker %d] insert row %d failed: %s\n",
                     task->worker_id, base_row_id, sqli_error(conn));
-            (void)sqli_sblob_release(conn, &sclob);
-            (void)sqli_sblob_release(conn, &sblob);
+            (void)sqli_sblob_release(conn, sclob);
+            sqli_sblob_destroy(sclob);
+            (void)sqli_sblob_release(conn, sblob);
+            sqli_sblob_destroy(sblob);
             free(payload);
             atomic_fetch_add_explicit(&task->metrics->total_errors, 1, memory_order_relaxed);
             break;
         }
 
+        sqli_sblob_destroy(sblob);
+        sqli_sblob_destroy(sclob);
         atomic_fetch_add_explicit(&task->metrics->smart_writes, 1, memory_order_relaxed);
         atomic_fetch_add_explicit(&task->metrics->total_bytes_written, write_len, memory_order_relaxed);
 
@@ -560,52 +568,60 @@ int main(int argc, char **argv)
     const char *seed_text = "127.0.0.1 localhost informix-host\n::1 localhost ip6-localhost ip6-loopback\n";
     size_t seed_text_len = strlen(seed_text);
     for (int id = 1; id <= 10; id++) {
-        sqli_sblob_t sblob;
-        sqli_sblob_t sclob;
+        sqli_sblob_t *sblob = NULL;
+        sqli_sblob_t *sclob = NULL;
         rc = sqli_sblob_create(admin_conn, SQLI_SBLOB_BLOB, NULL, &sblob);
         if (rc != SQLI_OK) {
             fprintf(stderr, "FATAL: Failed to create seed BLOB %d: %s\n", id, sqli_error(admin_conn));
             return 1;
         }
-        rc = sqli_sblob_write_buffer(admin_conn, &sblob, (const uint8_t *)seed_text, seed_text_len);
+        rc = sqli_sblob_write_buffer(admin_conn, sblob, (const uint8_t *)seed_text, seed_text_len);
         if (rc != SQLI_OK) {
             fprintf(stderr, "FATAL: Failed to write seed BLOB %d: %s\n", id, sqli_error(admin_conn));
-            (void)sqli_sblob_release(admin_conn, &sblob);
+            (void)sqli_sblob_release(admin_conn, sblob);
+            sqli_sblob_destroy(sblob);
             return 1;
         }
-        (void)sqli_sblob_close_created(admin_conn, &sblob);
+        (void)sqli_sblob_close_created(admin_conn, sblob);
 
         rc = sqli_sblob_create(admin_conn, SQLI_SBLOB_CLOB, NULL, &sclob);
         if (rc != SQLI_OK) {
             fprintf(stderr, "FATAL: Failed to create seed CLOB %d: %s\n", id, sqli_error(admin_conn));
-            (void)sqli_sblob_release(admin_conn, &sblob);
+            (void)sqli_sblob_release(admin_conn, sblob);
+            sqli_sblob_destroy(sblob);
             return 1;
         }
-        rc = sqli_sblob_write_buffer(admin_conn, &sclob, (const uint8_t *)seed_text, seed_text_len);
+        rc = sqli_sblob_write_buffer(admin_conn, sclob, (const uint8_t *)seed_text, seed_text_len);
         if (rc != SQLI_OK) {
             fprintf(stderr, "FATAL: Failed to write seed CLOB %d: %s\n", id, sqli_error(admin_conn));
-            (void)sqli_sblob_release(admin_conn, &sclob);
-            (void)sqli_sblob_release(admin_conn, &sblob);
+            (void)sqli_sblob_release(admin_conn, sclob);
+            sqli_sblob_destroy(sclob);
+            (void)sqli_sblob_release(admin_conn, sblob);
+            sqli_sblob_destroy(sblob);
             return 1;
         }
-        (void)sqli_sblob_close_created(admin_conn, &sclob);
+        (void)sqli_sblob_close_created(admin_conn, sclob);
 
         sqli_stmt_t *stmt = NULL;
         int pcount = 0;
         rc = sqli_prepare(admin_conn, "INSERT INTO test_smart_stress (id, b, c) VALUES (?, ?, ?)", &pcount, &stmt);
         if (rc == SQLI_OK && stmt != NULL) {
             sqli_bind_int(stmt, 1, id);
-            sqli_bind_sblob(stmt, 2, &sblob);
-            sqli_bind_sblob(stmt, 3, &sclob);
+            sqli_bind_sblob(stmt, 2, sblob);
+            sqli_bind_sblob(stmt, 3, sclob);
             rc = sqli_execute(stmt);
             sqli_stmt_destroy(stmt);
         }
         if (rc != SQLI_OK) {
             fprintf(stderr, "FATAL: Failed to seed test_smart_stress row %d: %s\n", id, sqli_error(admin_conn));
-            (void)sqli_sblob_release(admin_conn, &sclob);
-            (void)sqli_sblob_release(admin_conn, &sblob);
+            (void)sqli_sblob_release(admin_conn, sclob);
+            sqli_sblob_destroy(sclob);
+            (void)sqli_sblob_release(admin_conn, sblob);
+            sqli_sblob_destroy(sblob);
             return 1;
         }
+        sqli_sblob_destroy(sblob);
+        sqli_sblob_destroy(sclob);
     }
     printf("          -> Seeded 10 template smartblob rows in memory\n");
 

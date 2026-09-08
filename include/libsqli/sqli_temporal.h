@@ -184,10 +184,17 @@ sqli_status sqli_bind_datetime(sqli_stmt_t *stmt, int param_index, const sqli_da
 sqli_status sqli_bind_interval(sqli_stmt_t *stmt, int param_index, const sqli_interval_t *value,
                                const sqli_temporal_range_t *target, uint8_t leading_precision);
 
+/** Bind a copied native calendar DATE, with no allocation or text conversion.
+ * NULL is taken from value->is_null; a NULL pointer is invalid. Invalid values
+ * leave the previous binding unchanged. The copy survives source mutation and
+ * batch capture. Parameter indices are 1-based; synchronize statement mutation.
+ */
+sqli_status sqli_bind_date(sqli_stmt_t *stmt, int param_index, const sqli_date_t *value);
+
 /*
  * Bind a DATE value in ISO format (YYYY-MM-DD).
  */
-sqli_status sqli_bind_date(sqli_stmt_t *stmt, int param_index, const char *value);
+sqli_status sqli_bind_date_string(sqli_stmt_t *stmt, int param_index, const char *value);
 
 /*
  * Bind a DATETIME/TIMESTAMP-like value as text.
@@ -230,9 +237,9 @@ sqli_status sqli_result_get_date(sqli_result_t *result, size_t index, sqli_date_
  * string. Successful reads update the legacy was_null flag. Use native getters
  * and formatters for explicit status and caller-owned buffers.
  */
-const char *sqli_result_get_date_string(sqli_result_t *result, int col_index);
-const char *sqli_result_get_datetime_string(sqli_result_t *result, int col_index);
-const char *sqli_result_get_interval_string(sqli_result_t *result, int col_index);
+const char *sqli_result_get_date_string(sqli_result_t *result, size_t col_index);
+const char *sqli_result_get_datetime_string(sqli_result_t *result, size_t col_index);
+const char *sqli_result_get_interval_string(sqli_result_t *result, size_t col_index);
 
 /** Read an exact native temporal value into an existing owned object.
  * Zero-based index; requires a successfully fetched and validated row.
@@ -246,15 +253,15 @@ const char *sqli_result_get_interval_string(sqli_result_t *result, int col_index
 sqli_status sqli_result_get_datetime(sqli_result_t *result, size_t index, sqli_datetime_t *out);
 sqli_status sqli_result_get_interval(sqli_result_t *result, size_t index, sqli_interval_t *out);
 
-sqli_status sqli_result_get_timestamp(sqli_result_t *result, int col_index,
+sqli_status sqli_result_get_timestamp(sqli_result_t *result, size_t col_index,
                                       sqli_timestamp_t *out);
 
 /*
  * Direct Unix epoch retrieval helpers (auto-padded and locale-independent).
  */
-sqli_status sqli_result_get_epoch_sec(sqli_result_t *result, int col_index, int64_t *out_sec);
-sqli_status sqli_result_get_epoch_ms(sqli_result_t *result, int col_index, int64_t *out_ms);
-sqli_status sqli_result_get_epoch_days(sqli_result_t *result, int col_index, int32_t *out_days);
+sqli_status sqli_result_get_epoch_sec(sqli_result_t *result, size_t col_index, int64_t *out_sec);
+sqli_status sqli_result_get_epoch_ms(sqli_result_t *result, size_t col_index, int64_t *out_ms);
+sqli_status sqli_result_get_epoch_days(sqli_result_t *result, size_t col_index, int32_t *out_days);
 
 /* ----------------------------------------------------------------
  * Type encoding utilities

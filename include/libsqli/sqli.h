@@ -582,7 +582,7 @@ sqli_status sqli_stmt_batch_execute(sqli_stmt_t *stmt,
  * Execute a prepared statement.
  *
  * Sends the EXECUTE command to the server. The result is available
- * via sqli_stmt_result(stmt) after calling sqli_step().
+ * via sqli_stmt_result(stmt), including before the first fetch.
  *
  * Returns SQLI_OK on success.
  */
@@ -594,16 +594,20 @@ sqli_status sqli_execute(sqli_stmt_t *stmt);
  */
 sqli_status sqli_execute_with_retry(sqli_stmt_t *stmt, uint32_t max_retries);
 
-/*
- * Advance to the next row in the result set.
- * Returns true if a row is available, false at end of result set.
+/** Advance a prepared result using the same SQLI_OK / SQLI_EOF / error
+ * contract as sqli_result_fetch. Requires successful execution; NULL statement
+ * returns SQLI_INVALID_ARGUMENT, unavailable result SQLI_INVALID_STATE.
+ * Synchronize access with statement/result mutation and destruction.
  */
+sqli_status sqli_stmt_fetch(sqli_stmt_t *stmt);
+/** Boolean convenience: true exactly when sqli_stmt_fetch returns SQLI_OK.
+ * Use sqli_stmt_fetch to distinguish end of data from errors. */
 bool sqli_stmt_next(sqli_stmt_t *stmt);
 
 /*
  * Get the result object from a prepared statement execution.
- * Returns NULL between sqli_execute() and the first sqli_stmt_next() call,
- * or after sqli_stmt_close() is called.
+ * Available after successful execution, even before fetching the first row.
+ * Returns NULL when no result is available or after sqli_stmt_close().
  */
 sqli_result_t *sqli_stmt_result(sqli_stmt_t *stmt);
 
@@ -621,6 +625,7 @@ void sqli_stmt_destroy(sqli_stmt_t *stmt);
 
 /* ----------------------------------------------------------------
  * Immutable server descriptor snapshots
+ * Type-specific field getters live in sqli_decimal.h and sqli_temporal.h.
  * ---------------------------------------------------------------- */
 typedef struct sqli_descriptor sqli_descriptor_t;
 
@@ -723,27 +728,37 @@ void sqli_call_destroy(sqli_call_t *call);
  * Get the name of a column by 0-based index.
  * Returns NULL if index is out of range.
  */
-const char *sqli_result_column_name(sqli_result_t *result, int col_index);
+const char *sqli_result_column_name(sqli_result_t *result, size_t col_index);
 
 /*
  * Get the type of a column by 0-based index.
  * Returns -1 if index is out of range.
  * Type values match the SQLI column type constants.
  */
-int sqli_result_column_type(sqli_result_t *result, int col_index);
+int sqli_result_column_type(sqli_result_t *result, size_t col_index);
 
 /* ----------------------------------------------------------------
  * Row data extractors (only valid between sqli_result_next() == 1 calls)
  * ---------------------------------------------------------------- */
 
-/* Extract an int32 value from column col_index (0-based). */
-int32_t sqli_result_get_int(sqli_result_t *result, int col_index);
+/** Legacy scalar conveniences; all column indices are zero-based size_t.
+ * NULL and invalid index/state/type, malformed values and overflow return
+ * 0 / 0.0 / false. Successful NULL detection sets was_null=true; invalid
+ * arguments/state clear it when a result exists. These fallbacks cannot
+ * distinguish errors from a real zero. Integer getters accept integer, BOOL,
+ * DATE-epoch and decimal columns; decimal fractions are truncated toward zero.
+ * Narrowing overflow returns zero. Double accepts integer, decimal and IEEE
+ * floating types; nonfinite values return zero. BOOL is get_int()!=0.
+ * Use native value getters for exact conversion and explicit error statuses.
+ * Synchronize access with result mutation, advancement and destruction.
+ */
+int32_t sqli_result_get_int(sqli_result_t *result, size_t col_index);
 
 /* Extract an int64 value from column col_index (0-based). */
-int64_t sqli_result_get_int64(sqli_result_t *result, int col_index);
+int64_t sqli_result_get_int64(sqli_result_t *result, size_t col_index);
 
 /* Extract a double value from column col_index (0-based). */
-double sqli_result_get_double(sqli_result_t *result, int col_index);
+double sqli_result_get_double(sqli_result_t *result, size_t col_index);
 
 /*
  * Extract a string value from column col_index (0-based).
@@ -752,39 +767,41 @@ double sqli_result_get_double(sqli_result_t *result, int col_index);
  * NOTE: Truncates at 4096 bytes. For full-length strings, use
  * sqli_result_get_string_len().
  */
-const char *sqli_result_get_string(sqli_result_t *result, int col_index);
+const char *sqli_result_get_string(sqli_result_t *result, size_t col_index);
 
-/*
- * Extract a string value from column col_index (0-based) into a caller-supplied
- * buffer. Writes up to *out_len bytes to out (including NUL terminator).
- * Sets *out_len to the actual string length (excluding NUL).
- * Returns SQLI_OK on success, SQLI_INVALID_STATE on bad parameters.
+/** Checked whole-value buffers with separate capacity and required size.
+ * NULL output with capacity 0 queries size. required and is_null are mandatory.
+ * String required includes NUL; byte required does not. SQL NULL succeeds with
+ * required=0, is_null=true and leaves the buffer untouched. Empty text needs one
+ * byte, empty binary needs none. A short buffer returns SQLI_BUFFER_TOO_SMALL,
+ * updates required/is_null and leaves the buffer untouched. Other errors preserve
+ * every output. No silent truncation. Outputs must not overlap one another or
+ * result storage. These calls leave was_null unchanged and require a validated
+ * current row; invalid indices return SQLI_OUT_OF_RANGE. LOB reads/conversion
+ * may allocate or access the connection. Synchronize all result/connection use.
+ * String output supports character, legacy LOB, native decimal and temporal
+ * columns; bytes expose the column payload (LOB contents are materialized).
  */
-sqli_status sqli_result_get_string_len(sqli_result_t *result, int col_index,
-                                       char *out, size_t *out_len);
-
-/*
- * Extract raw bytes from column col_index (0-based).
- * Writes up to *out_len bytes to out. Sets *out_len to actual bytes written.
- * Returns SQLI_OK on success.
- */
-sqli_status sqli_result_get_bytes(sqli_result_t *result, int col_index,
-                                  uint8_t *out, size_t *out_len);
+sqli_status sqli_result_get_string_len(sqli_result_t *result, size_t col_index,
+                                       char *out, size_t capacity, size_t *required, bool *is_null);
+sqli_status sqli_result_get_bytes(sqli_result_t *result, size_t col_index,
+                                  uint8_t *out, size_t capacity, size_t *required, bool *is_null);
 
 /*
  * Return true if column is NULL in current row, else false.
  */
-bool sqli_result_is_null(sqli_result_t *result, int col_index);
+bool sqli_result_is_null(sqli_result_t *result, size_t col_index);
 
 /*
- * Return NULL-state from the last typed getter call.
+ * Return the legacy NULL-state last set by a convenience getter or is_null.
+ * Native value getters and checked whole-value buffers leave it unchanged.
  */
 bool sqli_result_was_null(sqli_result_t *result);
 
 /*
  * Extract boolean value (true/false).
  */
-bool sqli_result_get_bool(sqli_result_t *result, int col_index);
+bool sqli_result_get_bool(sqli_result_t *result, size_t col_index);
 
 /* Chunk callback for streaming column bytes. */
 typedef int (*sqli_stream_chunk_cb)(const uint8_t *chunk, size_t len, void *ctx);
@@ -793,7 +810,7 @@ typedef int (*sqli_stream_chunk_cb)(const uint8_t *chunk, size_t len, void *ctx)
  * Stream column bytes in chunks to callback.
  * Returns SQLI_OK on success.
  */
-sqli_status sqli_result_stream_bytes(sqli_result_t *result, int col_index,
+sqli_status sqli_result_stream_bytes(sqli_result_t *result, size_t col_index,
                                      size_t chunk_size, sqli_stream_chunk_cb cb,
                                      void *ctx);
 

@@ -605,6 +605,34 @@ sqlicon_exit_code command_constraints_table(sqli_conn_t *conn, sqlicon_runtime *
 /* .dump                                                            */
 /* ---------------------------------------------------------------- */
 
+static sqli_status dump_binary_value(sqli_result_t *result, size_t column, FILE *out)
+{
+    size_t required = 0;
+    bool is_null = false;
+    sqli_status status = sqli_result_get_bytes(result, column, NULL, 0, &required, &is_null);
+    if (status != SQLI_OK)
+        return status;
+    uint8_t *bytes = required != 0 ? malloc(required) : NULL;
+    if (required != 0 && bytes == NULL)
+        return SQLI_ALLOC_FAIL;
+    if (required != 0)
+        status = sqli_result_get_bytes(result, column, bytes, required, &required, &is_null);
+    if (status == SQLI_OK) {
+        if (is_null) {
+            fputs("NULL", out);
+        } else {
+            fputs("X'", out);
+            for (size_t i = 0; i < required; i++)
+                fprintf(out, "%02X", (unsigned)bytes[i]);
+            fputc('\'', out);
+        }
+        if (ferror(out))
+            status = SQLI_IO_ERROR;
+    }
+    free(bytes);
+    return status;
+}
+
 static sqlicon_exit_code dump_single_table_to_output(sqli_conn_t *conn, FILE *out,
                                                      const char *table,
                                                      bool emit_txn_wrapper)
@@ -659,16 +687,11 @@ static sqlicon_exit_code dump_single_table_to_output(sqli_conn_t *conn, FILE *ou
             case SQLI_TYPE_BYTE:
             case SQLI_TYPE_BLOB: {
                 if (dump_fetch_lob_enabled()) {
-                    uint8_t buf[4096];
-                    size_t blen = sizeof(buf);
-                    if (sqli_result_get_bytes(result, i, buf, &blen) == SQLI_OK) {
-                        fputs("X'", out);
-                        for (size_t k = 0; k < blen; k++)
-                            fprintf(out, "%02X", (unsigned int)buf[k]);
-                        fputc('\'', out);
-                    } else {
-                        const char *sv = sqli_result_get_string(result, i);
-                        print_sql_string_literal(out, sv != NULL ? sv : "");
+                    sqli_status status = dump_binary_value(result, (size_t)i, out);
+                    if (status != SQLI_OK) {
+                        fprintf(stderr, "error: .dump binary column failed: status=%d\n", (int)status);
+                        sqli_result_destroy(result);
+                        return SQLICON_EXIT_SQL_ERROR;
                     }
                 } else {
                     const char *sv = sqli_result_get_string(result, i);

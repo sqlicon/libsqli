@@ -102,10 +102,29 @@ sqli_status sqli_decimal_parse(sqli_decimal_t *value, const char *text,
 sqli_status sqli_decimal_format(const sqli_decimal_t *value, char *buffer,
                                 size_t capacity, size_t *required, bool *is_null);
 
+/** Explicit source SQL decimal type. Floating scale ignores scale. */
+typedef struct {
+    uint8_t precision;
+    uint8_t scale;
+    bool floating_scale;
+} sqli_decimal_target_t;
+
+/** Bind a copied native DECIMAL/NUMERIC/MONEY value using explicit source
+ * precision (1..32) and fixed (0..precision) or floating scale. No text conversion or
+ * allocation. NULL is taken from the object; a NULL C pointer is invalid.
+ * Exact representability is required: SQLI_INEXACT or SQLI_OUT_OF_RANGE leaves
+ * the preceding binding unchanged. Source ownership may end after binding;
+ * batch snapshots retain copies. Parameter indices are 1-based. Synchronize
+ * statement and source mutation externally. The server converts to the SQL
+ * expression's target type; no PREPARE ordinal inference is performed.
+ */
+sqli_status sqli_bind_decimal(sqli_stmt_t *stmt, int param_index, const sqli_decimal_t *value,
+                              const sqli_decimal_target_t *target);
+
 /*
  * Bind textual DECIMAL/NUMERIC representation (e.g. "123.45").
  */
-sqli_status sqli_bind_decimal(sqli_stmt_t *stmt, int param_index, const char *value);
+sqli_status sqli_bind_decimal_string(sqli_stmt_t *stmt, int param_index, const char *value);
 
 /** DECIMAL/MONEY precision and fixed scale. Floating scale is unavailable. */
 sqli_status sqli_descriptor_field_get_precision(const sqli_descriptor_field_t *field, uint8_t *out);
@@ -124,9 +143,11 @@ sqli_status sqli_descriptor_field_get_scale(const sqli_descriptor_field_t *field
 sqli_status sqli_result_get_decimal(sqli_result_t *result, size_t index, sqli_decimal_t *out);
 
 /*
- * Extract DECIMAL/NUMERIC/MONEY as textual representation.
+ * Return thread-local decimal text; SQL NULL and failures return an empty
+ * string. Successful reads update the legacy was_null flag. Use the native
+ * getter and formatter for explicit status and caller-owned buffers.
  */
-const char *sqli_result_get_decimal_string(sqli_result_t *result, int col_index);
+const char *sqli_result_get_decimal_string(sqli_result_t *result, size_t col_index);
 
 /*
  * Encode a DECIMAL value into a buffer using BCD encoding.

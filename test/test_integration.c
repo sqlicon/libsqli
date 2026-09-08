@@ -2355,16 +2355,16 @@ void test_smart_lob_live_flow(void)
         blob_data[i] = (uint8_t)((i * 31 + 7) & 0xFF);
     }
 
-    sqli_sblob_t sblob;
+    bool handle_open;
+    sqli_sblob_t *sblob = NULL;
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_create(conn, SQLI_SBLOB_BLOB, NULL, &sblob));
-    TEST_ASSERT_TRUE(sblob.open);
-    TEST_ASSERT_GREATER_THAN(0, sblob.lofd);
-    TEST_ASSERT_GREATER_THAN(0, sblob.locator_len);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_is_open(sblob, &handle_open));
+    TEST_ASSERT_TRUE(handle_open);
 
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_write_buffer(conn, &sblob, blob_data, blob_len));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_close_created(conn, &sblob));
-    TEST_ASSERT_FALSE(sblob.open);
-    TEST_ASSERT_EQUAL_INT(-1, sblob.lofd);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_write_buffer(conn, sblob, blob_data, blob_len));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_close_created(conn, sblob));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_is_open(sblob, &handle_open));
+    TEST_ASSERT_FALSE(handle_open);
 
     /* 2. Create CLOB in memory and write stream (spanning multi-chunks across 32000-byte boundary) */
     const size_t clob_len = 70000;
@@ -2375,11 +2375,10 @@ void test_smart_lob_live_flow(void)
     }
     clob_data[clob_len] = '\0';
 
-    sqli_sblob_t sclob;
+    sqli_sblob_t *sclob = NULL;
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_create(conn, SQLI_SBLOB_CLOB, NULL, &sclob));
-    TEST_ASSERT_TRUE(sclob.open);
-    TEST_ASSERT_GREATER_THAN(0, sclob.lofd);
-    TEST_ASSERT_GREATER_THAN(0, sclob.locator_len);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_is_open(sclob, &handle_open));
+    TEST_ASSERT_TRUE(handle_open);
 
     live_stream_ctx sctx = {
         .data = (const uint8_t *)clob_data,
@@ -2388,15 +2387,15 @@ void test_smart_lob_live_flow(void)
         .chunk_size = 16384
     };
     uint64_t written_total = 0;
-    sqli_status wrc = sqli_sblob_write_stream(conn, &sclob, live_test_memory_stream_reader, &sctx, &written_total);
+    sqli_status wrc = sqli_sblob_write_stream(conn, sclob, live_test_memory_stream_reader, &sctx, &written_total);
     if (wrc != SQLI_OK) {
         printf("DEBUG sqli_sblob_write_stream failed: rc=%d err=%s\n", (int)wrc, sqli_error(conn));
     }
     TEST_ASSERT_EQUAL_INT(SQLI_OK, wrc);
     TEST_ASSERT_EQUAL_UINT64((uint64_t)clob_len, written_total);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_close_created(conn, &sclob));
-    TEST_ASSERT_FALSE(sclob.open);
-    TEST_ASSERT_EQUAL_INT(-1, sclob.lofd);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_close_created(conn, sclob));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_is_open(sclob, &handle_open));
+    TEST_ASSERT_FALSE(handle_open);
 
     /* 3. Prepared INSERT of Row 1 (with sblob and sclob) and Row 2 (with NULLs) */
     sqli_stmt_t *stmt = NULL;
@@ -2407,8 +2406,8 @@ void test_smart_lob_live_flow(void)
 
     /* Row 1 */
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 1, 1));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(stmt, 2, &sblob));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(stmt, 3, &sclob));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(stmt, 2, sblob));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(stmt, 3, sclob));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_execute(stmt));
 
     /* Row 2: NULL BLOB and NULL CLOB */
@@ -2469,16 +2468,20 @@ void test_smart_lob_live_flow(void)
     res = NULL;
 
     /* 5. Test sqli_sblob_release on unreferenced Smart-LOB */
-    sqli_sblob_t unref_lob;
+    sqli_sblob_t *unref_lob = NULL;
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_create(conn, SQLI_SBLOB_BLOB, NULL, &unref_lob));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_write_buffer(conn, &unref_lob, "test release", 12));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_close_created(conn, &unref_lob));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_release(conn, &unref_lob));
-    TEST_ASSERT_EQUAL_UINT64(0u, (uint64_t)unref_lob.locator_len);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_write_buffer(conn, unref_lob, "test release", 12));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_close_created(conn, unref_lob));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_release(conn, unref_lob));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_is_open(unref_lob, &handle_open));
+    TEST_ASSERT_FALSE(handle_open);
     /* Calling release again must fail */
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_release(conn, &unref_lob));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_release(conn, unref_lob));
 
     /* Cleanup */
+    sqli_sblob_destroy(unref_lob);
+    sqli_sblob_destroy(sblob);
+    sqli_sblob_destroy(sclob);
     free(blob_data);
     free(clob_data);
     snprintf(sql, sizeof(sql), "DROP TABLE %s", tbl);

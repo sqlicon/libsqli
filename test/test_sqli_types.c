@@ -4,6 +4,7 @@
  * Tests DATE/DATETIME/DECIMAL encoding, row extraction, and column accessors.
  */
 
+#include "sqli_sblob_internal.h"
 #include "libsqli/sqli_temporal.h"
 #include "libsqli/sqli_decimal.h"
 #include "temporal_result_test.h"
@@ -665,10 +666,10 @@ void test_result_get_bytes_null(void)
 {
     uint8_t buf[4];
     size_t len = 4;
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE,
-                          sqli_result_get_bytes(NULL, 0, buf, &len));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE,
-                          sqli_result_get_bytes(NULL, 0, NULL, &len));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT,
+                          sqli_result_get_bytes(NULL, 0, buf, len, &len, &(bool){false}));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT,
+                          sqli_result_get_bytes(NULL, 0, NULL, len, &len, &(bool){false}));
 }
 
 /* ----------------------------------------------------------------
@@ -994,8 +995,8 @@ void test_dt_011_lvarchar_long_value_roundtrip(void)
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
     char out[512];
     size_t out_len = sizeof(out);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(result, 0, out, &out_len));
-    TEST_ASSERT_EQUAL_INT(sizeof(payload), out_len);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(result, 0, out, out_len, &out_len, &(bool){false}));
+    TEST_ASSERT_EQUAL_INT(sizeof(payload) + 1, out_len);
     TEST_ASSERT_EQUAL_INT(0, memcmp(out, payload, sizeof(payload)));
     sqli_result_destroy(result);
 }
@@ -1666,12 +1667,12 @@ void test_sblob_create_validation(void)
     fake_conn.state = SQLI_CONN_CLOSED;
     fake_conn.socket_fd = -1;
 
-    sqli_sblob_t lob;
+    sqli_sblob_t *lob = NULL;
     sqli_sblob_options opts = SQLI_SBLOB_OPTIONS_INIT;
 
     /* NULL conn or NULL out */
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_create(NULL, SQLI_SBLOB_BLOB, NULL, &lob));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_create(&fake_conn, SQLI_SBLOB_BLOB, NULL, NULL));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_sblob_create(NULL, SQLI_SBLOB_BLOB, NULL, &lob));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_sblob_create(&fake_conn, SQLI_SBLOB_BLOB, NULL, NULL));
 
     /* Invalid type */
     TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_create(&fake_conn, (sqli_sblob_type)42, NULL, &lob));
@@ -1706,6 +1707,8 @@ void test_sblob_create_validation(void)
 
     /* Connection not ready */
     TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_sblob_create(&fake_conn, SQLI_SBLOB_BLOB, NULL, &lob));
+    TEST_ASSERT_NULL(lob);
+    sqli_sblob_destroy(lob);
 }
 
 void test_sblob_write_buffer_validation(void)
@@ -1874,8 +1877,8 @@ void test_result_get_string_len_charset_conversion_utf8(void)
     unsigned char buf1[32];
     memset(buf1, GUARD_BYTE, sizeof(buf1));
     size_t len1 = 20;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(result, 0, (char *)buf1 + 1, &len1));
-    TEST_ASSERT_EQUAL_UINT32(8u, (uint32_t)len1); /* "Grüße " is 8 UTF-8 bytes */
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(result, 0, (char *)buf1 + 1, len1, &len1, &(bool){false}));
+    TEST_ASSERT_EQUAL_UINT32(9u, (uint32_t)len1); /* "Grüße " is 8 UTF-8 bytes */
     TEST_ASSERT_EQUAL_UINT8(GUARD_BYTE, buf1[0]);
     TEST_ASSERT_EQUAL_UINT8(GUARD_BYTE, buf1[21]);
     TEST_ASSERT_EQUAL_STRING("Gr\xC3\xBC\xC3\x9F" "e ", (char *)buf1 + 1);
@@ -1885,19 +1888,18 @@ void test_result_get_string_len_charset_conversion_utf8(void)
     memset(buf2, GUARD_BYTE, sizeof(buf2));
     size_t cap2 = sizeof("Gr\xC3\xBC"); /* 5 bytes: 'G', 'r', 0xC3, 0xBC, '\0' */
     size_t len2 = cap2;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(result, 0, (char *)buf2 + 1, &len2));
-    TEST_ASSERT_EQUAL_UINT32(4u, (uint32_t)len2);
+    TEST_ASSERT_EQUAL_INT(SQLI_BUFFER_TOO_SMALL, sqli_result_get_string_len(result, 0, (char *)buf2 + 1, len2, &len2, &(bool){false}));
+    TEST_ASSERT_EQUAL_UINT32(9u, (uint32_t)len2);
     TEST_ASSERT_EQUAL_UINT8(GUARD_BYTE, buf2[0]);
     TEST_ASSERT_EQUAL_UINT8(GUARD_BYTE, buf2[cap2 + 1]);
-    TEST_ASSERT_EQUAL_UINT8('\0', buf2[len2 + 1]);
-    TEST_ASSERT_EQUAL_MEMORY("Gr\xC3\xBC", buf2 + 1, 4);
+    TEST_ASSERT_EACH_EQUAL_UINT8(GUARD_BYTE, buf2, sizeof(buf2));
 
     /* Case 3: Trimming enabled */
     conn.trim_trailing_spaces = true;
     char buf3[32];
     size_t len3 = sizeof(buf3);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(result, 0, buf3, &len3));
-    TEST_ASSERT_EQUAL_UINT32(7u, (uint32_t)len3); /* "Grüße" without trailing space */
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(result, 0, buf3, len3, &len3, &(bool){false}));
+    TEST_ASSERT_EQUAL_UINT32(8u, (uint32_t)len3); /* "Grüße" without trailing space */
     TEST_ASSERT_EQUAL_STRING("Gr\xC3\xBC\xC3\x9F" "e", buf3);
 
     sqli_charset_decoder_close(&conn.decode_cs);
@@ -1914,9 +1916,9 @@ void test_result_get_string_len_typed_columns(void)
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(res_dec));
     char dec_out[32];
     size_t dec_len = sizeof(dec_out);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(res_dec, 0, dec_out, &dec_len));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(res_dec, 0, dec_out, dec_len, &dec_len, &(bool){false}));
     TEST_ASSERT_EQUAL_STRING("12345.6789", dec_out);
-    TEST_ASSERT_EQUAL_UINT32(10u, (uint32_t)dec_len);
+    TEST_ASSERT_EQUAL_UINT32(11u, (uint32_t)dec_len);
     sqli_result_destroy(res_dec);
 
     /* INTERVAL YEAR TO MONTH with value "3-02" */
@@ -1927,9 +1929,9 @@ void test_result_get_string_len_typed_columns(void)
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(res_iv));
     char iv_out[32];
     size_t iv_len = sizeof(iv_out);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(res_iv, 0, iv_out, &iv_len));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(res_iv, 0, iv_out, iv_len, &iv_len, &(bool){false}));
     TEST_ASSERT_EQUAL_STRING("3-02", iv_out);
-    TEST_ASSERT_EQUAL_UINT32(4u, (uint32_t)iv_len);
+    TEST_ASSERT_EQUAL_UINT32(5u, (uint32_t)iv_len);
     sqli_result_destroy(res_iv);
 }
 

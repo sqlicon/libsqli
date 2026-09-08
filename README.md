@@ -35,7 +35,11 @@ header does not include the domain headers. Add explicit includes when migrating
 all functions remain in the same library. See the
 [native temporal integration](doc/NATIVE_TEMPORAL_INTEGRATION.md) for the new
 opaque DATETIME/INTERVAL getters and native binders. Text binding remains available
-as `sqli_bind_datetime_string` and `sqli_bind_interval_string`.
+as `sqli_bind_date_string`, `sqli_bind_decimal_string`,
+`sqli_bind_datetime_string` and `sqli_bind_interval_string`. See the
+[API consistency migration](doc/API_CONSISTENCY.md) for native DATE/DECIMAL
+binding, checked buffer contracts, statement fetch status and opaque Smart-LOB
+handle ownership.
 
 ### Prerequisites
 

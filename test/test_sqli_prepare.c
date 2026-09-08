@@ -6,6 +6,7 @@
  * by constructing mock sqli_stmt_t objects.
  */
 
+#include "sqli_sblob_internal.h"
 #include "libsqli/sqli_temporal.h"
 #include "libsqli/sqli_decimal.h"
 #include "libsqli/sqli_sblob.h"
@@ -168,8 +169,8 @@ void test_bind_string_invalid_index(void)
 void test_bind_date_invalid_index(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_date(s, 0, "2026-01-01"));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_date(s, 3, "2026-01-01"));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_date_string(s, 0, "2026-01-01"));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_date_string(s, 3, "2026-01-01"));
     sqli_stmt_destroy(s);
 }
 
@@ -200,8 +201,8 @@ void test_bind_bool_invalid_index(void)
 void test_bind_decimal_invalid_index(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_decimal(s, 0, "1.5"));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_decimal(s, 3, "1.5"));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_decimal_string(s, 0, "1.5"));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_decimal_string(s, 3, "1.5"));
     sqli_stmt_destroy(s);
 }
 
@@ -291,7 +292,7 @@ void test_stmt_batch_clear_drops_queued_rows(void)
 void test_bind_date_null_value(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_date(s, 1, NULL));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_bind_date_string(s, 1, NULL));
     sqli_stmt_destroy(s);
 }
 
@@ -632,7 +633,7 @@ void test_execute_with_params_date(void)
     s->stmt_id = 1;
     s->read_only = true;
     s->conn = NULL;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_date(s, 1, "2026-01-15"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_date_string(s, 1, "2026-01-15"));
     sqli_status rc = sqli_execute(s);
     TEST_ASSERT_NOT_EQUAL_INT(SQLI_OK, rc);
     sqli_stmt_destroy(s);
@@ -645,7 +646,7 @@ void test_execute_with_params_decimal(void)
     s->stmt_id = 1;
     s->read_only = true;
     s->conn = NULL;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_decimal(s, 1, "123.45"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_decimal_string(s, 1, "123.45"));
     sqli_status rc = sqli_execute(s);
     TEST_ASSERT_NOT_EQUAL_INT(SQLI_OK, rc);
     sqli_stmt_destroy(s);
@@ -673,14 +674,14 @@ void test_execute_with_params_multiple(void)
 void test_bind_decimal_success(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_decimal(s, 1, "99.99"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_decimal_string(s, 1, "99.99"));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_decimal_negative(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_decimal(s, 1, "-42.5"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_decimal_string(s, 1, "-42.5"));
     sqli_stmt_destroy(s);
 }
 

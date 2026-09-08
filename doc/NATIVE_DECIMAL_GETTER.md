@@ -75,11 +75,12 @@ A typical application creates one decimal object, fetches a row, calls the nativ
 getter, and then either accesses coefficient/scale with `sqli_decimal_get_parts()`
 or formats the owned value. No second server conversion is involved.
 
-The existing `sqli_result_get_decimal_string()` and generic scalar/text getters
-remain transitional APIs with their existing behavior. This iteration does not
-silently route those APIs through the stricter native decoder. Their migration,
-the native temporal result getters, public native bind snapshots and explicit
-parameter-target contracts remain subsequent work. The catalog stays deferred.
+The existing `sqli_result_get_decimal_string()` remains a transitional
+thread-local convenience with an empty-string NULL/error fallback. Subsequent
+[API consistency work](API_CONSISTENCY.md) adds public native decimal binding,
+explicit parameter targets and checked whole-value buffers, and corrects scalar
+overflow handling. The checked string buffer getter uses the native decoder.
+The catalog stays deferred.
 
 ## Validation
 

@@ -4,9 +4,9 @@ Public declarations: `<libsqli/sqli_decimal.h>` (explicit include required).
 
 This iteration implements the standalone native DECIMAL value object. DECIMAL,
 NUMERIC and MONEY share its numeric representation; their SQL type identities
-remain separate. It does not yet change result getters, parameter encoding or
-the existing string binders. Temporal objects, descriptor migration and the
-catalog component are separate subsequent work.
+remain separate. This document records the standalone value model. Result access and native
+binding are now integrated; see [API consistency](API_CONSISTENCY.md). The
+catalog component remains deferred.
 
 ## Value and ownership contract
 
@@ -153,8 +153,8 @@ ctest --test-dir build -R '^sqli_decimal_' --output-on-failure
 No database is needed for these tests. Existing wire fixtures remain the separate
 baseline for integration. Subsequent [checked decimal tuple codecs](NATIVE_DECIMAL_CODECS.md)
 implement binary conversion. The [native result getter](NATIVE_DECIMAL_GETTER.md)
-now reads owned decimal values; legacy getter and public bind migration remain
-pending.
+reads owned decimal values; [native binding and checked buffers](API_CONSISTENCY.md)
+complete the subsequent integration.
 
 Validation recorded for this iteration (2026-09-07): Debug and Release builds
 passed with the project warning flags. All seven Debug CTest entries passed,

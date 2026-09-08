@@ -74,7 +74,8 @@ Existing textual bind calls become `sqli_bind_datetime_string` and
 `sqli_bind_interval_string`. They retain server-side textual conversion.
 Timestamp and epoch conveniences remain available in the temporal header.
 Native DATE and DECIMAL result getters move to their domain headers without
-signature changes; their existing string binders retain their signatures.
+signature changes. Native DATE/DECIMAL binders and explicitly named `_string`
+conveniences are now available; see [API consistency](API_CONSISTENCY.md).
 
 Recompile consumers with explicit domain includes. No compatibility typedefs,
 umbrella includes, or duplicate native getter names are introduced. The catalog

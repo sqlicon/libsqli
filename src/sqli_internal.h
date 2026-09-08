@@ -8,6 +8,7 @@
  */
 
 #include "sqli_temporal_codec.h"
+#include "sqli_decimal_codec.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdarg.h>
@@ -557,9 +558,9 @@ typedef struct {
     uint8_t *bval;    /* for SQLI_BIND_BYTES */
     size_t blen;      /* for SQLI_BIND_BYTES */
     bool is_null;
-    uint16_t temporal_qualifier;
-    uint8_t temporal_bytes[SQLI_TEMPORAL_WIRE_CAPACITY];
-    size_t temporal_length;
+    uint16_t native_qualifier;
+    uint8_t native_bytes[SQLI_DECIMAL_WIRE_CAPACITY];
+    size_t native_length;
 } sqli_bound_param;
 
 typedef struct {

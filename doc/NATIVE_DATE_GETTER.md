@@ -51,8 +51,10 @@ the native getter followed by `sqli_date_format()`.
 The DATE branch of `sqli_result_get_timestamp()` uses the new calendar value and
 retains its existing midnight completion. The broader timestamp/string/epoch
 convenience APIs remain transitional; this iteration does not change their full
-conversion contracts. DATETIME and INTERVAL getter migration, native binding and
-the final text convenience API migration remain pending. Catalog work is deferred.
+conversion contracts. Subsequent [temporal integration](NATIVE_TEMPORAL_INTEGRATION.md)
+and [API consistency](API_CONSISTENCY.md) add native DATETIME/INTERVAL getters,
+native binding for all four domains and checked whole-value buffers. Catalog work
+is deferred.
 
 ## Verification
 

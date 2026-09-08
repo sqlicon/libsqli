@@ -8,9 +8,14 @@ sqli_status sqli_tuple_locate_column(const sqli_column_info *col_info,
                                      size_t tuple_len, size_t *data_start,
                                      size_t *data_len, size_t *span);
 sqli_status sqli_result_prepare_row_cache(sqli_result_t *result);
-bool sqli_result_is_null_internal(sqli_result_t *result, int col_index);
+bool sqli_result_is_null_internal(sqli_result_t *result, size_t col_index);
 void sqli_result_clear_rows(sqli_result_t *result);
 void sqli_base100_complement(uint8_t *digits, size_t digit_count);
 bool sqli_is_stringy_type(uint8_t type);
+
+/* Borrow a span from the successfully validated current row only. */
+sqli_status sqli_result_current_span(sqli_result_t *result, size_t index,
+                                      const sqli_column_info **column,
+                                      const uint8_t **bytes, size_t *length);
 
 #endif

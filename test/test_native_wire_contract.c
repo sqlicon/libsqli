@@ -314,6 +314,32 @@ static sqli_status bind_temporal_fixture(sqli_stmt_t *stmt, const struct wire_fi
     return status == SQLI_OK ? sqli_execute(stmt) : status;
 }
 
+static sqli_status bind_numeric_fixture(sqli_stmt_t *stmt, const struct wire_fixture *fixture)
+{
+    sqli_status status;
+    if (fixture->type == SQLI_TYPE_DATE) {
+        sqli_date_t value;
+        status = sqli_date_decode_wire(fixture->wire, fixture->wire_length, &value);
+        if (status == SQLI_OK)
+            status = sqli_bind_date(stmt, 1, &value);
+    } else {
+        sqli_decimal_t *value = NULL;
+        const sqli_decimal_target_t target = {
+            .precision = (uint8_t)(fixture->qualifier >> 8),
+            .scale = (uint8_t)(fixture->qualifier & 0xff),
+            .floating_scale = (fixture->qualifier & 0xff) == 0xff
+        };
+        status = sqli_decimal_create(&value);
+        if (status == SQLI_OK)
+            status = sqli_decimal_decode_wire(fixture->wire, fixture->wire_length,
+                                              (uint16_t)fixture->qualifier, value);
+        if (status == SQLI_OK)
+            status = sqli_bind_decimal(stmt, 1, value, &target);
+        sqli_decimal_destroy(value);
+    }
+    return status == SQLI_OK ? sqli_execute(stmt) : status;
+}
+
 static bool check_native_bind(sqli_conn_t *conn, const struct wire_fixture *fixture)
 {
     char sql[fixture_sql_capacity];
@@ -344,8 +370,7 @@ static bool check_native_bind(sqli_conn_t *conn, const struct wire_fixture *fixt
     if (fixture->type == SQLI_TYPE_DATETIME || fixture->type == SQLI_TYPE_INTERVAL)
         bind_status = bind_temporal_fixture(stmt, fixture);
     else
-        bind_status = sqli_test_bind_wire(stmt, fixture->type, (uint16_t)fixture->qualifier,
-                                         encoded, encoded_length, fixture->is_null);
+        bind_status = bind_numeric_fixture(stmt, fixture);
     if (bind_status != SQLI_OK)
         goto cleanup;
     length = snprintf(sql, sizeof(sql),

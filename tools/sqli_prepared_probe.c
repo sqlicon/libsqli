@@ -39,7 +39,12 @@ static int exec_insert_string(sqli_conn_t *conn, const char *table)
     if (sqli_bind_int(st, 1, 8008) != SQLI_OK) ok = 0;
     if (ok && sqli_bind_string(st, 2, "prep_string") != SQLI_OK) { fprintf(stderr, "bind string failed\n"); ok = 0; }
     if (ok && sqli_execute(st) != SQLI_OK) { fprintf(stderr, "execute string failed: %s\n", sqli_error(conn)); ok = 0; }
-    while (ok && sqli_stmt_next(st)) {}
+    sqli_status fetch_status = SQLI_OK;
+    while (ok && (fetch_status = sqli_stmt_fetch(st)) == SQLI_OK) {}
+    if (ok && fetch_status != SQLI_EOF) {
+        fprintf(stderr, "fetch failed: status=%d\n", (int)fetch_status);
+        ok = 0;
+    }
     if (!ok) {
         sqli_stmt_destroy(st);
         return 0;
@@ -71,7 +76,12 @@ static int exec_insert_ints(sqli_conn_t *conn, const char *table)
     if (ok && sqli_bind_int(st, 2, 123456789) != SQLI_OK) ok = 0;
     if (ok && sqli_bind_int64(st, 3, 1234567890123LL) != SQLI_OK) ok = 0;
     if (ok && sqli_execute(st) != SQLI_OK) { fprintf(stderr, "execute ints failed: %s\n", sqli_error(conn)); ok = 0; }
-    while (ok && sqli_stmt_next(st)) {}
+    sqli_status fetch_status = SQLI_OK;
+    while (ok && (fetch_status = sqli_stmt_fetch(st)) == SQLI_OK) {}
+    if (ok && fetch_status != SQLI_EOF) {
+        fprintf(stderr, "fetch failed: status=%d\n", (int)fetch_status);
+        ok = 0;
+    }
     if (!ok) {
         sqli_stmt_destroy(st);
         return 0;
@@ -101,9 +111,14 @@ static int exec_insert_decimal(sqli_conn_t *conn, const char *table)
     }
     int ok = 1;
     if (sqli_bind_int(st, 1, 8207) != SQLI_OK) ok = 0;
-    if (ok && sqli_bind_decimal(st, 2, "54321.4321") != SQLI_OK) ok = 0;
+    if (ok && sqli_bind_decimal_string(st, 2, "54321.4321") != SQLI_OK) ok = 0;
     if (ok && sqli_execute(st) != SQLI_OK) { fprintf(stderr, "execute decimal failed: %s\n", sqli_error(conn)); ok = 0; }
-    while (ok && sqli_stmt_next(st)) {}
+    sqli_status fetch_status = SQLI_OK;
+    while (ok && (fetch_status = sqli_stmt_fetch(st)) == SQLI_OK) {}
+    if (ok && fetch_status != SQLI_EOF) {
+        fprintf(stderr, "fetch failed: status=%d\n", (int)fetch_status);
+        ok = 0;
+    }
     if (!ok) {
         sqli_stmt_destroy(st);
         return 0;
@@ -135,7 +150,12 @@ static int exec_insert_float(sqli_conn_t *conn, const char *table)
     if (sqli_bind_int(st, 1, 8307) != SQLI_OK) ok = 0;
     if (ok && sqli_bind_double(st, 2, 98.75) != SQLI_OK) ok = 0;
     if (ok && sqli_execute(st) != SQLI_OK) { fprintf(stderr, "execute float failed: %s\n", sqli_error(conn)); ok = 0; }
-    while (ok && sqli_stmt_next(st)) {}
+    sqli_status fetch_status = SQLI_OK;
+    while (ok && (fetch_status = sqli_stmt_fetch(st)) == SQLI_OK) {}
+    if (ok && fetch_status != SQLI_EOF) {
+        fprintf(stderr, "fetch failed: status=%d\n", (int)fetch_status);
+        ok = 0;
+    }
     if (!ok) {
         sqli_stmt_destroy(st);
         return 0;
@@ -165,9 +185,14 @@ static int exec_insert_date(sqli_conn_t *conn, const char *table)
     }
     int ok = 1;
     if (sqli_bind_int(st, 1, 8405) != SQLI_OK) ok = 0;
-    if (ok && sqli_bind_date(st, 2, "2026-06-20") != SQLI_OK) ok = 0;
+    if (ok && sqli_bind_date_string(st, 2, "2026-06-20") != SQLI_OK) ok = 0;
     if (ok && sqli_execute(st) != SQLI_OK) { fprintf(stderr, "execute date failed: %s\n", sqli_error(conn)); ok = 0; }
-    while (ok && sqli_stmt_next(st)) {}
+    sqli_status fetch_status = SQLI_OK;
+    while (ok && (fetch_status = sqli_stmt_fetch(st)) == SQLI_OK) {}
+    if (ok && fetch_status != SQLI_EOF) {
+        fprintf(stderr, "fetch failed: status=%d\n", (int)fetch_status);
+        ok = 0;
+    }
     if (!ok) {
         sqli_stmt_destroy(st);
         return 0;

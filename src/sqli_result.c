@@ -544,9 +544,9 @@ sqli_status sqli_result_prepare_row_cache(sqli_result_t *result)
     return SQLI_OK;
 }
 
-bool sqli_result_is_null_internal(sqli_result_t *result, int col_index)
+bool sqli_result_is_null_internal(sqli_result_t *result, size_t col_index)
 {
-    if (result == NULL || col_index < 0 || col_index >= result->column_count)
+    if (result == NULL || col_index >= (size_t)result->column_count)
         return 1;
     if (result->current_row < 0 || result->tuple_buffer == NULL || result->tuple_len == 0)
         return 1;
@@ -991,7 +991,7 @@ bool sqli_result_next(sqli_result_t *result)
 }
 
 /* Borrow a span only from a successfully validated current-row cache. */
-static sqli_status native_result_span(sqli_result_t *result, size_t index,
+sqli_status sqli_result_current_span(sqli_result_t *result, size_t index,
                                       const sqli_column_info **column,
                                       const uint8_t **bytes, size_t *length)
 {
@@ -1023,7 +1023,7 @@ sqli_status sqli_result_get_decimal(sqli_result_t *result, size_t index, sqli_de
     const sqli_column_info *column;
     const uint8_t *bytes;
     size_t length;
-    sqli_status status = native_result_span(result, index, &column, &bytes, &length);
+    sqli_status status = sqli_result_current_span(result, index, &column, &bytes, &length);
     if (status != SQLI_OK)
         return status;
     if (column->type != SQLI_TYPE_DECIMAL && column->type != SQLI_TYPE_MONEY)
@@ -1040,7 +1040,7 @@ sqli_status sqli_result_get_date(sqli_result_t *result, size_t index, sqli_date_
     const sqli_column_info *column;
     const uint8_t *bytes;
     size_t length;
-    sqli_status status = native_result_span(result, index, &column, &bytes, &length);
+    sqli_status status = sqli_result_current_span(result, index, &column, &bytes, &length);
     if (status != SQLI_OK)
         return status;
     if (column->type != SQLI_TYPE_DATE)
@@ -1057,7 +1057,7 @@ sqli_status sqli_result_get_datetime(sqli_result_t *result, size_t index, sqli_d
     const sqli_column_info *column;
     const uint8_t *bytes;
     size_t length;
-    sqli_status status = native_result_span(result, index, &column, &bytes, &length);
+    sqli_status status = sqli_result_current_span(result, index, &column, &bytes, &length);
     if (status != SQLI_OK)
         return status;
     if (column->type != SQLI_TYPE_DATETIME)
@@ -1074,7 +1074,7 @@ sqli_status sqli_result_get_interval(sqli_result_t *result, size_t index, sqli_i
     const sqli_column_info *column;
     const uint8_t *bytes;
     size_t length;
-    sqli_status status = native_result_span(result, index, &column, &bytes, &length);
+    sqli_status status = sqli_result_current_span(result, index, &column, &bytes, &length);
     if (status != SQLI_OK)
         return status;
     if (column->type != SQLI_TYPE_INTERVAL)

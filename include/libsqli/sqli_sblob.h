@@ -20,8 +20,6 @@ extern "C" {
 #define SQLI_LO_SEEK_CUR     1
 #define SQLI_LO_SEEK_END     2
 
-#define SQLI_SBLOB_LOCATOR_MAX 72
-
 typedef enum {
     SQLI_SBLOB_BLOB = 0,
     SQLI_SBLOB_CLOB = 1
@@ -38,13 +36,18 @@ typedef struct {
 
 #define SQLI_SBLOB_OPTIONS_INIT { NULL, -1, -1, -1, 0, SQLI_LO_WRONLY }
 
-typedef struct {
-    int lofd;
-    sqli_sblob_type type;
-    unsigned char locator[SQLI_SBLOB_LOCATOR_MAX];
-    size_t locator_len;
-    bool open;
-} sqli_sblob_t;
+typedef struct sqli_sblob sqli_sblob_t;
+
+/** Free only client-side storage; NULL is allowed. Close an open descriptor
+ * with close_created, or release the unreferenced server object, before destroy.
+ * After a broken connection, terminate that connection before destroying its
+ * handles. Destroy does not issue SQL, delete server data, or use a connection.
+ * Synchronize all handle access and destruction externally.
+ */
+void sqli_sblob_destroy(sqli_sblob_t *lob);
+/** Semantic inspection; invalid pointers fail without modifying outputs. */
+sqli_status sqli_sblob_is_open(const sqli_sblob_t *lob, bool *out);
+sqli_status sqli_sblob_get_type(const sqli_sblob_t *lob, sqli_sblob_type *out);
 
 typedef sqli_status (*sqli_sblob_reader)(
     void *context,
@@ -62,11 +65,11 @@ typedef sqli_status (*sqli_sblob_reader)(
  * @param[in] conn Active connection.
  * @param[in] type SQLI_SBLOB_BLOB or SQLI_SBLOB_CLOB.
  * @param[in] options Optional creation parameters (can be NULL for server defaults).
- * @param[out] out Output Smart-LOB structure.
+ * @param[out] out Owned opaque handle; unchanged on failure. Destroy after use.
  * @return SQLI_OK on success.
  */
 sqli_status sqli_sblob_create(sqli_conn_t *conn, sqli_sblob_type type,
-                              const sqli_sblob_options *options, sqli_sblob_t *out);
+                              const sqli_sblob_options *options, sqli_sblob_t **out);
 
 /**
  * @brief Write an in-memory buffer to an open created Smart Large Object.
@@ -217,7 +220,7 @@ sqli_status sqli_sblob_write(sqli_conn_t *conn, int lofd, const void *buf, size_
  * @param[out] bytes_read Number of bytes actually read.
  * @return SQLI_OK on success.
  */
-sqli_status sqli_result_read_sblob(sqli_result_t *res, int col_index,
+sqli_status sqli_result_read_sblob(sqli_result_t *res, size_t col_index,
                                    void *buf, size_t nbytes, size_t *bytes_read);
 
 #ifdef __cplusplus

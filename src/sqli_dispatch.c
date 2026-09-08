@@ -395,11 +395,11 @@ bool sqli_is_lob_like_type(uint8_t type)
 static sqli_status receive_cost(sqli_conn_t *conn, int fd);
 static sqli_status drain_sq_info(sqli_conn_t *conn, int fd);
 
-sqli_status sqli_fetchblob_materialize(sqli_result_t *result, int col_index,
+sqli_status sqli_fetchblob_materialize(sqli_result_t *result, size_t col_index,
                                        uint8_t **blob_buf, size_t *blob_len)
 {
     if (result == NULL || blob_buf == NULL || blob_len == NULL ||
-        col_index < 0 || col_index >= result->column_count)
+        col_index >= (size_t)result->column_count)
         return SQLI_INVALID_STATE;
     *blob_buf = NULL;
     *blob_len = 0;

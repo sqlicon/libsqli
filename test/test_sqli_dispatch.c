@@ -4,6 +4,7 @@
  * Tests DESCRIBE, TUPLE, DONE, ERROR parsing via local socketpairs.
  */
 
+#include "sqli_result_internal.h"
 #include "unity.h"
 #include "libsqli/sqli.h"
 #include "sqli_internal.h"
@@ -353,7 +354,8 @@ void test_get_bytes_fetchblob_roundtrip(void)
 
     uint8_t out[8] = {0};
     size_t out_len = sizeof(out);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_bytes(result, 0, out, &out_len));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_prepare_row_cache(result));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_bytes(result, 0, out, out_len, &out_len, &(bool){false}));
     TEST_ASSERT_EQUAL_UINT32(3u, (uint32_t)out_len);
     TEST_ASSERT_EQUAL_UINT8('a', out[0]);
     TEST_ASSERT_EQUAL_UINT8('b', out[1]);
@@ -445,7 +447,8 @@ void test_get_bytes_empty_blob_returns_zero(void)
     /* 1. sqli_result_get_bytes with 1-byte buffer must return 0 bytes, not locator bytes */
     uint8_t out[4] = {0xFF, 0xFF, 0xFF, 0xFF};
     size_t out_len = 1;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_bytes(result, 0, out, &out_len));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_prepare_row_cache(result));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_bytes(result, 0, out, out_len, &out_len, &(bool){false}));
     TEST_ASSERT_EQUAL_UINT32(0u, (uint32_t)out_len);
     TEST_ASSERT_EQUAL_UINT8(0xFF, out[0]);
 
@@ -469,8 +472,9 @@ void test_get_bytes_empty_blob_returns_zero(void)
     char str_out[16];
     memset(str_out, 'X', sizeof(str_out));
     size_t str_len = sizeof(str_out);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(result, 0, str_out, &str_len));
-    TEST_ASSERT_EQUAL_UINT32(0u, (uint32_t)str_len);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_prepare_row_cache(result));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_string_len(result, 0, str_out, str_len, &str_len, &(bool){false}));
+    TEST_ASSERT_EQUAL_UINT32(1u, (uint32_t)str_len);
     TEST_ASSERT_EQUAL_INT('\0', str_out[0]);
 
     TEST_ASSERT_TRUE(test_drain_socket(read_fd, wire, sizeof(wire), 500) > 0);
