@@ -91,11 +91,23 @@ int main(int argc, char *argv[])
         int row = 0;
         while ((has_next = sqli_result_next(result)) != 0) {
             row++;
+            enum { capture_columns = 3 };
+            int32_t values[capture_columns];
+            for (size_t column = 0; column < capture_columns; column++) {
+                bool is_null;
+                rc = sqli_result_get_int(result, column, &values[column], &is_null);
+                if (rc != SQLI_OK || is_null) {
+                    fprintf(stderr, "[CAP] scalar read failed: %s\n", sqli_status_name(rc != SQLI_OK ? rc : SQLI_NULL_VALUE));
+                    sqli_result_destroy(result);
+                    sqli_destroy(conn);
+                    return 1;
+                }
+            }
             fprintf(stderr, "[CAP] Row %d: [%d, %d, %d]\n",
                     row,
-                    sqli_result_get_int(result, 0),
-                    sqli_result_get_int(result, 1),
-                    sqli_result_get_int(result, 2));
+                    values[0],
+                    values[1],
+                    values[2]);
         }
         sqli_result_destroy(result);
     }

@@ -49,46 +49,46 @@ static sqli_stmt_t *mock_stmt(int num_params)
 void test_bind_int_success(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 1, 42));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 2, -100));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 0, 42));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 1, -100));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_int64_success(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int64(s, 1, (int64_t)9223372036854775807ll));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int64(s, 0, (int64_t)9223372036854775807ll));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_double_success(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_double(s, 1, 3.14));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_double(s, 0, 3.14));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_int_invalid_index(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_int(s, 0, 1));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_int(s, 3, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_int(s, SIZE_MAX, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_int(s, 2, 1));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_int64_invalid_index(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_int64(s, 0, 1));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_int64(s, 3, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_int64(s, SIZE_MAX, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_int64(s, 2, 1));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_double_invalid_index(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_double(s, 0, 1.0));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_double(s, 3, 1.0));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_double(s, SIZE_MAX, 1.0));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_double(s, 2, 1.0));
     sqli_stmt_destroy(s);
 }
 
@@ -99,45 +99,45 @@ void test_bind_double_invalid_index(void)
 void test_bind_null_int_success(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_null_int(s, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_null_int(s, 0));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_null_int64_success(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_null_int64(s, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_null_int64(s, 0));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_null_double_success(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_null_double(s, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_null_double(s, 0));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_null_int_invalid_index(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_null_int(s, 0));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_null_int(s, 3));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_null_int(s, SIZE_MAX));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_null_int(s, 2));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_null_int64_invalid_index(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_null_int64(s, 0));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_null_int64(s, 3));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_null_int64(s, SIZE_MAX));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_null_int64(s, 2));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_null_double_invalid_index(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_null_double(s, 0));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_null_double(s, 3));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_null_double(s, SIZE_MAX));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_null_double(s, 2));
     sqli_stmt_destroy(s);
 }
 
@@ -148,8 +148,8 @@ void test_bind_null_double_invalid_index(void)
 void test_bind_null_invalid_index(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_null(s, 0));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_null(s, 3));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_null(s, SIZE_MAX));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_null(s, 2));
     sqli_stmt_destroy(s);
 }
 
@@ -161,48 +161,48 @@ void test_bind_null_invalid_index(void)
 void test_bind_string_invalid_index(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_string(s, 0, "x"));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_string(s, 3, "x"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_string(s, SIZE_MAX, "x"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_string(s, 2, "x"));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_date_invalid_index(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_date_string(s, 0, "2026-01-01"));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_date_string(s, 3, "2026-01-01"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_date_string(s, SIZE_MAX, "2026-01-01"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_date_string(s, 2, "2026-01-01"));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_datetime_invalid_index(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_datetime_string(s, 0, "2026-01-01"));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_datetime_string(s, 3, "2026-01-01"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_datetime_string(s, SIZE_MAX, "2026-01-01"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_datetime_string(s, 2, "2026-01-01"));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_interval_invalid_index(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_interval_string(s, 0, "1-2"));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_interval_string(s, 3, "1-2"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_interval_string(s, SIZE_MAX, "1-2"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_interval_string(s, 2, "1-2"));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_bool_invalid_index(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_bool(s, 0, true));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_bool(s, 3, false));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_bool(s, SIZE_MAX, true));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_bool(s, 2, false));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_decimal_invalid_index(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_decimal_string(s, 0, "1.5"));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_decimal_string(s, 3, "1.5"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_decimal_string(s, SIZE_MAX, "1.5"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_decimal_string(s, 2, "1.5"));
     sqli_stmt_destroy(s);
 }
 
@@ -210,8 +210,8 @@ void test_bind_bytes_invalid_index(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
     uint8_t data[] = {0xDE, 0xAD};
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_bytes(s, 0, data, 2));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_bytes(s, 3, data, 2));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_bytes(s, SIZE_MAX, data, 2));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_bytes(s, 2, data, 2));
     sqli_stmt_destroy(s);
 }
 
@@ -222,7 +222,7 @@ void test_bind_bytes_invalid_index(void)
 void test_bind_bytes_null_value(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_bytes(s, 1, NULL, 4));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_bytes(s, 0, NULL, 4));
     sqli_stmt_destroy(s);
 }
 
@@ -230,7 +230,7 @@ void test_bind_bytes_zero_len(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
     uint8_t data[] = {1};
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_bytes(s, 1, data, 0));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_bytes(s, 0, data, 0));
     sqli_stmt_destroy(s);
 }
 
@@ -238,7 +238,7 @@ void test_bind_bytes_success(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
     uint8_t data[] = {0xDE, 0xAD, 0xBE, 0xEF};
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bytes(s, 1, data, 4));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bytes(s, 0, data, 4));
     sqli_stmt_destroy(s);
 }
 
@@ -249,19 +249,19 @@ void test_bind_bytes_success(void)
 void test_bind_string_null_value(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_string(s, 1, NULL));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_string(s, 0, NULL));
     sqli_stmt_destroy(s);
 }
 
 void test_stmt_batch_add_clones_bound_values(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 1, 7));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 2, "alpha"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 0, 7));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 1, "alpha"));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_stmt_batch_add(s));
 
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 1, 9));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 2, "beta"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 0, 9));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 1, "beta"));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_stmt_batch_add(s));
 
     TEST_ASSERT_EQUAL_UINT32(2u, (uint32_t)sqli_stmt_batch_size(s));
@@ -276,9 +276,9 @@ void test_stmt_batch_add_clones_bound_values(void)
 void test_stmt_batch_clear_drops_queued_rows(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 1, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 0, 1));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_stmt_batch_add(s));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 1, 2));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 0, 2));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_stmt_batch_add(s));
 
     TEST_ASSERT_EQUAL_UINT32(2u, (uint32_t)sqli_stmt_batch_size(s));
@@ -292,7 +292,7 @@ void test_stmt_batch_clear_drops_queued_rows(void)
 void test_bind_date_null_value(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_bind_date_string(s, 1, NULL));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_bind_date_string(s, 0, NULL));
     sqli_stmt_destroy(s);
 }
 
@@ -303,8 +303,8 @@ void test_bind_date_null_value(void)
 void test_bind_bool_true_false(void)
 {
     sqli_stmt_t *s = mock_stmt(2);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bool(s, 1, true));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bool(s, 2, false));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bool(s, 0, true));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bool(s, 1, false));
     sqli_stmt_destroy(s);
 }
 
@@ -316,10 +316,10 @@ void test_bind_bool_true_false(void)
 void test_bind_string_rebind(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 1, "first"));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 1, "second-longer"));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_null(s, 1));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 1, "third"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 0, "first"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 0, "second-longer"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_null(s, 0));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 0, "third"));
     sqli_stmt_destroy(s);
 }
 
@@ -328,9 +328,9 @@ void test_bind_bytes_rebind(void)
     sqli_stmt_t *s = mock_stmt(1);
     uint8_t a[] = {1, 2, 3};
     uint8_t b[] = {4, 5};
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bytes(s, 1, a, 3));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bytes(s, 1, b, 2));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 1, "overwrite"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bytes(s, 0, a, 3));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bytes(s, 0, b, 2));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 0, "overwrite"));
     sqli_stmt_destroy(s);
 }
 
@@ -478,7 +478,7 @@ void test_lob_streaming_null_stmt(void)
     s->param_server_types = NULL;
     s->param_server_type_count = 0;
     /* bind a string to param 1 — should succeed without lob check */
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 1, "test"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 0, "test"));
     sqli_stmt_destroy(s);
 }
 
@@ -487,7 +487,7 @@ void test_lob_streaming_null_param_server_types(void)
     sqli_stmt_t *s = mock_stmt(1);
     s->param_server_types = NULL;
     s->param_server_type_count = 0;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bytes(s, 1, (uint8_t[]){1}, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bytes(s, 0, (uint8_t[]){1}, 1));
     sqli_stmt_destroy(s);
 }
 
@@ -499,7 +499,7 @@ void test_lob_streaming_null_param(void)
     s->param_server_types[0] = SQLI_TYPE_BLOB;
     s->param_server_type_count = 1;
     /* Bind NULL — lob streaming should return false for null params */
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_null(s, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_null(s, 0));
     sqli_stmt_destroy(s);
 }
 
@@ -554,7 +554,7 @@ void test_execute_with_params_int(void)
     s->stmt_id = 1;
     s->read_only = true;
     s->conn = NULL;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 1, 42));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 0, 42));
     sqli_status rc = sqli_execute(s);
     TEST_ASSERT_NOT_EQUAL_INT(SQLI_OK, rc); /* fails on send */
     sqli_stmt_destroy(s);
@@ -567,7 +567,7 @@ void test_execute_with_params_int64(void)
     s->stmt_id = 1;
     s->read_only = true;
     s->conn = NULL;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int64(s, 1, (int64_t)123456789012ll));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int64(s, 0, (int64_t)123456789012ll));
     sqli_status rc = sqli_execute(s);
     TEST_ASSERT_NOT_EQUAL_INT(SQLI_OK, rc);
     sqli_stmt_destroy(s);
@@ -580,7 +580,7 @@ void test_execute_with_params_double(void)
     s->stmt_id = 1;
     s->read_only = true;
     s->conn = NULL;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_double(s, 1, 2.718));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_double(s, 0, 2.718));
     sqli_status rc = sqli_execute(s);
     TEST_ASSERT_NOT_EQUAL_INT(SQLI_OK, rc);
     sqli_stmt_destroy(s);
@@ -593,7 +593,7 @@ void test_execute_with_params_string(void)
     s->stmt_id = 1;
     s->read_only = true;
     s->conn = NULL;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 1, "hello"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 0, "hello"));
     sqli_status rc = sqli_execute(s);
     TEST_ASSERT_NOT_EQUAL_INT(SQLI_OK, rc);
     sqli_stmt_destroy(s);
@@ -606,7 +606,7 @@ void test_execute_with_params_null(void)
     s->stmt_id = 1;
     s->read_only = true;
     s->conn = NULL;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_null(s, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_null(s, 0));
     sqli_status rc = sqli_execute(s);
     TEST_ASSERT_NOT_EQUAL_INT(SQLI_OK, rc);
     sqli_stmt_destroy(s);
@@ -620,7 +620,7 @@ void test_execute_with_params_bytes(void)
     s->read_only = true;
     s->conn = NULL;
     uint8_t data[] = {0xAA, 0xBB};
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bytes(s, 1, data, 2));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bytes(s, 0, data, 2));
     sqli_status rc = sqli_execute(s);
     TEST_ASSERT_NOT_EQUAL_INT(SQLI_OK, rc);
     sqli_stmt_destroy(s);
@@ -633,7 +633,7 @@ void test_execute_with_params_date(void)
     s->stmt_id = 1;
     s->read_only = true;
     s->conn = NULL;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_date_string(s, 1, "2026-01-15"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_date_string(s, 0, "2026-01-15"));
     sqli_status rc = sqli_execute(s);
     TEST_ASSERT_NOT_EQUAL_INT(SQLI_OK, rc);
     sqli_stmt_destroy(s);
@@ -646,7 +646,7 @@ void test_execute_with_params_decimal(void)
     s->stmt_id = 1;
     s->read_only = true;
     s->conn = NULL;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_decimal_string(s, 1, "123.45"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_decimal_string(s, 0, "123.45"));
     sqli_status rc = sqli_execute(s);
     TEST_ASSERT_NOT_EQUAL_INT(SQLI_OK, rc);
     sqli_stmt_destroy(s);
@@ -659,9 +659,9 @@ void test_execute_with_params_multiple(void)
     s->stmt_id = 1;
     s->read_only = true;
     s->conn = NULL;
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 1, 10));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 2, "test"));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_null(s, 3));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(s, 0, 10));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(s, 1, "test"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_null(s, 2));
     sqli_status rc = sqli_execute(s);
     TEST_ASSERT_NOT_EQUAL_INT(SQLI_OK, rc);
     sqli_stmt_destroy(s);
@@ -674,14 +674,14 @@ void test_execute_with_params_multiple(void)
 void test_bind_decimal_success(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_decimal_string(s, 1, "99.99"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_decimal_string(s, 0, "99.99"));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_decimal_negative(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_decimal_string(s, 1, "-42.5"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_decimal_string(s, 0, "-42.5"));
     sqli_stmt_destroy(s);
 }
 
@@ -692,14 +692,14 @@ void test_bind_decimal_negative(void)
 void test_bind_datetime_success(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_datetime_string(s, 1, "2026-01-01 12:00:00"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_datetime_string(s, 0, "2026-01-01 12:00:00"));
     sqli_stmt_destroy(s);
 }
 
 void test_bind_interval_success(void)
 {
     sqli_stmt_t *s = mock_stmt(1);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_interval_string(s, 1, "1-2"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_interval_string(s, 0, "1-2"));
     sqli_stmt_destroy(s);
 }
 
@@ -786,11 +786,11 @@ void test_bind_timestamp_success(void)
         .microsecond = 123456
     };
 
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_timestamp(s, 1, &ts));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_timestamp(s, 0, &ts));
     TEST_ASSERT_EQUAL_STRING("2026-06-28 02:30:15.123456", s->params[0].sval);
 
     sqli_timestamp_t ts_null = { .is_null = true };
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_timestamp(s, 2, &ts_null));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_timestamp(s, 1, &ts_null));
     TEST_ASSERT_TRUE(s->params[1].is_null);
 
     sqli_stmt_destroy(s);
@@ -800,13 +800,13 @@ void test_bind_epoch_success(void)
 {
     sqli_stmt_t *s = mock_stmt(3);
 
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_epoch_sec(s, 1, 1782613995LL));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_epoch_sec(s, 0, 1782613995LL));
     TEST_ASSERT_EQUAL_STRING("2026-06-28 02:33:15.000000", s->params[0].sval);
 
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_epoch_ms(s, 2, 1782613995123LL));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_epoch_ms(s, 1, 1782613995123LL));
     TEST_ASSERT_EQUAL_STRING("2026-06-28 02:33:15.123000", s->params[1].sval);
 
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_epoch_days(s, 3, 20632));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_epoch_days(s, 2, 20632));
     TEST_ASSERT_EQUAL_STRING("2026-06-28 00:00:00.000000", s->params[2].sval);
 
     sqli_stmt_destroy(s);
@@ -835,7 +835,7 @@ void test_bind_sblob_success(void)
     clob.open = false;
     memset(clob.locator, 0xCD, sizeof(clob.locator));
 
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 1, &blob));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 0, &blob));
     TEST_ASSERT_EQUAL_INT(SQLI_BIND_SBLOB, s->params[0].type);
     TEST_ASSERT_FALSE(s->params[0].is_null);
     TEST_ASSERT_EQUAL_INT(72, s->params[0].blen);
@@ -843,7 +843,7 @@ void test_bind_sblob_success(void)
     TEST_ASSERT_NOT_NULL(s->params[0].bval);
     TEST_ASSERT_EQUAL_HEX8_ARRAY(blob.locator, s->params[0].bval, 72);
 
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 2, &clob));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 1, &clob));
     TEST_ASSERT_EQUAL_INT(SQLI_BIND_SBLOB, s->params[1].type);
     TEST_ASSERT_FALSE(s->params[1].is_null);
     TEST_ASSERT_EQUAL_INT(72, s->params[1].blen);
@@ -862,13 +862,13 @@ void test_bind_sblob_null_and_inference(void)
     s->param_server_type_count = 2;
 
     /* Binding NULL with BLOB server type -> infers SQLI_SBLOB_BLOB */
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 1, NULL));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 0, NULL));
     TEST_ASSERT_EQUAL_INT(SQLI_BIND_SBLOB, s->params[0].type);
     TEST_ASSERT_TRUE(s->params[0].is_null);
     TEST_ASSERT_EQUAL_INT((int32_t)SQLI_SBLOB_BLOB, s->params[0].value.ival);
 
     /* Binding NULL with CLOB server type -> infers SQLI_SBLOB_CLOB */
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 2, NULL));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 1, NULL));
     TEST_ASSERT_EQUAL_INT(SQLI_BIND_SBLOB, s->params[1].type);
     TEST_ASSERT_TRUE(s->params[1].is_null);
     TEST_ASSERT_EQUAL_INT((int32_t)SQLI_SBLOB_CLOB, s->params[1].value.ival);
@@ -884,18 +884,18 @@ void test_bind_sblob_invalid(void)
     memset(&blob, 0, sizeof(blob));
 
     /* Invalid index */
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_sblob(s, 0, &blob));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_sblob(s, 2, &blob));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_sblob(s, SIZE_MAX, &blob));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_sblob(s, 1, &blob));
 
     /* NULL stmt */
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_sblob(NULL, 1, &blob));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_bind_sblob(NULL, 0, &blob));
 
     /* Empty locator */
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_sblob(s, 1, &blob));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_sblob(s, 0, &blob));
 
     /* Locator length > SQLI_SBLOB_LOCATOR_MAX */
     blob.locator_len = SQLI_SBLOB_LOCATOR_MAX + 1;
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_sblob(s, 1, &blob));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_sblob(s, 0, &blob));
 
     sqli_stmt_destroy(s);
 }
@@ -920,8 +920,8 @@ void test_execute_with_params_sblob(void)
     c.locator_len = 72;
     memset(c.locator, 0x22, 72);
 
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 1, &b));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 2, &c));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 0, &b));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 1, &c));
 
     sqli_status rc = sqli_execute(s);
     TEST_ASSERT_NOT_EQUAL_INT(SQLI_OK, rc); /* exercises estimate_bind_msg_size & build_bind_msg */
@@ -940,8 +940,8 @@ void test_execute_with_params_sblob_null(void)
     s->param_server_types = stypes;
     s->param_server_type_count = 2;
 
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 0, NULL));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 1, NULL));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(s, 2, NULL));
 
     sqli_status rc = sqli_execute(s);
     TEST_ASSERT_NOT_EQUAL_INT(SQLI_OK, rc); /* exercises estimate_bind_msg_size & build_bind_msg for NULL Smart-LOBs */

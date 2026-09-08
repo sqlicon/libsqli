@@ -1,3 +1,4 @@
+#include "sqli_legacy_types.h"
 #include "libsqli/sqli_temporal.h"
 #include "libsqli/sqli_decimal.h"
 #include "unity.h"
@@ -44,14 +45,14 @@ void test_stability_bind_api_reuse(void)
     char txt[64];
     for (int i = 0; i < 2000; i++) {
         snprintf(txt, sizeof(txt), "v%d", i);
-        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(&stmt, 1, txt));
-        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_decimal_string(&stmt, 1, "12345.6789"));
-        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_date_string(&stmt, 1, "2026-06-20"));
-        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_datetime_string(&stmt, 1, "2026-06-20 12:34:56"));
-        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_interval_string(&stmt, 1, "1 02:03:04"));
-        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bool(&stmt, 1, i & 1));
-        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bytes(&stmt, 1, payload, sizeof(payload)));
-        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_null(&stmt, 1));
+        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(&stmt, 0, txt));
+        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_decimal_string(&stmt, 0, "12345.6789"));
+        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_date_string(&stmt, 0, "2026-06-20"));
+        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_datetime_string(&stmt, 0, "2026-06-20 12:34:56"));
+        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_interval_string(&stmt, 0, "1 02:03:04"));
+        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bool(&stmt, 0, i & 1));
+        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_bytes(&stmt, 0, payload, sizeof(payload)));
+        TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_null(&stmt, 0));
     }
 
     sqli_stmt_close(&stmt);

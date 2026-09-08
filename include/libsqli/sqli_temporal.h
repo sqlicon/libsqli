@@ -166,7 +166,7 @@ void sqli_timestamp_from_epoch_sec(sqli_timestamp_t *ts, int64_t sec);
 void sqli_timestamp_from_epoch_ms(sqli_timestamp_t *ts, int64_t ms);
 void sqli_timestamp_from_epoch_days(sqli_timestamp_t *ts, int32_t days);
 
-/** Bind a copied native value to a 1-based parameter, without text conversion.
+/** Bind a copied native value to a 0-based parameter, without text conversion.
  * target is an explicit source SQL range sent to the server, not inferred from
  * PREPARE fields. It must match the value's integral range; exact fractional
  * rescaling is allowed. Wire fractions support 1..5 digits. INTERVAL leading
@@ -179,44 +179,44 @@ void sqli_timestamp_from_epoch_days(sqli_timestamp_t *ts, int32_t days);
  * mutation externally. Unsupported precision returns SQLI_OUT_OF_RANGE;
  * discarded nonzero digits return SQLI_INEXACT.
  */
-sqli_status sqli_bind_datetime(sqli_stmt_t *stmt, int param_index, const sqli_datetime_t *value,
+sqli_status sqli_bind_datetime(sqli_stmt_t *stmt, size_t param_index, const sqli_datetime_t *value,
                                const sqli_temporal_range_t *target);
-sqli_status sqli_bind_interval(sqli_stmt_t *stmt, int param_index, const sqli_interval_t *value,
+sqli_status sqli_bind_interval(sqli_stmt_t *stmt, size_t param_index, const sqli_interval_t *value,
                                const sqli_temporal_range_t *target, uint8_t leading_precision);
 
 /** Bind a copied native calendar DATE, with no allocation or text conversion.
  * NULL is taken from value->is_null; a NULL pointer is invalid. Invalid values
  * leave the previous binding unchanged. The copy survives source mutation and
- * batch capture. Parameter indices are 1-based; synchronize statement mutation.
+ * batch capture. Parameter indices are 0-based; synchronize statement mutation.
  */
-sqli_status sqli_bind_date(sqli_stmt_t *stmt, int param_index, const sqli_date_t *value);
+sqli_status sqli_bind_date(sqli_stmt_t *stmt, size_t param_index, const sqli_date_t *value);
 
 /*
  * Bind a DATE value in ISO format (YYYY-MM-DD).
  */
-sqli_status sqli_bind_date_string(sqli_stmt_t *stmt, int param_index, const char *value);
+sqli_status sqli_bind_date_string(sqli_stmt_t *stmt, size_t param_index, const char *value);
 
 /*
  * Bind a DATETIME/TIMESTAMP-like value as text.
  */
-sqli_status sqli_bind_datetime_string(sqli_stmt_t *stmt, int param_index, const char *value);
+sqli_status sqli_bind_datetime_string(sqli_stmt_t *stmt, size_t param_index, const char *value);
 
 /*
  * Bind a standard portable timestamp struct.
  */
-sqli_status sqli_bind_timestamp(sqli_stmt_t *stmt, int param_index, const sqli_timestamp_t *value);
+sqli_status sqli_bind_timestamp(sqli_stmt_t *stmt, size_t param_index, const sqli_timestamp_t *value);
 
 /*
  * Direct Unix epoch binding helpers (format as YYYY-MM-DD HH:MM:SS.ffffff or YYYY-MM-DD).
  */
-sqli_status sqli_bind_epoch_sec(sqli_stmt_t *stmt, int param_index, int64_t sec);
-sqli_status sqli_bind_epoch_ms(sqli_stmt_t *stmt, int param_index, int64_t ms);
-sqli_status sqli_bind_epoch_days(sqli_stmt_t *stmt, int param_index, int32_t days);
+sqli_status sqli_bind_epoch_sec(sqli_stmt_t *stmt, size_t param_index, int64_t sec);
+sqli_status sqli_bind_epoch_ms(sqli_stmt_t *stmt, size_t param_index, int64_t ms);
+sqli_status sqli_bind_epoch_days(sqli_stmt_t *stmt, size_t param_index, int32_t days);
 
 /*
  * Bind an INTERVAL value as text.
  */
-sqli_status sqli_bind_interval_string(sqli_stmt_t *stmt, int param_index, const char *value);
+sqli_status sqli_bind_interval_string(sqli_stmt_t *stmt, size_t param_index, const char *value);
 
 /** DATETIME/INTERVAL field range, including fractional precision. */
 sqli_status sqli_descriptor_field_get_temporal_range(const sqli_descriptor_field_t *field,
@@ -262,44 +262,6 @@ sqli_status sqli_result_get_timestamp(sqli_result_t *result, size_t col_index,
 sqli_status sqli_result_get_epoch_sec(sqli_result_t *result, size_t col_index, int64_t *out_sec);
 sqli_status sqli_result_get_epoch_ms(sqli_result_t *result, size_t col_index, int64_t *out_ms);
 sqli_status sqli_result_get_epoch_days(sqli_result_t *result, size_t col_index, int32_t *out_days);
-
-/* ----------------------------------------------------------------
- * Type encoding utilities
- * ---------------------------------------------------------------- */
-
-/*
- * Encode a DATE value as 4 big-endian bytes (days since Informix epoch).
- * Informix wire epoch: 1899-12-31 (day 0).
- * Example: 1970-01-01 => 25568.
- * Returns the 4-byte big-endian encoding.
- */
-int32_t sqli_encode_date(int32_t days_since_epoch);
-
-/*
- * Decode days since Informix epoch from a DATE value.
- */
-int32_t sqli_decode_date(int32_t encoded_date);
-
-/*
- * Encode a DATETIME value into buf using BCD Decimal wire format (spec §7.5).
- * Encodes YEAR TO SECOND (14 decimal digits: YYYYMMDDHHMMSS).
- * frac is reserved for future FRACTION support.
- *
- * Returns bytes written (same layout as sqli_encode_decimal), 0 on error.
- */
-size_t sqli_encode_datetime(int year, int month, int day,
-                            int hour, int minute, int second,
-                            unsigned int frac,
-                            uint8_t *buf, size_t buf_size);
-
-/*
- * Decode a DATETIME value from BCD Decimal wire format.
- * buf/buf_len point to the raw wire bytes (including the 2-byte length prefix).
- */
-void sqli_decode_datetime(const uint8_t *buf, size_t buf_len,
-                          int *year, int *month, int *day,
-                          int *hour, int *minute, int *second,
-                          unsigned int *frac);
 
 #ifdef __cplusplus
 }

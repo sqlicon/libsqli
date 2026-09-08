@@ -1,6 +1,7 @@
 /* Live decimal receive matrix. Server casts are an independent reference for
  * the native encoder; decoding is compared numerically with the source value.
  * No production getter or text binder is used to obtain the decimal bytes. */
+#include "scalar_expectations.h"
 #include "libsqli/sqli_decimal.h"
 #include "sqli_decimal_codec.h"
 #include "sqli_internal.h"
@@ -38,7 +39,7 @@ static bool check_case(sqli_conn_t *conn, sqli_decimal_t *source, sqli_decimal_t
         result->columns[decimal_column].encoded_length == descriptor &&
         result->tuple_buffer != NULL && result->tuple_len == length + integer_width &&
         memcmp(encoded, result->tuple_buffer, length) == 0 &&
-        sqli_result_get_int(result, sentinel_column) == sentinel &&
+        test_integer_equals(result, sentinel_column, sentinel) &&
         sqli_result_get_decimal(result, decimal_column, decoded) == SQLI_OK;
     if (ok) {
         bool actual_null = false;

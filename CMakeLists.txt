@@ -87,6 +87,8 @@ add_library(sqli STATIC
     ${SQLI_SRC_DIR}/sqli_batch.c
     ${SQLI_SRC_DIR}/sqli_result.c
     ${SQLI_SRC_DIR}/sqli_result_value.c
+    ${SQLI_SRC_DIR}/sqli_scalar.c
+    ${SQLI_SRC_DIR}/sqli_status.c
     ${SQLI_SRC_DIR}/sqli_prepare.c
     ${SQLI_SRC_DIR}/sqli_types.c
     ${SQLI_SRC_DIR}/sqli_descriptor.c

@@ -48,88 +48,65 @@ static const char *to_bool_text(bool value)
     return value ? "true" : "false";
 }
 
-static void write_cell(FILE *out, sqli_result_t *res, int col, int ctype,
-                       char *num_buf, size_t num_cap)
+static sqli_status write_cell(FILE *out, sqli_result_t *res, size_t col, int ctype,
+                                char *num_buf, size_t num_cap)
 {
     if (out == NULL || res == NULL || num_buf == NULL || num_cap == 0)
-        return;
-
+        return SQLI_INVALID_ARGUMENT;
+    bool is_null;
+    sqli_status status;
+    int written = 0;
     switch (ctype) {
-    case SQLI_TYPE_SMALLINT:
-    case SQLI_TYPE_INT:
-    case SQLI_TYPE_SERIAL: {
-        int v = (int)sqli_result_get_int(res, col);
-        if (sqli_result_was_null(res))
-            return;
-        snprintf(num_buf, num_cap, "%d", v);
-        csv_write_field(out, num_buf);
-        return;
+    case SQLI_TYPE_SMALLINT: case SQLI_TYPE_INT: case SQLI_TYPE_SERIAL: {
+        int32_t value;
+        status = sqli_result_get_int(res, col, &value, &is_null);
+        if (status != SQLI_OK || is_null) return status;
+        written = snprintf(num_buf, num_cap, "%d", (int)value);
+        break;
     }
-    case SQLI_TYPE_BIGINT:
-    case SQLI_TYPE_BIGSERIAL:
-    case SQLI_TYPE_SERIAL8:
-    case SQLI_TYPE_INT8: {
-        int64_t v = (int64_t)sqli_result_get_int64(res, col);
-        if (sqli_result_was_null(res))
-            return;
-        snprintf(num_buf, num_cap, "%" PRId64, v);
-        csv_write_field(out, num_buf);
-        return;
+    case SQLI_TYPE_BIGINT: case SQLI_TYPE_BIGSERIAL: case SQLI_TYPE_SERIAL8: case SQLI_TYPE_INT8: {
+        int64_t value;
+        status = sqli_result_get_int64(res, col, &value, &is_null);
+        if (status != SQLI_OK || is_null) return status;
+        written = snprintf(num_buf, num_cap, "%" PRId64, value);
+        break;
     }
-    case SQLI_TYPE_FLOAT:
-    case SQLI_TYPE_SMFLOAT: {
-        double v = sqli_result_get_double(res, col);
-        if (sqli_result_was_null(res))
-            return;
-        snprintf(num_buf, num_cap, "%.17g", v);
-        csv_write_field(out, num_buf);
-        return;
+    case SQLI_TYPE_FLOAT: case SQLI_TYPE_SMFLOAT: {
+        double value;
+        status = sqli_result_get_double(res, col, &value, &is_null);
+        if (status != SQLI_OK || is_null) return status;
+        written = snprintf(num_buf, num_cap, "%.17g", value);
+        break;
     }
-    case SQLI_TYPE_DECIMAL:
-    case SQLI_TYPE_MONEY: {
-        const char *s = sqli_result_get_decimal_string(res, col);
-        if (sqli_result_was_null(res))
-            return;
-        csv_write_field(out, s ? s : "");
-        return;
-    }
-    case SQLI_TYPE_DATE: {
-        const char *s = sqli_result_get_date_string(res, col);
-        if (sqli_result_was_null(res))
-            return;
-        csv_write_field(out, s ? s : "");
-        return;
-    }
-    case SQLI_TYPE_DATETIME: {
-        const char *s = sqli_result_get_datetime_string(res, col);
-        if (sqli_result_was_null(res))
-            return;
-        csv_write_field(out, s ? s : "");
-        return;
-    }
-    case SQLI_TYPE_INTERVAL: {
-        const char *s = sqli_result_get_interval_string(res, col);
-        if (sqli_result_was_null(res))
-            return;
-        csv_write_field(out, s ? s : "");
-        return;
-    }
-    case SQLI_TYPE_BOOL:
-    case SQLI_TYPE_DBOOLEAN: {
-        bool v = sqli_result_get_bool(res, col);
-        if (sqli_result_was_null(res))
-            return;
-        csv_write_field(out, to_bool_text(v));
-        return;
+    case SQLI_TYPE_BOOL: case SQLI_TYPE_DBOOLEAN: {
+        bool value;
+        status = sqli_result_get_bool(res, col, &value, &is_null);
+        if (status != SQLI_OK || is_null) return status;
+        csv_write_field(out, to_bool_text(value));
+        return ferror(out) ? SQLI_IO_ERROR : SQLI_OK;
     }
     default: {
-        const char *s = sqli_result_get_string(res, col);
-        if (sqli_result_was_null(res))
-            return;
-        csv_write_field(out, s ? s : "");
-        return;
+        size_t required = 0;
+        status = sqli_result_get_string_len(res, col, NULL, 0, &required, &is_null);
+        if (status != SQLI_OK || is_null) return status;
+        if (required == 0) return SQLI_INVALID_STATE;
+        char *text = malloc(required);
+        if (text == NULL) return SQLI_ALLOC_FAIL;
+        status = sqli_result_get_string_len(res, col, text, required, &required, &is_null);
+        if (status == SQLI_OK && !is_null) {
+            if (memchr(text, '\0', required - 1) != NULL)
+                status = SQLI_PROTO_ERROR;
+            else
+                csv_write_field(out, text);
+        }
+        free(text);
+        return status != SQLI_OK ? status : ferror(out) ? SQLI_IO_ERROR : SQLI_OK;
     }
     }
+    if (written < 0 || (size_t)written >= num_cap)
+        return SQLI_BUFFER_TOO_SMALL;
+    csv_write_field(out, num_buf);
+    return ferror(out) ? SQLI_IO_ERROR : SQLI_OK;
 }
 
 static unsigned parse_u_env(const char *name, unsigned dflt)
@@ -207,7 +184,11 @@ static int export_row_cb(sqli_result_t *res, void *ctx_ptr)
             fputc(',', ctx->out);
         int ctype = (ctx->col_types != NULL && c < ctx->col_count)
             ? ctx->col_types[c] : sqli_result_column_type(res, c);
-        write_cell(ctx->out, res, c, ctype, num_buf, sizeof(num_buf));
+        sqli_status status = write_cell(ctx->out, res, (size_t)c, ctype, num_buf, sizeof(num_buf));
+        if (status != SQLI_OK) {
+            fprintf(stderr, "CSV cell read failed: %s\n", sqli_status_name(status));
+            return 1;
+        }
     }
     fputc('\n', ctx->out);
     ctx->rows++;

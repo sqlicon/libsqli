@@ -135,9 +135,41 @@ static void test_eof_initial_failure_and_success(void)
     state = (struct reader_state){0};
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_write_stream(connection, &lob, reader, &state, NULL));
 }
+static void test_read_requires_complete_trailer(void)
+{
+    const uint8_t response[] = {0, SQLI_SQ_LODATA, 0, 0, 0, 0, 0, 2,
+                               0, 2, 'a', 'b'};
+    TEST_ASSERT_EQUAL_INT(sizeof(response), write(sockets[1], response, sizeof(response)));
+    TEST_ASSERT_EQUAL_INT(0, shutdown(sockets[1], SHUT_WR));
+    char buffer[2];
+    size_t count = 42;
+    TEST_ASSERT_EQUAL_INT(SQLI_IO_ERROR,
+                         sqli_sblob_read(connection, lob.lofd, buffer, sizeof(buffer), &count));
+    TEST_ASSERT_EQUAL_UINT(0, count);
+}
+
+static void test_seek_minimum_offset_encoding_and_trailer(void)
+{
+    const uint8_t response[] = {0, SQLI_SQ_LODATA, 0, 0, 0, 0, 0, 0};
+    TEST_ASSERT_EQUAL_INT(sizeof(response), write(sockets[1], response, sizeof(response)));
+    TEST_ASSERT_EQUAL_INT(0, shutdown(sockets[1], SHUT_WR));
+    char buffer[2];
+    size_t count = 42;
+    TEST_ASSERT_EQUAL_INT(SQLI_IO_ERROR,
+        sqli_sblob_read_seek(connection, lob.lofd, INT64_MIN, buffer, sizeof(buffer), &count));
+    TEST_ASSERT_EQUAL_UINT(0, count);
+    uint8_t request[26];
+    TEST_ASSERT_EQUAL_INT(sizeof(request), read(sockets[1], request, sizeof(request)));
+    const uint8_t minimum_offset[] = {0xff, 0xff, 0, 0, 0, 0, 0x80, 0, 0, 0};
+    TEST_ASSERT_EQUAL_MEMORY(minimum_offset, request + 12, sizeof(minimum_offset));
+    TEST_ASSERT_EQUAL_UINT8(1, request[23]); /* Relative seek. */
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_read_requires_complete_trailer);
+    RUN_TEST(test_seek_minimum_offset_encoding_and_trailer);
     RUN_TEST(test_reader_failure_retains_37_confirmed_bytes);
     RUN_TEST(test_protocol_failure_keeps_only_prior_acknowledgments);
     RUN_TEST(test_lost_ack_keeps_prior_progress);

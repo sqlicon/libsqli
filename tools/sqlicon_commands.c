@@ -333,12 +333,26 @@ sqlicon_exit_code command_schema_table(sqli_conn_t *conn, sqlicon_runtime *rt, c
     fprintf(out, "%-20s %-30s %s\n", "--------------------", "------------------------------", "--------");
 
     while (sqli_result_next(result)) {
-        int colno = (int)sqli_result_get_int(result, 0);
         const char *colname = sqli_result_get_string(result, 1);
-        int coltype = (int)sqli_result_get_int(result, 2);
-        int collength = (int)sqli_result_get_int(result, 3);
+        int32_t coltype;
+        bool coltype_null;
+        sqli_status coltype_status = sqli_result_get_int(result, 2, &coltype, &coltype_null);
+        if (coltype_status != SQLI_OK || coltype_null) {
+            fprintf(stderr, "error: read coltype: %s\n", sqli_status_name(coltype_status != SQLI_OK ? coltype_status : SQLI_NULL_VALUE));
+            sqli_result_destroy(result);
+            runtime_release_output(out, close_after);
+            return SQLICON_EXIT_SQL_ERROR;
+        }
+        int32_t collength;
+        bool collength_null;
+        sqli_status collength_status = sqli_result_get_int(result, 3, &collength, &collength_null);
+        if (collength_status != SQLI_OK || collength_null) {
+            fprintf(stderr, "error: read collength: %s\n", sqli_status_name(collength_status != SQLI_OK ? collength_status : SQLI_NULL_VALUE));
+            sqli_result_destroy(result);
+            runtime_release_output(out, close_after);
+            return SQLICON_EXIT_SQL_ERROR;
+        }
 
-        (void)colno;
         char type_buf[128];
         format_sql_type(coltype, collength, type_buf, sizeof(type_buf));
 
@@ -381,7 +395,13 @@ sqlicon_exit_code command_indexes_table(sqli_conn_t *conn, sqlicon_runtime *rt, 
             sqli_result_destroy(tab_res);
         return SQLICON_EXIT_SQL_ERROR;
     }
-    tabid = (int)sqli_result_get_int(tab_res, 0);
+    bool tabid_null;
+    qrc = sqli_result_get_int(tab_res, 0, &tabid, &tabid_null);
+    if (qrc != SQLI_OK || tabid_null) {
+        fprintf(stderr, "error: read table id: %s\n", sqli_status_name(qrc != SQLI_OK ? qrc : SQLI_NULL_VALUE));
+        sqli_result_destroy(tab_res);
+        return SQLICON_EXIT_SQL_ERROR;
+    }
     sqli_result_destroy(tab_res);
 
     /* Get index list */
@@ -432,7 +452,15 @@ sqlicon_exit_code command_indexes_table(sqli_conn_t *conn, sqlicon_runtime *rt, 
         for (int p = 2; p < 18; p++) {
             if (sqli_result_is_null(idx_res, p))
                 continue;
-            int part = (int)sqli_result_get_int(idx_res, p);
+            int32_t part;
+            bool part_null;
+            qrc = sqli_result_get_int(idx_res, (size_t)p, &part, &part_null);
+            if (qrc != SQLI_OK || part_null) {
+                fprintf(stderr, "error: read index part: %s\n", sqli_status_name(qrc != SQLI_OK ? qrc : SQLI_NULL_VALUE));
+                sqli_result_destroy(idx_res);
+                runtime_release_output(out, close_after);
+                return SQLICON_EXIT_SQL_ERROR;
+            }
             if (part == 0)
                 continue;
             int abs_part = (part < 0) ? -part : part;
@@ -531,7 +559,15 @@ sqlicon_exit_code command_views_table(sqli_conn_t *conn, sqlicon_runtime *rt, co
         char tabname_buf[256];
         /* Capture tabname first to avoid static buffer aliasing */
         snprintf(tabname_buf, sizeof(tabname_buf), "%s", sqli_result_get_string(result, 0));
-        int seqno = (int)sqli_result_get_int(result, 1);
+        int32_t seqno;
+        bool seqno_null;
+        sqli_status seqno_status = sqli_result_get_int(result, 1, &seqno, &seqno_null);
+        if (seqno_status != SQLI_OK || seqno_null) {
+            fprintf(stderr, "error: read seqno: %s\n", sqli_status_name(seqno_status != SQLI_OK ? seqno_status : SQLI_NULL_VALUE));
+            sqli_result_destroy(result);
+            runtime_release_output(out, close_after);
+            return SQLICON_EXIT_SQL_ERROR;
+        }
         const char *viewtext = sqli_result_get_string(result, 2);
 
         if (strcmp(tabname_buf, current_view) != 0) {
@@ -672,17 +708,44 @@ static sqlicon_exit_code dump_single_table_to_output(sqli_conn_t *conn, FILE *ou
             case SQLI_TYPE_SERIAL:
             case SQLI_TYPE_BOOL:
             case SQLI_TYPE_DBOOLEAN:
-                fprintf(out, "%d", (int)sqli_result_get_int(result, i));
+                {
+                    int32_t value;
+                    bool is_null;
+                    qrc = sqli_result_get_int(result, (size_t)i, &value, &is_null);
+                    if (qrc != SQLI_OK || is_null) {
+                        if (qrc == SQLI_OK) qrc = SQLI_NULL_VALUE;
+                        goto dump_read_error;
+                    }
+                    fprintf(out, "%d", (int)value);
+                }
                 break;
             case SQLI_TYPE_BIGINT:
             case SQLI_TYPE_BIGSERIAL:
             case SQLI_TYPE_SERIAL8:
             case SQLI_TYPE_INT8:
-                fprintf(out, "%lld", (long long)sqli_result_get_int64(result, i));
+                {
+                    int64_t value;
+                    bool is_null;
+                    qrc = sqli_result_get_int64(result, (size_t)i, &value, &is_null);
+                    if (qrc != SQLI_OK || is_null) {
+                        if (qrc == SQLI_OK) qrc = SQLI_NULL_VALUE;
+                        goto dump_read_error;
+                    }
+                    fprintf(out, "%lld", (long long)value);
+                }
                 break;
             case SQLI_TYPE_FLOAT:
             case SQLI_TYPE_SMFLOAT:
-                fprintf(out, "%.17g", sqli_result_get_double(result, i));
+                {
+                    double value;
+                    bool is_null;
+                    qrc = sqli_result_get_double(result, (size_t)i, &value, &is_null);
+                    if (qrc != SQLI_OK || is_null) {
+                        if (qrc == SQLI_OK) qrc = SQLI_NULL_VALUE;
+                        goto dump_read_error;
+                    }
+                    fprintf(out, "%.17g", value);
+                }
                 break;
             case SQLI_TYPE_BYTE:
             case SQLI_TYPE_BLOB: {
@@ -712,6 +775,10 @@ static sqlicon_exit_code dump_single_table_to_output(sqli_conn_t *conn, FILE *ou
         fprintf(out, "COMMIT WORK;\n");
     sqli_result_destroy(result);
     return SQLICON_EXIT_OK;
+dump_read_error:
+    fprintf(stderr, "error: .dump scalar read failed: %s\n", sqli_status_name(qrc));
+    sqli_result_destroy(result);
+    return SQLICON_EXIT_SQL_ERROR;
 }
 
 sqlicon_exit_code command_dump_table(sqli_conn_t *conn, sqlicon_runtime *rt, const char *arg)

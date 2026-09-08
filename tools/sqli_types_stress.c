@@ -53,7 +53,10 @@ static void update_latency(stress_metrics_t *m, uint64_t lat_us)
 static int verify_row_datatypes(sqli_result_t *res, stress_metrics_t *m)
 {
     int errors = 0;
-    int id = sqli_result_get_int(res, 0);
+    int id;
+    bool id_null;
+    if (sqli_result_get_int(res, 0, &id, &id_null) != SQLI_OK || id_null)
+        return errors + 1;
     int pattern = id % 5;
 
     /* Check NULL pattern (row % 5 == 3 is all-NULL) */
@@ -78,29 +81,47 @@ static int verify_row_datatypes(sqli_result_t *res, stress_metrics_t *m)
         }
 
         /* 1. SMALLINT (col 1) */
-        int smallint_val = sqli_result_get_int(res, 1);
+        int smallint_val;
+        bool smallint_val_null;
+        if (sqli_result_get_int(res, 1, &smallint_val, &smallint_val_null) != SQLI_OK || smallint_val_null)
+            return errors + 1;
         if (pattern == 0 && smallint_val != 100) { fprintf(stderr, "FAIL: smallint id=%d val=%d\n", id, smallint_val); errors++; }
         if (pattern == 1 && smallint_val != -32767) { fprintf(stderr, "FAIL: smallint id=%d val=%d\n", id, smallint_val); errors++; }
 
         /* 2. INTEGER (col 2) */
-        int int_val = sqli_result_get_int(res, 2);
+        int int_val;
+        bool int_val_null;
+        if (sqli_result_get_int(res, 2, &int_val, &int_val_null) != SQLI_OK || int_val_null)
+            return errors + 1;
         if (pattern == 0 && int_val != 100000) { fprintf(stderr, "FAIL: int id=%d val=%d\n", id, int_val); errors++; }
         if (pattern == 1 && int_val != -2147483647) { fprintf(stderr, "FAIL: int id=%d val=%d\n", id, int_val); errors++; }
 
         /* 3. BIGINT (col 3) */
-        int64_t bigint_val = sqli_result_get_int64(res, 3);
+        int64_t bigint_val;
+        bool bigint_val_null;
+        if (sqli_result_get_int64(res, 3, &bigint_val, &bigint_val_null) != SQLI_OK || bigint_val_null)
+            return errors + 1;
         if (pattern == 0 && bigint_val != 5000000000LL) { fprintf(stderr, "FAIL: bigint id=%d val=%" PRId64 "\n", id, bigint_val); errors++; }
 
         /* 4. SMALLFLOAT (col 4) */
-        double smfloat_val = sqli_result_get_double(res, 4);
+        double smfloat_val;
+        bool smfloat_val_null;
+        if (sqli_result_get_double(res, 4, &smfloat_val, &smfloat_val_null) != SQLI_OK || smfloat_val_null)
+            return errors + 1;
         if (pattern == 0 && fabs(smfloat_val - 12.34) > 0.01) { fprintf(stderr, "FAIL: smfloat id=%d val=%f\n", id, smfloat_val); errors++; }
 
         /* 5. FLOAT (col 5) */
-        double float_val = sqli_result_get_double(res, 5);
+        double float_val;
+        bool float_val_null;
+        if (sqli_result_get_double(res, 5, &float_val, &float_val_null) != SQLI_OK || float_val_null)
+            return errors + 1;
         if (pattern == 0 && fabs(float_val - 123456.789012) > 0.001) { fprintf(stderr, "FAIL: float id=%d val=%f\n", id, float_val); errors++; }
 
         /* 6. DECIMAL (col 6) */
-        double dec_val = sqli_result_get_double(res, 6);
+        double dec_val;
+        bool dec_val_null;
+        if (sqli_result_get_double(res, 6, &dec_val, &dec_val_null) != SQLI_OK || dec_val_null)
+            return errors + 1;
         if (pattern == 0 && fabs(dec_val - 9876.5432) > 0.01) { fprintf(stderr, "FAIL: decimal id=%d val=%f\n", id, dec_val); errors++; }
 
         /* 7. DECIMAL FLOAT (col 7) */
@@ -108,7 +129,10 @@ static int verify_row_datatypes(sqli_result_t *res, stress_metrics_t *m)
         if (dec_str == NULL || strlen(dec_str) == 0) { fprintf(stderr, "FAIL: dec_str id=%d\n", id); errors++; }
 
         /* 8. MONEY (col 8) */
-        double money_val = sqli_result_get_double(res, 8);
+        double money_val;
+        bool money_val_null;
+        if (sqli_result_get_double(res, 8, &money_val, &money_val_null) != SQLI_OK || money_val_null)
+            return errors + 1;
         if (pattern == 0 && fabs(money_val - 49.99) > 0.01) { fprintf(stderr, "FAIL: money id=%d val=%f\n", id, money_val); errors++; }
 
         /* 9. CHAR (col 9) */
@@ -130,7 +154,10 @@ static int verify_row_datatypes(sqli_result_t *res, stress_metrics_t *m)
         if (lvc_val == NULL && pattern != 4) { fprintf(stderr, "FAIL: lvarchar id=%d\n", id); errors++; }
 
         /* 12. BOOLEAN (col 12) */
-        bool b_val = sqli_result_get_bool(res, 12);
+        bool b_val;
+        bool b_val_null;
+        if (sqli_result_get_bool(res, 12, &b_val, &b_val_null) != SQLI_OK || b_val_null)
+            return errors + 1;
         if (pattern == 0 && !b_val) { fprintf(stderr, "FAIL: bool id=%d expected true\n", id); errors++; }
         if (pattern == 1 && b_val) { fprintf(stderr, "FAIL: bool id=%d expected false\n", id); errors++; }
 

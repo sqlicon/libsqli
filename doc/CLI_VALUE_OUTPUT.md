@@ -28,9 +28,9 @@ memory limit or provide streaming output.
 
 ## Scope and remaining legacy paths
 
-The scalar integer/float branches retain their existing fallback getters and
-formatting. This iteration does not introduce checked scalar getters or a new
-public display API. Legacy string conveniences remain available to other library
+The scalar integer/float branches now use checked getters and propagate local
+conversion failures, with readable status names and descriptions. Numeric
+formatting is unchanged. Legacy string conveniences remain available to other library
 consumers. The separate schema-command and SQL-dump paths still have legacy text
 calls; the checked SELECT renderer does not establish full-fidelity SQL export.
 
@@ -59,7 +59,7 @@ The reported pool retry loop is already fixed: a failed reconnect releases the
 slot and returns its status. The existing reconnect-failure regression test is
 part of the passing full suite; no new pool retry policy is introduced here.
 
-## Validation
+## Validation of the preceding CLI output iteration
 
 - All 20 Debug CTest suites pass with ASan/UBSan; the focused output tests also
   pass directly with LeakSanitizer enabled.

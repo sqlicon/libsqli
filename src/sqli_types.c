@@ -1,3 +1,4 @@
+#include "sqli_legacy_types.h"
 #include "libsqli/sqli_temporal.h"
 #include "libsqli/sqli_decimal.h"
 #include "libsqli/sqli.h"

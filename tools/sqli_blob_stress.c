@@ -143,22 +143,22 @@ static void *worker_legacy_lob_stress(void *arg)
             break;
         }
 
-        sqli_bind_int(stmt, 1, row_id);
+        sqli_bind_int(stmt, 0, row_id);
 
         uint8_t *write_buf = NULL;
         char text_buf[512];
         if (byte_len == 0) {
+            sqli_bind_null(stmt, 1);
             sqli_bind_null(stmt, 2);
-            sqli_bind_null(stmt, 3);
         } else {
             write_buf = malloc(byte_len);
             fill_pattern(write_buf, byte_len, seed);
-            sqli_bind_bytes(stmt, 2, write_buf, byte_len);
+            sqli_bind_bytes(stmt, 1, write_buf, byte_len);
 
             snprintf(text_buf, sizeof(text_buf),
                      "Worker=%d Iter=%u Seed=%u Text with Umlauts: ÄÖÜäöüß Euro: € Len=%zu",
                      task->worker_id, iter, seed, byte_len);
-            sqli_bind_string(stmt, 3, text_buf);
+            sqli_bind_string(stmt, 2, text_buf);
         }
 
         rc = sqli_execute(stmt);
@@ -349,9 +349,9 @@ static void *worker_smart_lob_stress(void *arg)
         int pcount = 0;
         rc = sqli_prepare(conn, "INSERT INTO test_smart_stress (id, b, c) VALUES (?, ?, ?)", &pcount, &ins_stmt);
         if (rc == SQLI_OK && ins_stmt != NULL) {
-            sqli_bind_int(ins_stmt, 1, base_row_id);
-            sqli_bind_sblob(ins_stmt, 2, sblob);
-            sqli_bind_sblob(ins_stmt, 3, sclob);
+            sqli_bind_int(ins_stmt, 0, base_row_id);
+            sqli_bind_sblob(ins_stmt, 1, sblob);
+            sqli_bind_sblob(ins_stmt, 2, sclob);
             rc = sqli_execute(ins_stmt);
             sqli_stmt_destroy(ins_stmt);
         }
@@ -606,9 +606,9 @@ int main(int argc, char **argv)
         int pcount = 0;
         rc = sqli_prepare(admin_conn, "INSERT INTO test_smart_stress (id, b, c) VALUES (?, ?, ?)", &pcount, &stmt);
         if (rc == SQLI_OK && stmt != NULL) {
-            sqli_bind_int(stmt, 1, id);
-            sqli_bind_sblob(stmt, 2, sblob);
-            sqli_bind_sblob(stmt, 3, sclob);
+            sqli_bind_int(stmt, 0, id);
+            sqli_bind_sblob(stmt, 1, sblob);
+            sqli_bind_sblob(stmt, 2, sclob);
             rc = sqli_execute(stmt);
             sqli_stmt_destroy(stmt);
         }

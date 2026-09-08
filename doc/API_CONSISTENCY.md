@@ -10,7 +10,7 @@ calls; no compatibility aliases are retained for replaced signatures.
 
 ```c
 /* <libsqli/sqli_temporal.h> */
-sqli_status sqli_bind_date(sqli_stmt_t *stmt, int param_index,
+sqli_status sqli_bind_date(sqli_stmt_t *stmt, size_t param_index,
                            const sqli_date_t *value);
 
 /* <libsqli/sqli_decimal.h> */
@@ -20,7 +20,7 @@ typedef struct {
     bool floating_scale;
 } sqli_decimal_target_t;
 
-sqli_status sqli_bind_decimal(sqli_stmt_t *stmt, int param_index,
+sqli_status sqli_bind_decimal(sqli_stmt_t *stmt, size_t param_index,
                               const sqli_decimal_t *value,
                               const sqli_decimal_target_t *target);
 ```
@@ -42,8 +42,7 @@ replacing the binding. No catalog queries or external decimal library are used.
 Native binding allocates nothing, copies the encoded value, and preserves the
 previous binding on failure. The caller can immediately mutate or destroy the
 source. Batch snapshots retain independent copies, including SQL NULL. Use the
-value's NULL state; a NULL C value pointer is invalid. Parameter indices remain
-one-based `int`, unlike zero-based result indices.
+value's NULL state; a NULL C value pointer is invalid. Parameter and result indices now both use zero-based `size_t`.
 
 Text input remains available under `sqli_bind_date_string`,
 `sqli_bind_decimal_string`, `sqli_bind_datetime_string` and
@@ -100,21 +99,18 @@ size queries can therefore fail too. These APIs do not modify `was_null`.
 The SQL dump uses the required byte count to avoid its former 4 KiB limit and
 reports read failures instead of substituting locator text.
 
-## Legacy scalar and string conveniences
+## Checked scalars and legacy string conveniences
 
-`get_int`, `get_int64`, `get_double` and `get_bool` remain fallback interfaces:
-SQL NULL, invalid access, unsupported conversion and numeric overflow return
-zero/false. Successful NULL detection sets `was_null`; invalid access clears it.
-INT8/SERIAL8 NULL now agrees with other types, and integer narrowing and decimal
-accumulation are range checked. Decimal integer conversion truncates fractional
-digits toward zero. Nonfinite floating values return zero. These return values
-cannot distinguish a real zero from failure; use native getters for exact values
-and explicit status where available.
+`get_int`, `get_int64`, `get_double` and `get_bool` now return `sqli_status` and
+require value and NULL outputs. Failures preserve both outputs; SQL NULL leaves
+the value unchanged. Integer conversion of fractional decimals returns
+`SQLI_INEXACT`. See [the application API](APPLICATION_API.md) for the complete
+conversion contract and migration examples.
 
-The decimal string getter now documents the same thread-local, empty-string
-NULL/error convention as its temporal siblings and points to the native getter
-plus formatter. Synchronize result/connection use and destination mutation;
-thread-local convenience buffers are not independent owned values.
+Legacy string getters retain their thread-local NULL/error conventions. Prefer
+checked whole-value buffers or native getters plus formatters. Synchronize
+result/connection use and destination mutation; thread-local convenience buffers
+are not independent owned values.
 
 ## Opaque Smart-LOB ownership
 
@@ -132,7 +128,7 @@ before destroying its handles. A NULL destroy argument is allowed. Synchronize
 all access to a handle with mutation and destruction. Public tools and live tests
 use this ownership model; only private white-box fixtures inspect the layout.
 
-## Verification
+## Verification of the preceding native API iteration
 
 The dedicated API consistency tests cover scalar overflow and NULL, buffer
 atomicity and allocation failure, native bind copies and batch lifetime,

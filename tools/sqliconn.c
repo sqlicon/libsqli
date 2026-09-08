@@ -6,6 +6,7 @@
  * Defaults sql to: SELECT DBINFO('version','full') FROM sysmaster:sysdual
  */
 
+#include "libsqli/sqli_temporal.h"
 #include "libsqli/sqli.h"
 
 #include <ctype.h>
@@ -221,29 +222,91 @@ int main(int argc, char **argv)
         for (int c = 0; c < ncols; c++) {
             const char *name = sqli_result_column_name(result, c);
             int ctype = sqli_result_column_type(result, c);
+            if (sqli_result_is_null(result, (size_t)c)) {
+                printf("  %s=(null)", name ? name : "?");
+                continue;
+            }
             switch (ctype) {
             case SQLI_TYPE_SMALLINT:
             case SQLI_TYPE_INT:
             case SQLI_TYPE_SERIAL:
-            case SQLI_TYPE_DATE:
-                printf("  %s=%d", name ? name : "?", (int)sqli_result_get_int(result, c));
+                {
+                    int32_t value;
+                    bool is_null;
+                    sqli_status status = sqli_result_get_int(result, (size_t)c, &value, &is_null);
+                    if (status != SQLI_OK || is_null) {
+                        fprintf(stderr, "scalar read failed: %s\n", sqli_status_name(status != SQLI_OK ? status : SQLI_NULL_VALUE));
+                        sqli_result_destroy(result);
+                        sqli_destroy(conn);
+                        return 1;
+                    }
+                    printf("  %s=%d", name ? name : "?", (int)value);
+                }
                 break;
             case SQLI_TYPE_BIGINT:
             case SQLI_TYPE_BIGSERIAL:
             case SQLI_TYPE_SERIAL8:
             case SQLI_TYPE_INT8:
-                printf("  %s=%lld", name ? name : "?", (long long)sqli_result_get_int64(result, c));
+                {
+                    int64_t value;
+                    bool is_null;
+                    sqli_status status = sqli_result_get_int64(result, (size_t)c, &value, &is_null);
+                    if (status != SQLI_OK || is_null) {
+                        fprintf(stderr, "scalar read failed: %s\n", sqli_status_name(status != SQLI_OK ? status : SQLI_NULL_VALUE));
+                        sqli_result_destroy(result);
+                        sqli_destroy(conn);
+                        return 1;
+                    }
+                    printf("  %s=%lld", name ? name : "?", (long long)value);
+                }
                 break;
             case SQLI_TYPE_FLOAT:
             case SQLI_TYPE_SMFLOAT:
             case SQLI_TYPE_DECIMAL:
             case SQLI_TYPE_MONEY:
-                printf("  %s=%g", name ? name : "?", sqli_result_get_double(result, c));
+                {
+                    double value;
+                    bool is_null;
+                    sqli_status status = sqli_result_get_double(result, (size_t)c, &value, &is_null);
+                    if (status != SQLI_OK || is_null) {
+                        fprintf(stderr, "scalar read failed: %s\n", sqli_status_name(status != SQLI_OK ? status : SQLI_NULL_VALUE));
+                        sqli_result_destroy(result);
+                        sqli_destroy(conn);
+                        return 1;
+                    }
+                    printf("  %s=%g", name ? name : "?", value);
+                }
                 break;
             case SQLI_TYPE_BOOL:
             case SQLI_TYPE_DBOOLEAN:
-                printf("  %s=%s", name ? name : "?", sqli_result_get_int(result, c) ? "true" : "false");
+                {
+                    int32_t value;
+                    bool is_null;
+                    sqli_status status = sqli_result_get_int(result, (size_t)c, &value, &is_null);
+                    if (status != SQLI_OK || is_null) {
+                        fprintf(stderr, "scalar read failed: %s\n", sqli_status_name(status != SQLI_OK ? status : SQLI_NULL_VALUE));
+                        sqli_result_destroy(result);
+                        sqli_destroy(conn);
+                        return 1;
+                    }
+                    printf("  %s=%s", name ? name : "?", value ? "true" : "false");
+                }
                 break;
+            case SQLI_TYPE_DATE: {
+                enum { iso_date_capacity = 11 };
+                char text[iso_date_capacity];
+                size_t required;
+                bool is_null;
+                sqli_status status = sqli_result_get_string_len(result, (size_t)c, text, sizeof(text), &required, &is_null);
+                if (status != SQLI_OK || is_null) {
+                    fprintf(stderr, "DATE read failed: %s\n", sqli_status_name(status != SQLI_OK ? status : SQLI_NULL_VALUE));
+                    sqli_result_destroy(result);
+                    sqli_destroy(conn);
+                    return 1;
+                }
+                printf("  %s=%s", name ? name : "?", text);
+                break;
+            }
             default: {
                 const char *val = sqli_result_get_string(result, c);
                 printf("  %s=%s", name ? name : "?", val ? val : "(null)");

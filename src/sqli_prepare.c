@@ -415,30 +415,31 @@ sqli_status sqli_prepare_with_retry(sqli_conn_t *conn, const char *sql,
  * sqli_bind_* — store parameter values for binding
  * ---------------------------------------------------------------- */
 
-static sqli_status validate_param_index(sqli_stmt_t *stmt, int param_index)
+static sqli_status validate_param_index(sqli_stmt_t *stmt, size_t param_index)
 {
-    if (stmt == NULL || stmt->params == NULL)
+    if (stmt == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    if (stmt->param_count < 0 || param_index >= (size_t)stmt->param_count)
+        return SQLI_OUT_OF_RANGE;
+    if (stmt->params == NULL)
         return SQLI_INVALID_STATE;
-    if (param_index < 1 || param_index > stmt->param_count) {
-        return SQLI_INVALID_STATE;
-    }
     return SQLI_OK;
 }
 
 static bool sqli_stmt_param_needs_lob_streaming(const sqli_stmt_t *stmt,
                                                 const sqli_bound_param *params,
-                                                int param_index)
+                                                size_t param_index)
 {
-    if (stmt == NULL || param_index < 1 || param_index > stmt->param_count)
+    if (stmt == NULL || param_index >= (size_t)stmt->param_count)
         return false;
-    if (stmt->param_server_types == NULL || stmt->param_server_type_count < param_index)
+    if (stmt->param_server_types == NULL || param_index >= (size_t)stmt->param_server_type_count)
         return false;
 
-    const sqli_bound_param *par = &params[(size_t)(param_index - 1)];
+    const sqli_bound_param *par = &params[param_index];
     if (par->is_null)
         return false;
 
-    uint8_t col_type = stmt->param_server_types[(size_t)(param_index - 1)];
+    uint8_t col_type = stmt->param_server_types[param_index];
     bool is_lob_col = (col_type == SQLI_TYPE_BYTE || col_type == SQLI_TYPE_TEXT);
     if (!is_lob_col)
         return false;
@@ -446,14 +447,14 @@ static bool sqli_stmt_param_needs_lob_streaming(const sqli_stmt_t *stmt,
     return par->type == SQLI_BIND_BYTES || par->type == SQLI_BIND_STRING;
 }
 
-static sqli_status set_param_string(sqli_stmt_t *stmt, int param_index,
+static sqli_status set_param_string(sqli_stmt_t *stmt, size_t param_index,
                                     sqli_bind_type type, const char *value)
 {
     sqli_status rc = validate_param_index(stmt, param_index);
     if (rc != SQLI_OK) return rc;
     if (value == NULL) return SQLI_INVALID_STATE;
 
-    sqli_bound_param *p = &stmt->params[(size_t)(param_index - 1)];
+    sqli_bound_param *p = &stmt->params[param_index];
     size_t n = strlen(value);
     char *dup = malloc(n + 1);
     if (dup == NULL)
@@ -467,7 +468,7 @@ static sqli_status set_param_string(sqli_stmt_t *stmt, int param_index,
     return SQLI_OK;
 }
 
-static sqli_status set_param_bytes(sqli_stmt_t *stmt, int param_index,
+static sqli_status set_param_bytes(sqli_stmt_t *stmt, size_t param_index,
                                    const uint8_t *value, size_t len)
 {
     sqli_status rc = validate_param_index(stmt, param_index);
@@ -475,7 +476,7 @@ static sqli_status set_param_bytes(sqli_stmt_t *stmt, int param_index,
     if (value == NULL || len == 0 || len > 0xFFFFu)
         return SQLI_INVALID_STATE;
 
-    sqli_bound_param *p = &stmt->params[(size_t)(param_index - 1)];
+    sqli_bound_param *p = &stmt->params[param_index];
     uint8_t *dup = malloc(len);
     if (dup == NULL)
         return SQLI_ALLOC_FAIL;
@@ -489,12 +490,12 @@ static sqli_status set_param_bytes(sqli_stmt_t *stmt, int param_index,
     return SQLI_OK;
 }
 
-sqli_status sqli_bind_int(sqli_stmt_t *stmt, int param_index, int32_t value)
+sqli_status sqli_bind_int(sqli_stmt_t *stmt, size_t param_index, int32_t value)
 {
     sqli_status rc = validate_param_index(stmt, param_index);
     if (rc != SQLI_OK) return rc;
 
-    sqli_bound_param *p = &stmt->params[(size_t)(param_index - 1)];
+    sqli_bound_param *p = &stmt->params[param_index];
     sqli_free_bound_param(p);
     p->type = SQLI_BIND_INT;
     p->value.ival = value;
@@ -502,12 +503,12 @@ sqli_status sqli_bind_int(sqli_stmt_t *stmt, int param_index, int32_t value)
     return SQLI_OK;
 }
 
-sqli_status sqli_bind_int64(sqli_stmt_t *stmt, int param_index, int64_t value)
+sqli_status sqli_bind_int64(sqli_stmt_t *stmt, size_t param_index, int64_t value)
 {
     sqli_status rc = validate_param_index(stmt, param_index);
     if (rc != SQLI_OK) return rc;
 
-    sqli_bound_param *p = &stmt->params[(size_t)(param_index - 1)];
+    sqli_bound_param *p = &stmt->params[param_index];
     sqli_free_bound_param(p);
     p->type = SQLI_BIND_BIGINT;
     p->value.ival64 = value;
@@ -515,12 +516,12 @@ sqli_status sqli_bind_int64(sqli_stmt_t *stmt, int param_index, int64_t value)
     return SQLI_OK;
 }
 
-sqli_status sqli_bind_double(sqli_stmt_t *stmt, int param_index, double value)
+sqli_status sqli_bind_double(sqli_stmt_t *stmt, size_t param_index, double value)
 {
     sqli_status rc = validate_param_index(stmt, param_index);
     if (rc != SQLI_OK) return rc;
 
-    sqli_bound_param *p = &stmt->params[(size_t)(param_index - 1)];
+    sqli_bound_param *p = &stmt->params[param_index];
     sqli_free_bound_param(p);
     p->type = SQLI_BIND_FLOAT;
     p->value.dval = value;
@@ -528,18 +529,18 @@ sqli_status sqli_bind_double(sqli_stmt_t *stmt, int param_index, double value)
     return SQLI_OK;
 }
 
-sqli_status sqli_bind_string(sqli_stmt_t *stmt, int param_index, const char *value)
+sqli_status sqli_bind_string(sqli_stmt_t *stmt, size_t param_index, const char *value)
 {
     return set_param_string(stmt, param_index, SQLI_BIND_STRING, value);
 }
 
-sqli_status sqli_bind_decimal_string(sqli_stmt_t *stmt, int param_index, const char *value)
+sqli_status sqli_bind_decimal_string(sqli_stmt_t *stmt, size_t param_index, const char *value)
 {
     /* Client can transmit DECIMAL text and rely on server-side cast for target column type. */
     return set_param_string(stmt, param_index, SQLI_BIND_STRING, value);
 }
 
-sqli_status sqli_bind_date_string(sqli_stmt_t *stmt, int param_index, const char *value)
+sqli_status sqli_bind_date_string(sqli_stmt_t *stmt, size_t param_index, const char *value)
 {
     if (value == NULL)
         return SQLI_INVALID_ARGUMENT;
@@ -548,12 +549,12 @@ sqli_status sqli_bind_date_string(sqli_stmt_t *stmt, int param_index, const char
     return status == SQLI_OK ? sqli_bind_date(stmt, param_index, &date) : status;
 }
 
-sqli_status sqli_bind_datetime_string(sqli_stmt_t *stmt, int param_index, const char *value)
+sqli_status sqli_bind_datetime_string(sqli_stmt_t *stmt, size_t param_index, const char *value)
 {
     return set_param_string(stmt, param_index, SQLI_BIND_STRING, value);
 }
 
-sqli_status sqli_bind_date(sqli_stmt_t *stmt, int param_index, const sqli_date_t *value)
+sqli_status sqli_bind_date(sqli_stmt_t *stmt, size_t param_index, const sqli_date_t *value)
 {
     if (value == NULL)
         return SQLI_INVALID_ARGUMENT;
@@ -565,13 +566,13 @@ sqli_status sqli_bind_date(sqli_stmt_t *stmt, int param_index, const sqli_date_t
                                    &candidate.native_length);
     if (status != SQLI_OK)
         return status;
-    sqli_bound_param *parameter = &stmt->params[(size_t)(param_index - 1)];
+    sqli_bound_param *parameter = &stmt->params[param_index];
     sqli_free_bound_param(parameter);
     *parameter = candidate;
     return SQLI_OK;
 }
 
-sqli_status sqli_bind_decimal(sqli_stmt_t *stmt, int param_index, const sqli_decimal_t *value,
+sqli_status sqli_bind_decimal(sqli_stmt_t *stmt, size_t param_index, const sqli_decimal_t *value,
                               const sqli_decimal_target_t *target)
 {
     if (value == NULL || target == NULL)
@@ -591,7 +592,7 @@ sqli_status sqli_bind_decimal(sqli_stmt_t *stmt, int param_index, const sqli_dec
         status = sqli_decimal_is_null(value, &candidate.is_null);
     if (status != SQLI_OK)
         return status;
-    sqli_bound_param *parameter = &stmt->params[(size_t)(param_index - 1)];
+    sqli_bound_param *parameter = &stmt->params[param_index];
     sqli_free_bound_param(parameter);
     *parameter = candidate;
     return SQLI_OK;
@@ -627,7 +628,7 @@ static sqli_status temporal_qualifier(const sqli_temporal_range_t *target, bool 
     return SQLI_OK;
 }
 
-sqli_status sqli_bind_datetime(sqli_stmt_t *stmt, int param_index, const sqli_datetime_t *value,
+sqli_status sqli_bind_datetime(sqli_stmt_t *stmt, size_t param_index, const sqli_datetime_t *value,
                                const sqli_temporal_range_t *target)
 {
     if (value == NULL || target == NULL)
@@ -644,13 +645,13 @@ sqli_status sqli_bind_datetime(sqli_stmt_t *stmt, int param_index, const sqli_da
         status = sqli_datetime_is_null(value, &candidate.is_null);
     if (status != SQLI_OK)
         return status;
-    sqli_bound_param *parameter = &stmt->params[(size_t)(param_index - 1)];
+    sqli_bound_param *parameter = &stmt->params[param_index];
     sqli_free_bound_param(parameter);
     *parameter = candidate;
     return SQLI_OK;
 }
 
-sqli_status sqli_bind_interval(sqli_stmt_t *stmt, int param_index, const sqli_interval_t *value,
+sqli_status sqli_bind_interval(sqli_stmt_t *stmt, size_t param_index, const sqli_interval_t *value,
                                const sqli_temporal_range_t *target, uint8_t leading_precision)
 {
     if (value == NULL || target == NULL)
@@ -667,13 +668,13 @@ sqli_status sqli_bind_interval(sqli_stmt_t *stmt, int param_index, const sqli_in
         status = sqli_interval_is_null(value, &candidate.is_null);
     if (status != SQLI_OK)
         return status;
-    sqli_bound_param *parameter = &stmt->params[(size_t)(param_index - 1)];
+    sqli_bound_param *parameter = &stmt->params[param_index];
     sqli_free_bound_param(parameter);
     *parameter = candidate;
     return SQLI_OK;
 }
 
-sqli_status sqli_bind_timestamp(sqli_stmt_t *stmt, int param_index, const sqli_timestamp_t *value)
+sqli_status sqli_bind_timestamp(sqli_stmt_t *stmt, size_t param_index, const sqli_timestamp_t *value)
 {
     sqli_status rc = validate_param_index(stmt, param_index);
     if (rc != SQLI_OK) return rc;
@@ -696,104 +697,104 @@ sqli_status sqli_bind_timestamp(sqli_stmt_t *stmt, int param_index, const sqli_t
     return set_param_string(stmt, param_index, SQLI_BIND_STRING, buf);
 }
 
-sqli_status sqli_bind_epoch_sec(sqli_stmt_t *stmt, int param_index, int64_t sec)
+sqli_status sqli_bind_epoch_sec(sqli_stmt_t *stmt, size_t param_index, int64_t sec)
 {
     sqli_timestamp_t ts;
     sqli_timestamp_from_epoch_sec(&ts, sec);
     return sqli_bind_timestamp(stmt, param_index, &ts);
 }
 
-sqli_status sqli_bind_epoch_ms(sqli_stmt_t *stmt, int param_index, int64_t ms)
+sqli_status sqli_bind_epoch_ms(sqli_stmt_t *stmt, size_t param_index, int64_t ms)
 {
     sqli_timestamp_t ts;
     sqli_timestamp_from_epoch_ms(&ts, ms);
     return sqli_bind_timestamp(stmt, param_index, &ts);
 }
 
-sqli_status sqli_bind_epoch_days(sqli_stmt_t *stmt, int param_index, int32_t days)
+sqli_status sqli_bind_epoch_days(sqli_stmt_t *stmt, size_t param_index, int32_t days)
 {
     sqli_timestamp_t ts;
     sqli_timestamp_from_epoch_days(&ts, days);
     return sqli_bind_timestamp(stmt, param_index, &ts);
 }
 
-sqli_status sqli_bind_interval_string(sqli_stmt_t *stmt, int param_index, const char *value)
+sqli_status sqli_bind_interval_string(sqli_stmt_t *stmt, size_t param_index, const char *value)
 {
     return set_param_string(stmt, param_index, SQLI_BIND_STRING, value);
 }
 
-sqli_status sqli_bind_bool(sqli_stmt_t *stmt, int param_index, bool value)
+sqli_status sqli_bind_bool(sqli_stmt_t *stmt, size_t param_index, bool value)
 {
     return set_param_string(stmt, param_index, SQLI_BIND_STRING, value ? "t" : "f");
 }
 
-sqli_status sqli_bind_bytes(sqli_stmt_t *stmt, int param_index,
+sqli_status sqli_bind_bytes(sqli_stmt_t *stmt, size_t param_index,
                             const uint8_t *value, size_t len)
 {
     return set_param_bytes(stmt, param_index, value, len);
 }
 
-sqli_status sqli_bind_null(sqli_stmt_t *stmt, int param_index)
+sqli_status sqli_bind_null(sqli_stmt_t *stmt, size_t param_index)
 {
     sqli_status rc = validate_param_index(stmt, param_index);
     if (rc != SQLI_OK) return rc;
 
-    sqli_bound_param *p = &stmt->params[(size_t)(param_index - 1)];
+    sqli_bound_param *p = &stmt->params[param_index];
     sqli_free_bound_param(p);
     p->type = SQLI_BIND_STRING;
     p->is_null = true;
     return SQLI_OK;
 }
 
-sqli_status sqli_bind_null_int(sqli_stmt_t *stmt, int param_index)
+sqli_status sqli_bind_null_int(sqli_stmt_t *stmt, size_t param_index)
 {
     sqli_status rc = validate_param_index(stmt, param_index);
     if (rc != SQLI_OK) return rc;
 
-    sqli_bound_param *p = &stmt->params[(size_t)(param_index - 1)];
+    sqli_bound_param *p = &stmt->params[param_index];
     sqli_free_bound_param(p);
     p->type = SQLI_BIND_INT;
     p->is_null = true;
     return SQLI_OK;
 }
 
-sqli_status sqli_bind_null_int64(sqli_stmt_t *stmt, int param_index)
+sqli_status sqli_bind_null_int64(sqli_stmt_t *stmt, size_t param_index)
 {
     sqli_status rc = validate_param_index(stmt, param_index);
     if (rc != SQLI_OK) return rc;
 
-    sqli_bound_param *p = &stmt->params[(size_t)(param_index - 1)];
+    sqli_bound_param *p = &stmt->params[param_index];
     sqli_free_bound_param(p);
     p->type = SQLI_BIND_BIGINT;
     p->is_null = true;
     return SQLI_OK;
 }
 
-sqli_status sqli_bind_null_double(sqli_stmt_t *stmt, int param_index)
+sqli_status sqli_bind_null_double(sqli_stmt_t *stmt, size_t param_index)
 {
     sqli_status rc = validate_param_index(stmt, param_index);
     if (rc != SQLI_OK) return rc;
 
-    sqli_bound_param *p = &stmt->params[(size_t)(param_index - 1)];
+    sqli_bound_param *p = &stmt->params[param_index];
     sqli_free_bound_param(p);
     p->type = SQLI_BIND_FLOAT;
     p->is_null = true;
     return SQLI_OK;
 }
 
-sqli_status sqli_bind_sblob(sqli_stmt_t *stmt, int param_index, const sqli_sblob_t *lob)
+sqli_status sqli_bind_sblob(sqli_stmt_t *stmt, size_t param_index, const sqli_sblob_t *lob)
 {
     sqli_status rc = validate_param_index(stmt, param_index);
     if (rc != SQLI_OK) return rc;
 
-    sqli_bound_param *p = &stmt->params[(size_t)(param_index - 1)];
+    sqli_bound_param *p = &stmt->params[param_index];
     sqli_free_bound_param(p);
 
     if (lob == NULL) {
         sqli_sblob_type stype = SQLI_SBLOB_BLOB;
         if (stmt->param_server_types != NULL &&
-            (param_index - 1) < stmt->param_server_type_count &&
-            stmt->param_server_types[(size_t)(param_index - 1)] == SQLI_TYPE_CLOB) {
+            param_index < (size_t)stmt->param_server_type_count &&
+            stmt->param_server_types[param_index] == SQLI_TYPE_CLOB) {
             stype = SQLI_SBLOB_CLOB;
         }
         p->type = SQLI_BIND_SBLOB;
@@ -1236,7 +1237,7 @@ static sqli_status sqli_stmt_execute_bound_params(sqli_stmt_t *stmt,
             return bind_rc;
 
         int lob_count = 0;
-        for (int i = 1; i <= stmt->param_count; i++) {
+        for (size_t i = 0; i < (size_t)stmt->param_count; i++) {
             if (sqli_stmt_param_needs_lob_streaming(stmt, params, i))
                 lob_count++;
         }
@@ -1249,11 +1250,11 @@ static sqli_status sqli_stmt_execute_bound_params(sqli_stmt_t *stmt,
                 return SQLI_IO_ERROR;
             }
 
-            for (int i = 1; i <= stmt->param_count; i++) {
+            for (size_t i = 0; i < (size_t)stmt->param_count; i++) {
                 if (!sqli_stmt_param_needs_lob_streaming(stmt, params, i))
                     continue;
 
-                const sqli_bound_param *par = &params[(size_t)(i - 1)];
+                const sqli_bound_param *par = &params[i];
                 const uint8_t *data = NULL;
                 uint8_t *enc_buf = NULL;
                 size_t total_len = 0;
@@ -1262,7 +1263,7 @@ static sqli_status sqli_stmt_execute_bound_params(sqli_stmt_t *stmt,
                     data = par->bval;
                     total_len = par->blen;
                 } else if (par->type == SQLI_BIND_STRING) {
-                    uint8_t col_type = stmt->param_server_types[(size_t)(i - 1)];
+                    uint8_t col_type = stmt->param_server_types[i];
                     if (col_type == SQLI_TYPE_TEXT && par->sval != NULL) {
                         size_t slen = 0;
                         if (sqli_conn_encode_client_to_db(stmt->conn, par->sval, &enc_buf, &slen) == SQLI_OK && enc_buf != NULL) {
@@ -1695,29 +1696,33 @@ int sqli_result_column_type(sqli_result_t *result, size_t col_index)
 struct sqli_call {
     sqli_stmt_t *stmt;
     int param_count;
-    sqli_call_param_mode *modes; /* 1-indexed via [param_index - 1] */
+    sqli_call_param_mode *modes; /* zero-based parameter indices */
     bool out_row_ready;
 };
 
-static sqli_status sqli_call_validate_index(sqli_call_t *call, int param_index)
+static sqli_status sqli_call_validate_index(sqli_call_t *call, size_t param_index)
 {
-    if (call == NULL || call->modes == NULL)
-        return SQLI_INVALID_STATE;
-    if (param_index < 1 || param_index > call->param_count)
+    if (call == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    if (call->param_count < 0 || param_index >= (size_t)call->param_count)
+        return SQLI_OUT_OF_RANGE;
+    if (call->modes == NULL)
         return SQLI_INVALID_STATE;
     return SQLI_OK;
 }
 
-static sqli_status sqli_call_param_to_out_col(sqli_call_t *call, int param_index,
+static sqli_status sqli_call_param_to_out_col(sqli_call_t *call, size_t param_index,
                                               int *out_col_index)
 {
     sqli_status rc = sqli_call_validate_index(call, param_index);
-    if (rc != SQLI_OK || out_col_index == NULL)
-        return SQLI_INVALID_STATE;
+    if (rc != SQLI_OK)
+        return rc;
+    if (out_col_index == NULL)
+        return SQLI_INVALID_ARGUMENT;
 
     int out_col = 0;
-    for (int i = 1; i <= call->param_count; i++) {
-        sqli_call_param_mode m = call->modes[(size_t)(i - 1)];
+    for (size_t i = 0; i < (size_t)call->param_count; i++) {
+        sqli_call_param_mode m = call->modes[i];
         if (m == SQLI_CALL_PARAM_OUT || m == SQLI_CALL_PARAM_INOUT) {
             if (i == param_index) {
                 *out_col_index = out_col;
@@ -1775,7 +1780,7 @@ sqli_stmt_t *sqli_call_stmt(sqli_call_t *call)
     return call->stmt;
 }
 
-sqli_status sqli_call_set_param_mode(sqli_call_t *call, int param_index,
+sqli_status sqli_call_set_param_mode(sqli_call_t *call, size_t param_index,
                                      sqli_call_param_mode mode)
 {
     if (mode != SQLI_CALL_PARAM_IN &&
@@ -1785,7 +1790,7 @@ sqli_status sqli_call_set_param_mode(sqli_call_t *call, int param_index,
     sqli_status rc = sqli_call_validate_index(call, param_index);
     if (rc != SQLI_OK)
         return rc;
-    call->modes[(size_t)(param_index - 1)] = mode;
+    call->modes[param_index] = mode;
     return SQLI_OK;
 }
 
@@ -1814,12 +1819,13 @@ sqli_status sqli_call_execute(sqli_call_t *call)
     if (res == NULL)
         return SQLI_OK;
 
-    if (sqli_result_next(res))
+    rc = sqli_result_fetch(res);
+    if (rc == SQLI_OK)
         call->out_row_ready = true;
-    return SQLI_OK;
+    return rc == SQLI_EOF ? SQLI_OK : rc;
 }
 
-sqli_status sqli_call_get_int64(sqli_call_t *call, int param_index,
+sqli_status sqli_call_get_int64(sqli_call_t *call, size_t param_index,
                                 int64_t *out, bool *is_null)
 {
     if (call == NULL || out == NULL || is_null == NULL || !call->out_row_ready)
@@ -1831,12 +1837,10 @@ sqli_status sqli_call_get_int64(sqli_call_t *call, int param_index,
     sqli_result_t *res = sqli_stmt_result(call->stmt);
     if (res == NULL)
         return SQLI_INVALID_STATE;
-    *out = sqli_result_get_int64(res, col);
-    *is_null = sqli_result_was_null(res);
-    return SQLI_OK;
+    return sqli_result_get_int64(res, (size_t)col, out, is_null);
 }
 
-sqli_status sqli_call_get_double(sqli_call_t *call, int param_index,
+sqli_status sqli_call_get_double(sqli_call_t *call, size_t param_index,
                                  double *out, bool *is_null)
 {
     if (call == NULL || out == NULL || is_null == NULL || !call->out_row_ready)
@@ -1848,12 +1852,10 @@ sqli_status sqli_call_get_double(sqli_call_t *call, int param_index,
     sqli_result_t *res = sqli_stmt_result(call->stmt);
     if (res == NULL)
         return SQLI_INVALID_STATE;
-    *out = sqli_result_get_double(res, col);
-    *is_null = sqli_result_was_null(res);
-    return SQLI_OK;
+    return sqli_result_get_double(res, (size_t)col, out, is_null);
 }
 
-sqli_status sqli_call_get_string(sqli_call_t *call, int param_index,
+sqli_status sqli_call_get_string(sqli_call_t *call, size_t param_index,
                                  const char **out, bool *is_null)
 {
     if (call == NULL || out == NULL || is_null == NULL || !call->out_row_ready)

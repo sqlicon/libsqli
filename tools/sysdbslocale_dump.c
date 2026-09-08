@@ -102,13 +102,35 @@ int main(int argc, char **argv)
             case SQLI_TYPE_SMALLINT:
             case SQLI_TYPE_INT:
             case SQLI_TYPE_SERIAL:
-                printf("%d", sqli_result_get_int(result, c));
+                {
+                    int32_t value;
+                    bool is_null;
+                    sqli_status status = sqli_result_get_int(result, (size_t)c, &value, &is_null);
+                    if (status != SQLI_OK || is_null) {
+                        fprintf(stderr, "scalar read failed: %s\n", sqli_status_name(status != SQLI_OK ? status : SQLI_NULL_VALUE));
+                        sqli_result_destroy(result);
+                        sqli_destroy(conn);
+                        return 1;
+                    }
+                    printf("%d", value);
+                }
                 break;
             case SQLI_TYPE_INT8:
             case SQLI_TYPE_BIGINT:
             case SQLI_TYPE_SERIAL8:
             case SQLI_TYPE_BIGSERIAL:
-                printf("%lld", (long long)sqli_result_get_int64(result, c));
+                {
+                    int64_t value;
+                    bool is_null;
+                    sqli_status status = sqli_result_get_int64(result, (size_t)c, &value, &is_null);
+                    if (status != SQLI_OK || is_null) {
+                        fprintf(stderr, "scalar read failed: %s\n", sqli_status_name(status != SQLI_OK ? status : SQLI_NULL_VALUE));
+                        sqli_result_destroy(result);
+                        sqli_destroy(conn);
+                        return 1;
+                    }
+                    printf("%lld", (long long)value);
+                }
                 break;
             default:
                 printf("%s", sqli_result_get_string(result, c));

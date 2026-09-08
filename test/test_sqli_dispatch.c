@@ -4,6 +4,7 @@
  * Tests DESCRIBE, TUPLE, DONE, ERROR parsing via local socketpairs.
  */
 
+#include "scalar_assertions.h"
 #include "sqli_result_internal.h"
 #include "unity.h"
 #include "libsqli/sqli.h"
@@ -235,16 +236,16 @@ void test_dispatch_multi_row_result(void)
     TEST_ASSERT_EQUAL_INT(3, result->row_count);
 
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
-    TEST_ASSERT_EQUAL_INT(100, sqli_result_get_int(result, 0));
-    TEST_ASSERT_EQUAL_INT(200, sqli_result_get_int(result, 1));
+    TEST_ASSERT_EQUAL_INT(100, test_read_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(200, test_read_int(result, 1));
 
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
-    TEST_ASSERT_EQUAL_INT(101, sqli_result_get_int(result, 0));
-    TEST_ASSERT_EQUAL_INT(201, sqli_result_get_int(result, 1));
+    TEST_ASSERT_EQUAL_INT(101, test_read_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(201, test_read_int(result, 1));
 
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
-    TEST_ASSERT_EQUAL_INT(102, sqli_result_get_int(result, 0));
-    TEST_ASSERT_EQUAL_INT(202, sqli_result_get_int(result, 1));
+    TEST_ASSERT_EQUAL_INT(102, test_read_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(202, test_read_int(result, 1));
 
     TEST_ASSERT_EQUAL_INT(0, sqli_result_next(result));
 
@@ -792,8 +793,8 @@ void test_dispatch_execute_fetch_waits_past_empty_eot_groups(void)
     TEST_ASSERT_EQUAL_INT(1, result->rows_affected);
     TEST_ASSERT_EQUAL_INT(1, result->eof);
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
-    TEST_ASSERT_EQUAL_INT(7, sqli_result_get_int(result, 0));
-    TEST_ASSERT_EQUAL_INT(9, sqli_result_get_int(result, 1));
+    TEST_ASSERT_EQUAL_INT(7, test_read_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(9, test_read_int(result, 1));
 
     sqli_result_destroy(result);
     close(read_fd);
@@ -1947,7 +1948,7 @@ static void run_returning_routine_recovery(bool fail_open)
     }
     sqli_status first = sqli_execute(&stmt);
     bool first_row = sqli_stmt_next(&stmt);
-    int first_value = first_row ? sqli_result_get_int(sqli_stmt_result(&stmt), 0) : 0;
+    int first_value = first_row ? test_read_int(sqli_stmt_result(&stmt), 0) : 0;
     /* Reexecute without exhausting the previous client result. */
     sqli_status failed = sqli_execute(&stmt);
     int sqlcode = conn.error_info.sqlcode;
@@ -1955,7 +1956,7 @@ static void run_returning_routine_recovery(bool fail_open)
     bool stale_result = sqli_stmt_result(&stmt) != NULL;
     sqli_status recovered = sqli_execute(&stmt);
     bool row = sqli_stmt_next(&stmt);
-    int value = row ? sqli_result_get_int(sqli_stmt_result(&stmt), 1) : 0;
+    int value = row ? test_read_int(sqli_stmt_result(&stmt), 1) : 0;
     bool has_error = conn.error_info.has_error;
     sqli_stmt_close(&stmt);
     pthread_join(thread, NULL);

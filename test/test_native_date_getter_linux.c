@@ -1,3 +1,4 @@
+#include "scalar_assertions.h"
 #include "libsqli/sqli_temporal.h"
 #include "libsqli/sqli_decimal.h"
 #include "libsqli/sqli.h"
@@ -77,7 +78,7 @@ static void test_calendar_ownership_and_conveniences(void)
     TEST_ASSERT_FALSE(value.is_null);
     TEST_ASSERT_EQUAL_STRING("2000-02-29", sqli_result_get_date_string(result, date_column));
     TEST_ASSERT_FALSE(result->last_was_null);
-    TEST_ASSERT_EQUAL_INT(42, sqli_result_get_int(result, sentinel_column));
+    TEST_ASSERT_EQUAL_INT(42, test_read_int(result, sentinel_column));
     sqli_timestamp_t timestamp;
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_timestamp(result, date_column, &timestamp));
     TEST_ASSERT_EQUAL_INT(2000, timestamp.year);

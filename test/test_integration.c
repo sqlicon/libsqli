@@ -7,6 +7,7 @@
  */
 
 #define _GNU_SOURCE
+#include "scalar_assertions.h"
 #include "libsqli/sqli_temporal.h"
 #include "temporal_result_test.h"
 #include "libsqli/sqli_sblob.h"
@@ -1238,16 +1239,16 @@ void test_query_success_multi_row(void)
 
     TEST_ASSERT_EQUAL_INT(2, sqli_result_columns(result));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
-    TEST_ASSERT_EQUAL_INT(1, sqli_result_get_int(result, 0));
-    TEST_ASSERT_EQUAL_INT(2, sqli_result_get_int(result, 1));
+    TEST_ASSERT_EQUAL_INT(1, test_read_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(2, test_read_int(result, 1));
 
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
-    TEST_ASSERT_EQUAL_INT(2, sqli_result_get_int(result, 0));
-    TEST_ASSERT_EQUAL_INT(3, sqli_result_get_int(result, 1));
+    TEST_ASSERT_EQUAL_INT(2, test_read_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(3, test_read_int(result, 1));
 
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
-    TEST_ASSERT_EQUAL_INT(3, sqli_result_get_int(result, 0));
-    TEST_ASSERT_EQUAL_INT(4, sqli_result_get_int(result, 1));
+    TEST_ASSERT_EQUAL_INT(3, test_read_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(4, test_read_int(result, 1));
 
     TEST_ASSERT_EQUAL_INT(0, sqli_result_next(result));
     TEST_ASSERT_EQUAL_INT(3, sqli_result_rows_affected(result));
@@ -1461,8 +1462,8 @@ void test_prepare_execute_select_returns_rows(void)
     sqli_result_t *result = sqli_stmt_result(stmt);
     TEST_ASSERT_NOT_NULL(result);
     TEST_ASSERT_EQUAL_INT(2, sqli_result_columns(result));
-    TEST_ASSERT_EQUAL_INT(1, sqli_result_get_int(result, 0));
-    TEST_ASSERT_EQUAL_INT(2, sqli_result_get_int(result, 1));
+    TEST_ASSERT_EQUAL_INT(1, test_read_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(2, test_read_int(result, 1));
 
     sqli_stmt_destroy(stmt);
     sqli_close(conn);
@@ -1503,7 +1504,7 @@ void test_prepare_execute_select_with_bind_returns_rows(void)
         sqli_prepare(conn, "SELECT 1, 2 FROM systables WHERE tabid = ?", &param_count, &stmt));
     TEST_ASSERT_NOT_NULL(stmt);
     TEST_ASSERT_EQUAL_INT(1, param_count);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 1, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 0, 1));
 
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_execute(stmt));
     TEST_ASSERT_EQUAL_INT(1, sqli_stmt_next(stmt));
@@ -1511,8 +1512,8 @@ void test_prepare_execute_select_with_bind_returns_rows(void)
     sqli_result_t *result = sqli_stmt_result(stmt);
     TEST_ASSERT_NOT_NULL(result);
     TEST_ASSERT_EQUAL_INT(2, sqli_result_columns(result));
-    TEST_ASSERT_EQUAL_INT(1, sqli_result_get_int(result, 0));
-    TEST_ASSERT_EQUAL_INT(2, sqli_result_get_int(result, 1));
+    TEST_ASSERT_EQUAL_INT(1, test_read_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(2, test_read_int(result, 1));
 
     sqli_stmt_destroy(stmt);
     sqli_close(conn);
@@ -1840,8 +1841,12 @@ void test_query_live_systables(void)
     int has_next, row = 0;
     while ((has_next = sqli_result_next(result)) != 0) {
         row++;
-        int v0 = sqli_result_get_int(result, 0);
-        int v1 = sqli_result_get_int(result, 1);
+        int32_t v0 = 42;
+        bool is_null = true;
+        TEST_ASSERT_EQUAL_INT(SQLI_TYPE_MISMATCH, sqli_result_get_int(result, 0, &v0, &is_null));
+        TEST_ASSERT_EQUAL_INT(42, v0);
+        TEST_ASSERT_TRUE(is_null);
+        int v1 = test_read_int(result, 1);
         const char *s0 = sqli_result_get_string(result, 0);
         fprintf(stderr, "[LIVE] Row %d: col0_int=%d col1_int=%d col0_str=\"%s\"\n",
                 row, v0, v1, s0 ? s0 : "(null)");
@@ -1996,16 +2001,16 @@ void test_stmt_batch_live_reports_success_and_error(void)
     TEST_ASSERT_NOT_NULL(stmt);
     TEST_ASSERT_EQUAL_INT(2, param_count);
 
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 1, 1));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(stmt, 2, "alpha"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 0, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(stmt, 1, "alpha"));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_stmt_batch_add(stmt));
 
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 1, 2));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(stmt, 2, "beta"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 0, 2));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(stmt, 1, "beta"));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_stmt_batch_add(stmt));
 
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 1, 3));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(stmt, 2, "gamma"));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 0, 3));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_string(stmt, 1, "gamma"));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_stmt_batch_add(stmt));
 
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_stmt_batch_execute(stmt, &batch));
@@ -2034,7 +2039,7 @@ void test_stmt_batch_live_reports_success_and_error(void)
                                      &res));
     TEST_ASSERT_NOT_NULL(res);
     TEST_ASSERT_TRUE(sqli_result_next(res));
-    count_ok = sqli_result_get_int(res, 0);
+    count_ok = test_read_int(res, 0);
     TEST_ASSERT_EQUAL_INT(1, count_ok);
 
     sqli_result_destroy(res);
@@ -2116,7 +2121,7 @@ void test_savepoint_live_flow(void)
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_query(conn, sql, &res));
     TEST_ASSERT_NOT_NULL(res);
     TEST_ASSERT_TRUE(sqli_result_next(res));
-    TEST_ASSERT_EQUAL_INT(2, sqli_result_get_int(res, 0));
+    TEST_ASSERT_EQUAL_INT(2, test_read_int(res, 0));
     sqli_result_destroy(res);
     res = NULL;
 
@@ -2128,7 +2133,7 @@ void test_savepoint_live_flow(void)
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_query(conn, sql, &res));
     TEST_ASSERT_NOT_NULL(res);
     TEST_ASSERT_TRUE(sqli_result_next(res));
-    TEST_ASSERT_EQUAL_INT(1, sqli_result_get_int(res, 0));
+    TEST_ASSERT_EQUAL_INT(1, test_read_int(res, 0));
     sqli_result_destroy(res);
     res = NULL;
 
@@ -2219,12 +2224,12 @@ void test_datatypes_live_flow(void)
 
     /* Row 1 verification */
     TEST_ASSERT_TRUE(sqli_result_next(res));
-    TEST_ASSERT_EQUAL_INT(1, sqli_result_get_int(res, 0));
+    TEST_ASSERT_EQUAL_INT(1, test_read_int(res, 0));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 0));
 
     /* BOOLEAN */
     TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 1));
-    TEST_ASSERT_TRUE(sqli_result_get_bool(res, 1));
+    TEST_ASSERT_TRUE(test_read_bool(res, 1));
 
     /* LVARCHAR */
     TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 2));
@@ -2246,15 +2251,15 @@ void test_datatypes_live_flow(void)
 
     /* SMALLFLOAT */
     TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 5));
-    TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.14f, (float)sqli_result_get_double(res, 5));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 3.14f, (float)test_read_double(res, 5));
 
     /* FLOAT */
     TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 6));
-    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 2.71828f, (float)sqli_result_get_double(res, 6));
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 2.71828f, (float)test_read_double(res, 6));
 
     /* Row 2 verification: all NULLs */
     TEST_ASSERT_TRUE(sqli_result_next(res));
-    TEST_ASSERT_EQUAL_INT(2, sqli_result_get_int(res, 0));
+    TEST_ASSERT_EQUAL_INT(2, test_read_int(res, 0));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 0));
     for (int col = 1; col <= 6; col++) {
         TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(res, col));
@@ -2293,6 +2298,83 @@ static sqli_status live_test_memory_stream_reader(void *context, unsigned char *
     ctx->offset += to_copy;
     *bytes_read = to_copy;
     return SQLI_OK;
+}
+
+static sqli_status verify_created_reader(sqli_conn_t *conn, sqli_sblob_t *source,
+                                          const uint8_t *expected, size_t length)
+{
+    enum { prefix_length = 3 };
+    uint8_t prefix[prefix_length];
+    uint8_t *buffer = malloc(length);
+    if (buffer == NULL)
+        return SQLI_ALLOC_FAIL;
+    sqli_sblob_read_cursor_t *first = NULL, *second = NULL;
+    sqli_status status = sqli_sblob_reader_open(conn, source, &first);
+    if (status == SQLI_OK)
+        status = sqli_sblob_reader_open(conn, source, &second);
+    size_t count = 0;
+    if (status == SQLI_OK)
+        status = sqli_sblob_reader_read(first, prefix, sizeof(prefix), &count);
+    if (status == SQLI_OK && (count != sizeof(prefix) || memcmp(prefix, expected, count) != 0))
+        status = SQLI_ERR;
+    if (status == SQLI_OK)
+        status = sqli_sblob_reader_read_seek(first, -prefix_length, buffer, length, &count);
+    if (status == SQLI_OK && (count != length || memcmp(buffer, expected, length) != 0))
+        status = SQLI_ERR;
+    if (status == SQLI_OK)
+        status = sqli_sblob_reader_read(second, prefix, sizeof(prefix), &count);
+    if (status == SQLI_OK && (count != sizeof(prefix) || memcmp(prefix, expected, count) != 0))
+        status = SQLI_ERR;
+    if (status == SQLI_OK)
+        status = sqli_sblob_reader_close(first);
+    if (status == SQLI_OK) {
+        count = 19;
+        if (sqli_sblob_reader_read(first, prefix, sizeof(prefix), &count) != SQLI_INVALID_STATE || count != 19)
+            status = SQLI_ERR;
+    }
+    if (first != NULL) {
+        sqli_status closed = sqli_sblob_reader_close(first);
+        if (status == SQLI_OK) status = closed;
+    }
+    if (second != NULL) {
+        sqli_status closed = sqli_sblob_reader_close(second);
+        if (status == SQLI_OK) status = closed;
+    }
+    sqli_sblob_reader_destroy(first);
+    sqli_sblob_reader_destroy(second);
+    free(buffer);
+    return status;
+}
+
+static sqli_status abort_after_first_chunk(void *context, unsigned char *buffer,
+                                            size_t capacity, size_t *bytes_read)
+{
+    live_stream_ctx *state = context;
+    if (state->offset != 0)
+        return SQLI_IO_ERROR;
+    return live_test_memory_stream_reader(context, buffer, capacity, bytes_read);
+}
+
+static sqli_status verify_aborted_reader(sqli_conn_t *conn, sqli_sblob_type type)
+{
+    static const uint8_t payload[] = "read after aborted upload";
+    enum { uploaded_prefix = 4 };
+    live_stream_ctx state = {.data = payload, .total_size = sizeof(payload) - 1,
+                             .chunk_size = uploaded_prefix};
+    sqli_sblob_t *source = NULL;
+    sqli_status status = sqli_sblob_create(conn, type, NULL, &source);
+    if (status != SQLI_OK)
+        return status;
+    uint64_t written = 0;
+    status = sqli_sblob_write_stream(conn, source, abort_after_first_chunk, &state, &written);
+    if (status == SQLI_IO_ERROR && written == uploaded_prefix)
+        status = verify_created_reader(conn, source, payload, uploaded_prefix);
+    else
+        status = SQLI_ERR;
+    sqli_status released = sqli_sblob_release(conn, source);
+    if (status == SQLI_OK) status = released;
+    sqli_sblob_destroy(source);
+    return status;
 }
 
 void test_smart_lob_live_flow(void)
@@ -2362,6 +2444,7 @@ void test_smart_lob_live_flow(void)
     TEST_ASSERT_TRUE(handle_open);
 
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_write_buffer(conn, sblob, blob_data, blob_len));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, verify_created_reader(conn, sblob, blob_data, blob_len));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_close_created(conn, sblob));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_is_open(sblob, &handle_open));
     TEST_ASSERT_FALSE(handle_open);
@@ -2393,6 +2476,7 @@ void test_smart_lob_live_flow(void)
     }
     TEST_ASSERT_EQUAL_INT(SQLI_OK, wrc);
     TEST_ASSERT_EQUAL_UINT64((uint64_t)clob_len, written_total);
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, verify_created_reader(conn, sclob, (const uint8_t *)clob_data, clob_len));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_close_created(conn, sclob));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_sblob_is_open(sclob, &handle_open));
     TEST_ASSERT_FALSE(handle_open);
@@ -2405,15 +2489,15 @@ void test_smart_lob_live_flow(void)
     TEST_ASSERT_EQUAL_INT(3, pcount);
 
     /* Row 1 */
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 1, 1));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(stmt, 2, sblob));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(stmt, 3, sclob));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 0, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(stmt, 1, sblob));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(stmt, 2, sclob));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_execute(stmt));
 
     /* Row 2: NULL BLOB and NULL CLOB */
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 1, 2));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(stmt, 0, 2));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(stmt, 1, NULL));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(stmt, 2, NULL));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_sblob(stmt, 3, NULL));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_execute(stmt));
 
     sqli_stmt_destroy(stmt);
@@ -2425,7 +2509,7 @@ void test_smart_lob_live_flow(void)
 
     /* Row 1 */
     TEST_ASSERT_TRUE(sqli_result_next(res));
-    TEST_ASSERT_EQUAL_INT(1, sqli_result_get_int(res, 0));
+    TEST_ASSERT_EQUAL_INT(1, test_read_int(res, 0));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 1));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 2));
 
@@ -2460,12 +2544,15 @@ void test_smart_lob_live_flow(void)
 
     /* Row 2 */
     TEST_ASSERT_TRUE(sqli_result_next(res));
-    TEST_ASSERT_EQUAL_INT(2, sqli_result_get_int(res, 0));
+    TEST_ASSERT_EQUAL_INT(2, test_read_int(res, 0));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(res, 1));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(res, 2));
 
     sqli_result_destroy(res);
     res = NULL;
+
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, verify_aborted_reader(conn, SQLI_SBLOB_BLOB));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, verify_aborted_reader(conn, SQLI_SBLOB_CLOB));
 
     /* 5. Test sqli_sblob_release on unreferenced Smart-LOB */
     sqli_sblob_t *unref_lob = NULL;

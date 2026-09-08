@@ -2,6 +2,7 @@
  * CTest runs generator checks offline; --live requires SQLI_TEST_*.
  * Expected semantic fields are generated independently of libsqli's decoder.
  */
+#include "scalar_expectations.h"
 #include "libsqli/sqli_temporal.h"
 #include "temporal_result_test.h"
 #include "libsqli/sqli.h"
@@ -593,13 +594,13 @@ static bool bind_native_case(sqli_stmt_t *stmt, const struct temporal_case *c)
         sqli_interval_t *value = NULL;
         ok = sqli_interval_create(&value) == SQLI_OK &&
              sqli_interval_parse(value, &range, c->value, strlen(c->value), c->is_null) == SQLI_OK &&
-             sqli_bind_interval(stmt, 1, value, &range, c->start == FRACTION ? 0 : (uint8_t)c->precision) == SQLI_OK;
+             sqli_bind_interval(stmt, 0, value, &range, c->start == FRACTION ? 0 : (uint8_t)c->precision) == SQLI_OK;
         sqli_interval_destroy(value);
     } else {
         sqli_datetime_t *value = NULL;
         ok = sqli_datetime_create(&value) == SQLI_OK &&
              sqli_datetime_parse(value, &range, c->value, strlen(c->value), c->is_null) == SQLI_OK &&
-             sqli_bind_datetime(stmt, 1, value, &range) == SQLI_OK;
+             sqli_bind_datetime(stmt, 0, value, &range) == SQLI_OK;
         sqli_datetime_destroy(value);
     }
     return ok;
@@ -633,8 +634,8 @@ static bool run_case(sqli_conn_t *conn, const struct temporal_case *c,
     if (sqli_prepare(conn, "INSERT INTO sqli_temporal_matrix VALUES (2, ?)", &parameters, &stmt) != SQLI_OK || parameters != 1)
         goto cleanup;
     *operation = "bind insert";
-    sqli_status rc = c->is_null ? sqli_bind_null(stmt, 1) : c->interval ?
-        sqli_bind_interval_string(stmt, 1, c->value) : sqli_bind_datetime_string(stmt, 1, c->value);
+    sqli_status rc = c->is_null ? sqli_bind_null(stmt, 0) : c->interval ?
+        sqli_bind_interval_string(stmt, 0, c->value) : sqli_bind_datetime_string(stmt, 0, c->value);
     if (rc != SQLI_OK || sqli_execute(stmt) != SQLI_OK)
         goto cleanup;
     sqli_stmt_destroy(stmt);
@@ -666,9 +667,9 @@ static bool run_case(sqli_conn_t *conn, const struct temporal_case *c,
     for (int id = 1; id <= 3; id++) {
         *operation = id == 1 ? "literal row decode" :
                      id == 2 ? "text-bound row decode" : "native-bound row decode";
-        if (sqli_result_fetch(result) != SQLI_OK || sqli_result_get_int(result, matrix_id_column) != id ||
-            sqli_result_get_int(result, matrix_sentinel_column) != 2468 ||
-            sqli_result_get_int(result, matrix_tail_column) != 1357 || sqli_result_get_int(result, matrix_equal_column) != 1 ||
+        if (sqli_result_fetch(result) != SQLI_OK || !test_integer_equals(result, matrix_id_column, id) ||
+            !test_integer_equals(result, matrix_sentinel_column, 2468) ||
+            !test_integer_equals(result, matrix_tail_column, 1357) || !test_integer_equals(result, matrix_equal_column, 1) ||
             !check_wire(result, c) || !check_value(result, matrix_value_column, c) || !check_text(result, c))
             goto cleanup;
         sqli_interval_parts_t sentinel;

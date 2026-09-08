@@ -39,12 +39,12 @@ void test_call_api_null_safe(void)
     bool is_null = false;
 
     TEST_ASSERT_NULL(sqli_call_stmt(NULL));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE,
-                          sqli_call_set_param_mode(NULL, 1, SQLI_CALL_PARAM_IN));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT,
+                          sqli_call_set_param_mode(NULL, 0, SQLI_CALL_PARAM_IN));
     TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_call_execute(NULL));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_call_get_int64(NULL, 1, &i64, &is_null));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_call_get_double(NULL, 1, &d, &is_null));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_call_get_string(NULL, 1, &s, &is_null));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_call_get_int64(NULL, 0, &i64, &is_null));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_call_get_double(NULL, 0, &d, &is_null));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_call_get_string(NULL, 0, &s, &is_null));
 
     sqli_call_destroy(NULL);
 }

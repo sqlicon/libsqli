@@ -67,7 +67,7 @@ sqlicon_exit_code execute_sql_statement(sqli_conn_t *conn, const char *sql,
     runtime_release_output(out, close_after);
 
     if (rc != SQLI_OK) {
-        fprintf(stderr, "error: result output failed: status=%d\n", (int)rc);
+        fprintf(stderr, "error: result output failed: %s: %s\n", sqli_status_name(rc), sqli_status_description(rc));
         sqli_result_destroy(result);
         sqlicon_reset_interrupt_state();
         return SQLICON_EXIT_SQL_ERROR;

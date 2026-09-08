@@ -35,16 +35,16 @@ formatting retains its existing buffer-size and NULL contracts.
 ## Native binding
 
 ```c
-sqli_status sqli_bind_datetime(sqli_stmt_t *stmt, int param_index,
+sqli_status sqli_bind_datetime(sqli_stmt_t *stmt, size_t param_index,
                                const sqli_datetime_t *value,
                                const sqli_temporal_range_t *target);
-sqli_status sqli_bind_interval(sqli_stmt_t *stmt, int param_index,
+sqli_status sqli_bind_interval(sqli_stmt_t *stmt, size_t param_index,
                                const sqli_interval_t *value,
                                const sqli_temporal_range_t *target,
                                uint8_t leading_precision);
 ```
 
-Parameter indices are one-based. The explicit range describes the source SQL
+Parameter indices are zero-based `size_t`. The explicit range describes the source SQL
 value transmitted by SQ_BIND. INTERVAL also requires leading precision 1..9;
 FRACTION-only intervals require 0. Fractional precision on the wire is 1..5.
 The server applies the SQL expression's actual target conversion. The API does

@@ -129,71 +129,132 @@ status = sqli_connect_uri(conn, uri, "informix", "my-secret-password");
 
 ### 2. Executing Queries
 
-To run direct queries, use the `sqli_query` interface:
+Use status-returning fetch/get functions to distinguish values, SQL NULL and
+errors. This example uses caller-owned text and a reusable native decimal;
+include `<libsqli/sqli_decimal.h>` alongside `<libsqli/sqli.h>` and the standard
+`<stdlib.h>`, `<stdio.h>` and `<inttypes.h>` headers.
 
 ```c
-sqli_result_t *result = NULL;
-status = sqli_query(conn, "SELECT id, name, balance FROM customers", &result);
-if (status != SQLI_OK) {
-    fprintf(stderr, "Query failed: %s\n", sqli_error(conn));
-    return;
+/* conn is borrowed and remains open throughout this function. */
+sqli_status print_customers(sqli_conn_t *conn)
+{
+    sqli_result_t *result = NULL;
+    sqli_decimal_t *balance = NULL;
+    char *name = NULL;
+    sqli_status status = sqli_decimal_create(&balance);
+    if (status != SQLI_OK)
+        goto cleanup;
+    status = sqli_query(conn,
+        "SELECT id, name, balance FROM customers", &result);
+    if (status != SQLI_OK)
+        goto cleanup;
+
+    while ((status = sqli_result_fetch(result)) == SQLI_OK) {
+        int32_t id = 0;
+        bool id_null, name_null, balance_null;
+        size_t required;
+        status = sqli_result_get_int(result, 0, &id, &id_null);
+        if (status != SQLI_OK)
+            break;
+        status = sqli_result_get_string_len(result, 1, NULL, 0,
+                                             &required, &name_null);
+        if (status != SQLI_OK)
+            break;
+        if (!name_null) {
+            name = malloc(required);
+            if (name == NULL) {
+                status = SQLI_ALLOC_FAIL;
+                break;
+            }
+            status = sqli_result_get_string_len(result, 1, name, required,
+                                                 &required, &name_null);
+            if (status != SQLI_OK)
+                break;
+        }
+        status = sqli_result_get_decimal(result, 2, balance);
+        if (status != SQLI_OK)
+            break;
+        /* A short buffer reports its required size without truncating. */
+        char amount[128];
+        status = sqli_decimal_format(balance, amount, sizeof(amount),
+                                      &required, &balance_null);
+        if (status != SQLI_OK)
+            break;
+        if (id_null)
+            fputs("NULL", stdout);
+        else
+            printf("%" PRId32, id);
+        printf(" | %s | %s\n", name_null ? "NULL" : name,
+               balance_null ? "NULL" : amount);
+        free(name);
+        name = NULL;
+    }
+    if (status == SQLI_EOF)
+        status = SQLI_OK;
+    if (status == SQLI_OK && (fflush(stdout) != 0 || ferror(stdout)))
+        status = SQLI_IO_ERROR;
+cleanup:
+    free(name);
+    sqli_result_destroy(result);
+    sqli_decimal_destroy(balance);
+    return status;
 }
-
-// Iterate over results
-while (sqli_result_next(result)) {
-    int32_t id = sqli_result_get_int(result, 0);
-    const char *name = sqli_result_get_string(result, 1);
-    double balance = sqli_result_get_double(result, 2);
-
-    printf("Customer #%d: %s | Balance: $%.2f\n", id, name, balance);
-}
-
-// Check for execution results / rows affected
-printf("%lld rows fetched\n", (long long)sqli_result_rows_affected(result));
-
-// Release resources
-sqli_result_destroy(result);
 ```
+
+The decimal remains exact until explicitly formatted or converted. Buffers and
+native values belong to the caller. Legacy pointer-returning string getters
+remain available, but their borrowed storage and NULL/error conventions make
+them unsuitable as the default application interface.
 
 ---
 
 ### 3. Prepared Statements & Bindings
 
-For security and efficiency, parameter bindings should be used:
+All parameter and result indices are **zero-based `size_t`**, including callable
+statements. Bindings copy their input; owned native values may be destroyed after
+binding. Explicit decimal targets describe the transmitted source type.
 
 ```c
-sqli_stmt_t *stmt = NULL;
-int param_count = 0;
-const char *sql = "INSERT INTO customers (name, balance, active) VALUES (?, ?, ?)";
-
-status = sqli_prepare(conn, sql, &param_count, &stmt);
-if (status != SQLI_OK) {
-    fprintf(stderr, "Preparation failed: %s\n", sqli_error(conn));
-    return;
+sqli_status insert_customer(sqli_conn_t *conn)
+{
+    sqli_stmt_t *stmt = NULL;
+    sqli_decimal_t *balance = NULL;
+    const sqli_decimal_target_t target = {.precision = 10, .scale = 2};
+    const size_t name_parameter = 0, balance_parameter = 1, active_parameter = 2;
+    int parameter_count;
+    sqli_status status = sqli_decimal_create(&balance);
+    if (status != SQLI_OK)
+        goto cleanup;
+    status = sqli_decimal_parse(balance, "250.75", 6, false);
+    if (status != SQLI_OK)
+        goto cleanup;
+    status = sqli_prepare(conn,
+        "INSERT INTO customers (name, balance, active) VALUES (?, ?, ?)",
+        &parameter_count, &stmt);
+    if (status != SQLI_OK)
+        goto cleanup;
+    status = sqli_bind_string(stmt, name_parameter, "Alice Cooper");
+    if (status != SQLI_OK)
+        goto cleanup;
+    status = sqli_bind_decimal(stmt, balance_parameter, balance, &target);
+    if (status != SQLI_OK)
+        goto cleanup;
+    status = sqli_bind_bool(stmt, active_parameter, true);
+    if (status == SQLI_OK)
+        status = sqli_execute(stmt);
+cleanup:
+    sqli_stmt_destroy(stmt);
+    sqli_decimal_destroy(balance);
+    return status;
 }
-
-// Bind positional parameters (1-indexed)
-sqli_bind_string(stmt, 1, "Alice Cooper");
-sqli_bind_double(stmt, 2, 250.75);
-sqli_bind_bool(stmt, 3, true);
-
-// Execute the statement
-status = sqli_execute(stmt);
-if (status != SQLI_OK) {
-    fprintf(stderr, "Execution failed: %s\n", sqli_error(conn));
-} else {
-    printf("Insert completed successfully.\n");
-    
-    // For INSERT/UPDATE/DELETE queries:
-    sqli_result_t *res = sqli_stmt_result(stmt);
-    if (res && sqli_result_has_generated_serial(res)) {
-         printf("Inserted SERIAL ID: %lld\n", (long long)sqli_result_generated_serial(res));
-    }
-}
-
-// Clean up
-sqli_stmt_destroy(stmt);
 ```
+
+Report local errors using the returned status, for example
+`fprintf(stderr, "insert_customer: %s (%s)\n", sqli_status_name(status),
+sqli_status_description(status));`. Connection SQL diagnostics provide additional
+server context when present; local parse/get/bind failures need not update them.
+See [Application API contracts and migration](doc/APPLICATION_API.md) for scalar
+conversion rules, domain headers and Smart-LOB reader ownership.
 
 ---
 

@@ -53,10 +53,10 @@ static int run_prepare_count(sqli_conn_t *conn, const char *pattern)
         return 1;
     }
 
-    if (sqli_bind_string(stmt, 1, pattern) != SQLI_OK ||
+    if (sqli_bind_string(stmt, 0, pattern) != SQLI_OK ||
+        sqli_bind_string(stmt, 1, pattern) != SQLI_OK ||
         sqli_bind_string(stmt, 2, pattern) != SQLI_OK ||
-        sqli_bind_string(stmt, 3, pattern) != SQLI_OK ||
-        sqli_bind_string(stmt, 4, pattern) != SQLI_OK) {
+        sqli_bind_string(stmt, 3, pattern) != SQLI_OK) {
         fprintf(stderr, "bind count failed\n");
         sqli_stmt_destroy(stmt);
         return 1;
@@ -132,10 +132,10 @@ static int run_prepare_list(sqli_conn_t *conn, const char *pattern)
         return 1;
     }
 
-    if (sqli_bind_string(stmt, 1, pattern) != SQLI_OK ||
+    if (sqli_bind_string(stmt, 0, pattern) != SQLI_OK ||
+        sqli_bind_string(stmt, 1, pattern) != SQLI_OK ||
         sqli_bind_string(stmt, 2, pattern) != SQLI_OK ||
-        sqli_bind_string(stmt, 3, pattern) != SQLI_OK ||
-        sqli_bind_string(stmt, 4, pattern) != SQLI_OK) {
+        sqli_bind_string(stmt, 3, pattern) != SQLI_OK) {
         fprintf(stderr, "bind list failed\n");
         sqli_stmt_destroy(stmt);
         return 1;

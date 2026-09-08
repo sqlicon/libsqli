@@ -45,6 +45,13 @@ typedef enum {
     SQLI_METADATA_UNAVAILABLE,
     SQLI_TYPE_MISMATCH
 } sqli_status;
+
+/** Reentrant, allocation-free local status diagnostics. Returned immutable
+ * strings have static lifetime and must not be freed. Unknown values have stable
+ * fallback text. Neither function reads nor changes connection diagnostics.
+ */
+const char *sqli_status_name(sqli_status status);
+const char *sqli_status_description(sqli_status status);
 /** @} */
 
 /** Opaque connection handle. */
@@ -505,55 +512,55 @@ sqli_status sqli_prepare_with_retry(sqli_conn_t *conn, const char *sql,
                                     sqli_stmt_t **stmt);
 
 /*
- * Bind an int32 value to a positional parameter (1-indexed).
+ * Bind an int32 value to a positional parameter (0-indexed).
  */
-sqli_status sqli_bind_int(sqli_stmt_t *stmt, int param_index, int32_t value);
+sqli_status sqli_bind_int(sqli_stmt_t *stmt, size_t param_index, int32_t value);
 
 /*
- * Bind an int64 value to a positional parameter (1-indexed).
+ * Bind an int64 value to a positional parameter (0-indexed).
  */
-sqli_status sqli_bind_int64(sqli_stmt_t *stmt, int param_index, int64_t value);
+sqli_status sqli_bind_int64(sqli_stmt_t *stmt, size_t param_index, int64_t value);
 
 /*
- * Bind a double value to a positional parameter (1-indexed).
+ * Bind a double value to a positional parameter (0-indexed).
  */
-sqli_status sqli_bind_double(sqli_stmt_t *stmt, int param_index, double value);
+sqli_status sqli_bind_double(sqli_stmt_t *stmt, size_t param_index, double value);
 
 /*
- * Bind a UTF-8 string value to a positional parameter (1-indexed).
+ * Bind a UTF-8 string value to a positional parameter (0-indexed).
  */
-sqli_status sqli_bind_string(sqli_stmt_t *stmt, int param_index, const char *value);
+sqli_status sqli_bind_string(sqli_stmt_t *stmt, size_t param_index, const char *value);
 
 /*
  * Bind a boolean value.
  */
-sqli_status sqli_bind_bool(sqli_stmt_t *stmt, int param_index, bool value);
+sqli_status sqli_bind_bool(sqli_stmt_t *stmt, size_t param_index, bool value);
 
 /*
  * Bind raw bytes (BYTE/BLOB style payload).
  */
-sqli_status sqli_bind_bytes(sqli_stmt_t *stmt, int param_index,
+sqli_status sqli_bind_bytes(sqli_stmt_t *stmt, size_t param_index,
                             const uint8_t *value, size_t len);
 
 /*
- * Bind a NULL string value to a positional parameter (1-indexed).
+ * Bind a NULL string value to a positional parameter (0-indexed).
  */
-sqli_status sqli_bind_null(sqli_stmt_t *stmt, int param_index);
+sqli_status sqli_bind_null(sqli_stmt_t *stmt, size_t param_index);
 
 /*
- * Bind a NULL int32 value to a positional parameter (1-indexed).
+ * Bind a NULL int32 value to a positional parameter (0-indexed).
  */
-sqli_status sqli_bind_null_int(sqli_stmt_t *stmt, int param_index);
+sqli_status sqli_bind_null_int(sqli_stmt_t *stmt, size_t param_index);
 
 /*
- * Bind a NULL int64 value to a positional parameter (1-indexed).
+ * Bind a NULL int64 value to a positional parameter (0-indexed).
  */
-sqli_status sqli_bind_null_int64(sqli_stmt_t *stmt, int param_index);
+sqli_status sqli_bind_null_int64(sqli_stmt_t *stmt, size_t param_index);
 
 /*
- * Bind a NULL double value to a positional parameter (1-indexed).
+ * Bind a NULL double value to a positional parameter (0-indexed).
  */
-sqli_status sqli_bind_null_double(sqli_stmt_t *stmt, int param_index);
+sqli_status sqli_bind_null_double(sqli_stmt_t *stmt, size_t param_index);
 
 /*
  * Snapshot the currently bound parameter set as one batch row.
@@ -695,9 +702,9 @@ sqli_status sqli_call_prepare(sqli_conn_t *conn, const char *sql,
 sqli_stmt_t *sqli_call_stmt(sqli_call_t *call);
 
 /*
- * Set parameter direction mode (1-indexed).
+ * Set parameter direction mode (0-indexed).
  */
-sqli_status sqli_call_set_param_mode(sqli_call_t *call, int param_index,
+sqli_status sqli_call_set_param_mode(sqli_call_t *call, size_t param_index,
                                      sqli_call_param_mode mode);
 
 /*
@@ -706,13 +713,15 @@ sqli_status sqli_call_set_param_mode(sqli_call_t *call, int param_index,
 sqli_status sqli_call_execute(sqli_call_t *call);
 
 /*
- * Read OUT/INOUT values by parameter index.
+ * Read OUT/INOUT values by zero-based parameter index. Numeric getters follow
+ * the checked scalar value/NULL/error contract below and preserve outputs on
+ * failure. String output retains the legacy borrowed string convention.
  */
-sqli_status sqli_call_get_int64(sqli_call_t *call, int param_index,
+sqli_status sqli_call_get_int64(sqli_call_t *call, size_t param_index,
                                 int64_t *out, bool *is_null);
-sqli_status sqli_call_get_double(sqli_call_t *call, int param_index,
+sqli_status sqli_call_get_double(sqli_call_t *call, size_t param_index,
                                  double *out, bool *is_null);
-sqli_status sqli_call_get_string(sqli_call_t *call, int param_index,
+sqli_status sqli_call_get_string(sqli_call_t *call, size_t param_index,
                                  const char **out, bool *is_null);
 
 /*
@@ -738,27 +747,24 @@ const char *sqli_result_column_name(sqli_result_t *result, size_t col_index);
 int sqli_result_column_type(sqli_result_t *result, size_t col_index);
 
 /* ----------------------------------------------------------------
- * Row data extractors (only valid between sqli_result_next() == 1 calls)
+ * Row data extractors (valid after fetch returns SQLI_OK, before the next fetch)
  * ---------------------------------------------------------------- */
 
-/** Legacy scalar conveniences; all column indices are zero-based size_t.
- * NULL and invalid index/state/type, malformed values and overflow return
- * 0 / 0.0 / false. Successful NULL detection sets was_null=true; invalid
- * arguments/state clear it when a result exists. These fallbacks cannot
- * distinguish errors from a real zero. Integer getters accept integer, BOOL,
- * DATE-epoch and decimal columns; decimal fractions are truncated toward zero.
- * Narrowing overflow returns zero. Double accepts integer, decimal and IEEE
- * floating types; nonfinite values return zero. BOOL is get_int()!=0.
- * Use native value getters for exact conversion and explicit error statuses.
- * Synchronize access with result mutation, advancement and destruction.
+/** Checked scalar reads, using zero-based column indices. Output pointers are
+ * mandatory and must not overlap. SQL NULL succeeds, sets is_null=true and leaves
+ * the value unchanged; all failures preserve both outputs. was_null is unchanged.
+ * Integer getters accept integer/boolean and exact integral DECIMAL/MONEY values.
+ * Fractions return SQLI_INEXACT; overflow is SQLI_OUT_OF_RANGE. DATE and text are
+ * not implicitly converted. Double accepts integer, decimal and IEEE float values,
+ * with ordinary floating-point rounding; nonfinite/overflow is SQLI_OUT_OF_RANGE.
+ * Boolean accepts boolean columns only. Wrong types, including wrong-type NULLs,
+ * return SQLI_TYPE_MISMATCH. A validated current row is required. Decimal conversion
+ * can allocate. Synchronize result access and destination mutation externally.
  */
-int32_t sqli_result_get_int(sqli_result_t *result, size_t col_index);
-
-/* Extract an int64 value from column col_index (0-based). */
-int64_t sqli_result_get_int64(sqli_result_t *result, size_t col_index);
-
-/* Extract a double value from column col_index (0-based). */
-double sqli_result_get_double(sqli_result_t *result, size_t col_index);
+sqli_status sqli_result_get_int(sqli_result_t *result, size_t column, int32_t *out, bool *is_null);
+sqli_status sqli_result_get_int64(sqli_result_t *result, size_t column, int64_t *out, bool *is_null);
+sqli_status sqli_result_get_double(sqli_result_t *result, size_t column, double *out, bool *is_null);
+sqli_status sqli_result_get_bool(sqli_result_t *result, size_t column, bool *out, bool *is_null);
 
 /*
  * Extract a string value from column col_index (0-based).
@@ -798,10 +804,6 @@ bool sqli_result_is_null(sqli_result_t *result, size_t col_index);
  */
 bool sqli_result_was_null(sqli_result_t *result);
 
-/*
- * Extract boolean value (true/false).
- */
-bool sqli_result_get_bool(sqli_result_t *result, size_t col_index);
 
 /* Chunk callback for streaming column bytes. */
 typedef int (*sqli_stream_chunk_cb)(const uint8_t *chunk, size_t len, void *ctx);

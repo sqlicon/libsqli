@@ -93,17 +93,31 @@ static sqli_status collect_cell(sqli_result_t *result, size_t column, char **out
     char number[number_capacity];
     const char *text = number;
     int length = 0;
+    int32_t integer;
+    int64_t wide;
+    double floating;
+    bool is_null;
+    sqli_status status;
     switch (sqli_result_column_type(result, column)) {
     case SQLI_TYPE_SMALLINT: case SQLI_TYPE_INT: case SQLI_TYPE_SERIAL:
     case SQLI_TYPE_BOOL: case SQLI_TYPE_DBOOLEAN:
-        length = snprintf(number, sizeof(number), "%d", (int)sqli_result_get_int(result, column));
+        status = sqli_result_get_int(result, column, &integer, &is_null);
+        if (status != SQLI_OK || is_null)
+            return status != SQLI_OK ? status : SQLI_NULL_VALUE;
+        length = snprintf(number, sizeof(number), "%d", (int)integer);
         break;
     case SQLI_TYPE_BIGINT: case SQLI_TYPE_BIGSERIAL:
     case SQLI_TYPE_SERIAL8: case SQLI_TYPE_INT8:
-        length = snprintf(number, sizeof(number), "%lld", (long long)sqli_result_get_int64(result, column));
+        status = sqli_result_get_int64(result, column, &wide, &is_null);
+        if (status != SQLI_OK || is_null)
+            return status != SQLI_OK ? status : SQLI_NULL_VALUE;
+        length = snprintf(number, sizeof(number), "%lld", (long long)wide);
         break;
     case SQLI_TYPE_FLOAT: case SQLI_TYPE_SMFLOAT:
-        length = snprintf(number, sizeof(number), "%.17g", sqli_result_get_double(result, column));
+        status = sqli_result_get_double(result, column, &floating, &is_null);
+        if (status != SQLI_OK || is_null)
+            return status != SQLI_OK ? status : SQLI_NULL_VALUE;
+        length = snprintf(number, sizeof(number), "%.17g", floating);
         break;
     case SQLI_TYPE_BLOB: text = "<BLOB>"; break;
     case SQLI_TYPE_CLOB: text = "<CLOB>"; break;

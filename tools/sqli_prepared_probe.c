@@ -15,8 +15,10 @@ static int query_ok(sqli_conn_t *conn, const char *sql)
         return 0;
     }
     int ok = 0;
-    if (sqli_result_next(res))
-        ok = sqli_result_get_int(res, 0);
+    bool is_null;
+    if (sqli_result_fetch(res) != SQLI_OK ||
+        sqli_result_get_int(res, 0, &ok, &is_null) != SQLI_OK || is_null)
+        ok = 0;
     sqli_result_destroy(res);
     return ok == 1;
 }
@@ -36,8 +38,8 @@ static int exec_insert_string(sqli_conn_t *conn, const char *table)
         return 0;
     }
     int ok = 1;
-    if (sqli_bind_int(st, 1, 8008) != SQLI_OK) ok = 0;
-    if (ok && sqli_bind_string(st, 2, "prep_string") != SQLI_OK) { fprintf(stderr, "bind string failed\n"); ok = 0; }
+    if (sqli_bind_int(st, 0, 8008) != SQLI_OK) ok = 0;
+    if (ok && sqli_bind_string(st, 1, "prep_string") != SQLI_OK) { fprintf(stderr, "bind string failed\n"); ok = 0; }
     if (ok && sqli_execute(st) != SQLI_OK) { fprintf(stderr, "execute string failed: %s\n", sqli_error(conn)); ok = 0; }
     sqli_status fetch_status = SQLI_OK;
     while (ok && (fetch_status = sqli_stmt_fetch(st)) == SQLI_OK) {}
@@ -72,9 +74,9 @@ static int exec_insert_ints(sqli_conn_t *conn, const char *table)
         return 0;
     }
     int ok = 1;
-    if (sqli_bind_int(st, 1, 8107) != SQLI_OK) ok = 0;
-    if (ok && sqli_bind_int(st, 2, 123456789) != SQLI_OK) ok = 0;
-    if (ok && sqli_bind_int64(st, 3, 1234567890123LL) != SQLI_OK) ok = 0;
+    if (sqli_bind_int(st, 0, 8107) != SQLI_OK) ok = 0;
+    if (ok && sqli_bind_int(st, 1, 123456789) != SQLI_OK) ok = 0;
+    if (ok && sqli_bind_int64(st, 2, 1234567890123LL) != SQLI_OK) ok = 0;
     if (ok && sqli_execute(st) != SQLI_OK) { fprintf(stderr, "execute ints failed: %s\n", sqli_error(conn)); ok = 0; }
     sqli_status fetch_status = SQLI_OK;
     while (ok && (fetch_status = sqli_stmt_fetch(st)) == SQLI_OK) {}
@@ -110,8 +112,8 @@ static int exec_insert_decimal(sqli_conn_t *conn, const char *table)
         return 0;
     }
     int ok = 1;
-    if (sqli_bind_int(st, 1, 8207) != SQLI_OK) ok = 0;
-    if (ok && sqli_bind_decimal_string(st, 2, "54321.4321") != SQLI_OK) ok = 0;
+    if (sqli_bind_int(st, 0, 8207) != SQLI_OK) ok = 0;
+    if (ok && sqli_bind_decimal_string(st, 1, "54321.4321") != SQLI_OK) ok = 0;
     if (ok && sqli_execute(st) != SQLI_OK) { fprintf(stderr, "execute decimal failed: %s\n", sqli_error(conn)); ok = 0; }
     sqli_status fetch_status = SQLI_OK;
     while (ok && (fetch_status = sqli_stmt_fetch(st)) == SQLI_OK) {}
@@ -147,8 +149,8 @@ static int exec_insert_float(sqli_conn_t *conn, const char *table)
         return 0;
     }
     int ok = 1;
-    if (sqli_bind_int(st, 1, 8307) != SQLI_OK) ok = 0;
-    if (ok && sqli_bind_double(st, 2, 98.75) != SQLI_OK) ok = 0;
+    if (sqli_bind_int(st, 0, 8307) != SQLI_OK) ok = 0;
+    if (ok && sqli_bind_double(st, 1, 98.75) != SQLI_OK) ok = 0;
     if (ok && sqli_execute(st) != SQLI_OK) { fprintf(stderr, "execute float failed: %s\n", sqli_error(conn)); ok = 0; }
     sqli_status fetch_status = SQLI_OK;
     while (ok && (fetch_status = sqli_stmt_fetch(st)) == SQLI_OK) {}
@@ -184,8 +186,8 @@ static int exec_insert_date(sqli_conn_t *conn, const char *table)
         return 0;
     }
     int ok = 1;
-    if (sqli_bind_int(st, 1, 8405) != SQLI_OK) ok = 0;
-    if (ok && sqli_bind_date_string(st, 2, "2026-06-20") != SQLI_OK) ok = 0;
+    if (sqli_bind_int(st, 0, 8405) != SQLI_OK) ok = 0;
+    if (ok && sqli_bind_date_string(st, 1, "2026-06-20") != SQLI_OK) ok = 0;
     if (ok && sqli_execute(st) != SQLI_OK) { fprintf(stderr, "execute date failed: %s\n", sqli_error(conn)); ok = 0; }
     sqli_status fetch_status = SQLI_OK;
     while (ok && (fetch_status = sqli_stmt_fetch(st)) == SQLI_OK) {}

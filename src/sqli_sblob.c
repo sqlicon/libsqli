@@ -36,8 +36,12 @@ sqli_status sqli_sblob_open_query(sqli_conn_t *conn, const char *open_sql, int *
         return SQLI_ERR;
     }
 
-    int lofd = sqli_result_get_int(res, 0);
+    int32_t lofd = -1;
+    bool is_null;
+    rc = sqli_result_get_int(res, 0, &lofd, &is_null);
     sqli_result_destroy(res);
+    if (rc != SQLI_OK || is_null)
+        return rc != SQLI_OK ? rc : SQLI_NULL_VALUE;
 
     if (lofd < 0) {
         set_error(conn, "invalid smartblob handle returned by server");
@@ -156,7 +160,7 @@ sqli_status sqli_sblob_read(sqli_conn_t *conn, int lofd, void *buf, size_t nbyte
     if (file_size <= 0) {
         while (1) {
             uint8_t tr_op[2];
-            if (sqli_tcp_read(fd, tr_op, 2) != 2) break;
+            if (sqli_tcp_read(fd, tr_op, 2) != 2) return SQLI_IO_ERROR;
             uint16_t top = (uint16_t)((tr_op[0] << 8) | tr_op[1]);
             if (top == SQLI_SQ_EOT) break;
             if (top == SQLI_SQ_DONE) {
@@ -217,7 +221,7 @@ sqli_status sqli_sblob_read(sqli_conn_t *conn, int lofd, void *buf, size_t nbyte
     /* Drain trailing SQ_DONE / SQ_EOT */
     while (1) {
         uint8_t tr_op[2];
-        if (sqli_tcp_read(fd, tr_op, 2) != 2) break;
+        if (sqli_tcp_read(fd, tr_op, 2) != 2) return SQLI_IO_ERROR;
         uint16_t top = (uint16_t)((tr_op[0] << 8) | tr_op[1]);
         if (top == SQLI_SQ_EOT) break;
         if (top == SQLI_SQ_DONE) {
@@ -267,8 +271,8 @@ sqli_status sqli_sblob_read_seek(sqli_conn_t *conn, int lofd, int64_t offset,
     req[p++] = (uint8_t)((SQLI_SBLOB_BUFSIZE >> 8) & 0xFF);
     req[p++] = (uint8_t)(SQLI_SBLOB_BUFSIZE & 0xFF);
 
-    int16_t sign = offset < 0 ? -1 : 1;
-    uint64_t mag = offset < 0 ? (uint64_t)(-offset) : (uint64_t)offset;
+    uint16_t sign = offset < 0 ? UINT16_MAX : 1;
+    uint64_t mag = offset < 0 ? (uint64_t)(-(offset + 1)) + 1u : (uint64_t)offset;
     uint32_t low32 = (uint32_t)(mag & 0xFFFFFFFF);
     uint32_t high32 = (uint32_t)(mag >> 32);
 
@@ -328,7 +332,7 @@ sqli_status sqli_sblob_read_seek(sqli_conn_t *conn, int lofd, int64_t offset,
     if (remaining_size <= 0) {
         while (1) {
             uint8_t tr_op[2];
-            if (sqli_tcp_read(fd, tr_op, 2) != 2) break;
+            if (sqli_tcp_read(fd, tr_op, 2) != 2) return SQLI_IO_ERROR;
             uint16_t top = (uint16_t)((tr_op[0] << 8) | tr_op[1]);
             if (top == SQLI_SQ_EOT) break;
             if (top == SQLI_SQ_DONE) {
@@ -386,7 +390,7 @@ sqli_status sqli_sblob_read_seek(sqli_conn_t *conn, int lofd, int64_t offset,
     /* Drain trailing SQ_DONE / SQ_EOT */
     while (1) {
         uint8_t tr_op[2];
-        if (sqli_tcp_read(fd, tr_op, 2) != 2) break;
+        if (sqli_tcp_read(fd, tr_op, 2) != 2) return SQLI_IO_ERROR;
         uint16_t top = (uint16_t)((tr_op[0] << 8) | tr_op[1]);
         if (top == SQLI_SQ_EOT) break;
         if (top == SQLI_SQ_DONE) {
@@ -503,7 +507,7 @@ sqli_status sqli_sblob_write(sqli_conn_t *conn, int lofd, const void *buf, size_
     /* Drain trailing SQ_DONE / SQ_EOT */
     while (1) {
         uint8_t tr_op[2];
-        if (sqli_tcp_read(fd, tr_op, 2) != 2) break;
+        if (sqli_tcp_read(fd, tr_op, 2) != 2) return SQLI_IO_ERROR;
         uint16_t top = (uint16_t)((tr_op[0] << 8) | tr_op[1]);
         if (top == SQLI_SQ_EOT) break;
         if (top == SQLI_SQ_DONE) {
@@ -712,7 +716,7 @@ static sqli_status get_lo_create_fphandle(sqli_conn_t *conn, int32_t *out_handle
     /* Drain trailing messages until SQ_EOT */
     while (1) {
         uint8_t tr_op[2];
-        if (sqli_tcp_read(fd, tr_op, 2) != 2) break;
+        if (sqli_tcp_read(fd, tr_op, 2) != 2) return SQLI_IO_ERROR;
         uint16_t top = (uint16_t)((tr_op[0] << 8) | tr_op[1]);
         if (top == SQLI_SQ_EOT) break;
         if (top == SQLI_SQ_DONE) {
@@ -1073,7 +1077,7 @@ static sqli_status sblob_create_into(sqli_conn_t *conn, sqli_sblob_type type,
     /* Drain trailing SQ_DONE / SQ_EOT */
     while (1) {
         uint8_t tr_op[2];
-        if (sqli_tcp_read(fd, tr_op, 2) != 2) break;
+        if (sqli_tcp_read(fd, tr_op, 2) != 2) return SQLI_IO_ERROR;
         uint16_t top = (uint16_t)((tr_op[0] << 8) | tr_op[1]);
         if (top == SQLI_SQ_EOT) break;
         if (top == SQLI_SQ_DONE) {
@@ -1263,7 +1267,12 @@ sqli_status sqli_sblob_release(sqli_conn_t *conn, sqli_sblob_t *lob)
 
     int ret_val = -1;
     if (res && sqli_result_next(res)) {
-        ret_val = sqli_result_get_int(res, 0);
+        bool is_null;
+        rc = sqli_result_get_int(res, 0, &ret_val, &is_null);
+        if (rc != SQLI_OK || is_null) {
+            sqli_result_destroy(res);
+            return rc != SQLI_OK ? rc : SQLI_NULL_VALUE;
+        }
     }
     if (res) sqli_result_destroy(res);
 
@@ -1317,4 +1326,95 @@ sqli_status sqli_sblob_get_type(const sqli_sblob_t *lob, sqli_sblob_type *out)
         return SQLI_INVALID_ARGUMENT;
     *out = lob->type;
     return SQLI_OK;
+}
+
+struct sqli_sblob_read_cursor {
+    sqli_conn_t *connection;
+    int descriptor;
+    bool open;
+};
+
+sqli_status sqli_sblob_reader_open(sqli_conn_t *conn, const sqli_sblob_t *source,
+                                    sqli_sblob_read_cursor_t **out)
+{
+    if (conn == NULL || source == NULL || out == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    if (source->locator_len == 0 || source->locator_len > SQLI_SBLOB_LOCATOR_MAX ||
+        (source->type != SQLI_SBLOB_BLOB && source->type != SQLI_SBLOB_CLOB))
+        return SQLI_INVALID_STATE;
+    sqli_sblob_read_cursor_t *reader = calloc(1, sizeof(*reader));
+    if (reader == NULL)
+        return SQLI_ALLOC_FAIL;
+    enum { locator_hex_capacity = SQLI_SBLOB_LOCATOR_MAX * 2 + 1 };
+    char hex[locator_hex_capacity];
+    static const char digits[] = "0123456789abcdef";
+    for (size_t i = 0; i < source->locator_len; i++) {
+        hex[i * 2] = digits[source->locator[i] >> 4];
+        hex[i * 2 + 1] = digits[source->locator[i] & 0x0f];
+    }
+    hex[source->locator_len * 2] = '\0';
+    sqli_status status = source->type == SQLI_SBLOB_BLOB ?
+        sqli_sblob_open(conn, hex, SQLI_LO_RDONLY, &reader->descriptor) :
+        sqli_sblob_open_clob(conn, hex, SQLI_LO_RDONLY, &reader->descriptor);
+    if (status != SQLI_OK) {
+        free(reader);
+        return status;
+    }
+    reader->connection = conn;
+    reader->open = true;
+    *out = reader;
+    return SQLI_OK;
+}
+
+static sqli_status reader_read(sqli_sblob_read_cursor_t *reader, bool seek, int64_t offset,
+                                 void *buffer, size_t capacity, size_t *bytes_read)
+{
+    if (reader == NULL || bytes_read == NULL || (buffer == NULL && capacity != 0))
+        return SQLI_INVALID_ARGUMENT;
+    if (!reader->open)
+        return SQLI_INVALID_STATE;
+    if (capacity > INT32_MAX)
+        return SQLI_OUT_OF_RANGE;
+    if (capacity == 0) {
+        *bytes_read = 0;
+        return SQLI_OK;
+    }
+    size_t count;
+    sqli_status status = seek ?
+        sqli_sblob_read_seek(reader->connection, reader->descriptor, offset, buffer, capacity, &count) :
+        sqli_sblob_read(reader->connection, reader->descriptor, buffer, capacity, &count);
+    if (status == SQLI_OK)
+        *bytes_read = count;
+    return status;
+}
+
+sqli_status sqli_sblob_reader_read(sqli_sblob_read_cursor_t *reader, void *buffer,
+                                    size_t capacity, size_t *bytes_read)
+{
+    return reader_read(reader, false, 0, buffer, capacity, bytes_read);
+}
+
+sqli_status sqli_sblob_reader_read_seek(sqli_sblob_read_cursor_t *reader, int64_t relative_offset,
+                                         void *buffer, size_t capacity, size_t *bytes_read)
+{
+    return reader_read(reader, true, relative_offset, buffer, capacity, bytes_read);
+}
+
+sqli_status sqli_sblob_reader_close(sqli_sblob_read_cursor_t *reader)
+{
+    if (reader == NULL)
+        return SQLI_INVALID_ARGUMENT;
+    if (!reader->open)
+        return SQLI_OK;
+    sqli_status status = sqli_sblob_close(reader->connection, reader->descriptor);
+    if (status == SQLI_OK) {
+        reader->open = false;
+        reader->descriptor = -1;
+    }
+    return status;
+}
+
+void sqli_sblob_reader_destroy(sqli_sblob_read_cursor_t *reader)
+{
+    free(reader);
 }

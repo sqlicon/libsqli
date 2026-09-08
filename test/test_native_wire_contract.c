@@ -1,6 +1,7 @@
 /* Fixed receive fixtures, optionally checked against independent server literals.
  * This test never calls a libsqli encoder to construct expected bytes.
  */
+#include "scalar_expectations.h"
 #include "libsqli/sqli_temporal.h"
 #include "libsqli/sqli_decimal.h"
 #include "libsqli/sqli.h"
@@ -186,7 +187,7 @@ static bool check_result(sqli_result_t *result, const struct wire_fixture *fixtu
         fputc('\n', stderr);
         return false;
     }
-    if (sqli_result_get_int(result, sentinel_column) != sentinel_value ||
+    if (!test_integer_equals(result, sentinel_column, sentinel_value) ||
         sqli_result_is_null(result, value_column) != fixture->is_null)
         return false;
     const char *text = NULL;
@@ -294,7 +295,7 @@ static sqli_status bind_temporal_fixture(sqli_stmt_t *stmt, const struct wire_fi
             status = sqli_datetime_decode_wire(fixture->wire, fixture->wire_length,
                                                (uint16_t)fixture->qualifier, value);
         if (status == SQLI_OK)
-            status = sqli_bind_datetime(stmt, 1, value, &range);
+            status = sqli_bind_datetime(stmt, 0, value, &range);
         sqli_datetime_destroy(value);
     } else {
         unsigned start = (fixture->qualifier >> 4) & 0xf;
@@ -307,7 +308,7 @@ static sqli_status bind_temporal_fixture(sqli_stmt_t *stmt, const struct wire_fi
             status = sqli_interval_decode_wire(fixture->wire, fixture->wire_length,
                                                (uint16_t)fixture->qualifier, value);
         if (status == SQLI_OK)
-            status = sqli_bind_interval(stmt, 1, value, &range, leading);
+            status = sqli_bind_interval(stmt, 0, value, &range, leading);
         sqli_interval_destroy(value);
     }
     /* Execution must use the binding's owned copy after object destruction. */
@@ -321,7 +322,7 @@ static sqli_status bind_numeric_fixture(sqli_stmt_t *stmt, const struct wire_fix
         sqli_date_t value;
         status = sqli_date_decode_wire(fixture->wire, fixture->wire_length, &value);
         if (status == SQLI_OK)
-            status = sqli_bind_date(stmt, 1, &value);
+            status = sqli_bind_date(stmt, 0, &value);
     } else {
         sqli_decimal_t *value = NULL;
         const sqli_decimal_target_t target = {
@@ -334,7 +335,7 @@ static sqli_status bind_numeric_fixture(sqli_stmt_t *stmt, const struct wire_fix
             status = sqli_decimal_decode_wire(fixture->wire, fixture->wire_length,
                                               (uint16_t)fixture->qualifier, value);
         if (status == SQLI_OK)
-            status = sqli_bind_decimal(stmt, 1, value, &target);
+            status = sqli_bind_decimal(stmt, 0, value, &target);
         sqli_decimal_destroy(value);
     }
     return status == SQLI_OK ? sqli_execute(stmt) : status;

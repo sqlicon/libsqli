@@ -1,3 +1,4 @@
+#include "scalar_assertions.h"
 #include "libsqli/sqli.h"
 #include "unity.h"
 
@@ -100,7 +101,7 @@ static void test_native_layouts_and_every_short_prefix(void)
         }
         make_result(cases[i].type, cases[i].descriptor, tuple, length);
         TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_fetch(result));
-        TEST_ASSERT_EQUAL_INT(42, sqli_result_get_int(result, following_column));
+        TEST_ASSERT_EQUAL_INT(42, test_read_int(result, following_column));
         TEST_ASSERT_EQUAL_INT(SQLI_EOF, sqli_result_fetch(result));
         TEST_ASSERT_EQUAL_INT(SQLI_EOF, sqli_result_fetch(result));
         TEST_ASSERT_NULL(result->tuple_buffer);
@@ -117,7 +118,7 @@ static void test_later_row_failure_invalidates_cached_values(void)
     result->row_lens[1] = sizeof(tuple) - 1;
     result->row_count = buffered_rows;
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_fetch(result));
-    TEST_ASSERT_EQUAL_INT(42, sqli_result_get_int(result, following_column));
+    TEST_ASSERT_EQUAL_INT(42, test_read_int(result, following_column));
     expect_failure(SQLI_PROTO_ERROR);
     TEST_ASSERT_EQUAL_INT(0, sqli_result_row_number(result));
 }

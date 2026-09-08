@@ -1,3 +1,6 @@
+#include "scalar_assertions.h"
+#include "sqli_legacy_types.h"
+#include "sqli_result_internal.h"
 /*
  * Phase 4 unit tests for type encoding and prepared statements.
  *
@@ -462,13 +465,13 @@ void test_prepare_with_retry_retries_on_retryable_error(void)
 
 void test_bind_null_stmt(void)
 {
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_int(NULL, 1, 42));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_int64(NULL, 1, 42));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_double(NULL, 1, 1.0));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_null(NULL, 1));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_null_int(NULL, 1));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_null_int64(NULL, 1));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_STATE, sqli_bind_null_double(NULL, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_bind_int(NULL, 0, 42));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_bind_int64(NULL, 0, 42));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_bind_double(NULL, 0, 1.0));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_bind_null(NULL, 0));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_bind_null_int(NULL, 0));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_bind_null_int64(NULL, 0));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_bind_null_double(NULL, 0));
 }
 
 void test_execute_null_stmt(void)
@@ -642,17 +645,29 @@ void test_stmt_result_null(void)
 
 void test_result_get_int_null(void)
 {
-    TEST_ASSERT_EQUAL_INT32(0, sqli_result_get_int(NULL, 0));
+    int32_t value = 42;
+    bool is_null = true;
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_result_get_int(NULL, 0, &value, &is_null));
+    TEST_ASSERT_TRUE(value == 42);
+    TEST_ASSERT_TRUE(is_null);
 }
 
 void test_result_get_int64_null(void)
 {
-    TEST_ASSERT_EQUAL_INT64(0, sqli_result_get_int64(NULL, 0));
+    int64_t value = 42;
+    bool is_null = true;
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_result_get_int64(NULL, 0, &value, &is_null));
+    TEST_ASSERT_TRUE(value == 42);
+    TEST_ASSERT_TRUE(is_null);
 }
 
 void test_result_get_double_null(void)
 {
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, sqli_result_get_double(NULL, 0));
+    double value = 42;
+    bool is_null = true;
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_result_get_double(NULL, 0, &value, &is_null));
+    TEST_ASSERT_TRUE(value == 42);
+    TEST_ASSERT_TRUE(is_null);
 }
 
 void test_result_get_string_null(void)
@@ -718,8 +733,9 @@ void test_result_get_int_from_mock_result(void)
     result->tuple_len = 6;
     result->current_row = 0;
 
-    TEST_ASSERT_EQUAL_INT32(100, sqli_result_get_int(result, 0));
-    TEST_ASSERT_EQUAL_INT32(200, sqli_result_get_int(result, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_prepare_row_cache(result));
+    TEST_ASSERT_EQUAL_INT32(100, test_read_int(result, 0));
+    TEST_ASSERT_EQUAL_INT32(200, test_read_int(result, 1));
 
     sqli_result_destroy(result);
 }
@@ -789,7 +805,7 @@ void test_result_next_recomputes_packed_offsets(void)
     TEST_ASSERT_EQUAL_INT(0, (int)result->columns[0].col_start_pos);
     TEST_ASSERT_EQUAL_INT(10, (int)result->columns[1].col_start_pos);
     TEST_ASSERT_EQUAL_STRING("systables", sqli_result_get_string(result, 0));
-    TEST_ASSERT_EQUAL_INT(1, sqli_result_get_int(result, 1));
+    TEST_ASSERT_EQUAL_INT(1, test_read_int(result, 1));
 
     sqli_result_destroy(result);
 }
@@ -1021,7 +1037,7 @@ void test_dt_012_lvarchar_null_roundtrip(void)
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(result, 0));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(result, 1));
-    TEST_ASSERT_EQUAL_INT64(111, sqli_result_get_int64(result, 1));
+    TEST_ASSERT_EQUAL_INT64(111, test_read_int64(result, 1));
     sqli_result_destroy(result);
 }
 
@@ -1043,7 +1059,7 @@ void test_dt_013_lvarchar_empty_string_short_column_roundtrip(void)
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(result, 0));
     TEST_ASSERT_EQUAL_STRING("", sqli_result_get_string(result, 0));
-    TEST_ASSERT_EQUAL_INT(1, sqli_result_get_int(result, 2));
+    TEST_ASSERT_EQUAL_INT(1, test_read_int(result, 2));
     sqli_result_destroy(result);
 }
 
@@ -1052,13 +1068,13 @@ void test_dt_101_smallint_bounds(void)
     const uint8_t tuple_min[] = {0x80, 0x01}; /* -32767 */
     sqli_result_t *min_result = make_single_row_result(SQLI_TYPE_SMALLINT, 2, tuple_min, sizeof(tuple_min));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(min_result));
-    TEST_ASSERT_EQUAL_INT(-32767, sqli_result_get_int(min_result, 0));
+    TEST_ASSERT_EQUAL_INT(-32767, test_read_int(min_result, 0));
     sqli_result_destroy(min_result);
 
     const uint8_t tuple_max[] = {0x7F, 0xFF}; /* 32767 */
     sqli_result_t *max_result = make_single_row_result(SQLI_TYPE_SMALLINT, 2, tuple_max, sizeof(tuple_max));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(max_result));
-    TEST_ASSERT_EQUAL_INT(32767, sqli_result_get_int(max_result, 0));
+    TEST_ASSERT_EQUAL_INT(32767, test_read_int(max_result, 0));
     sqli_result_destroy(max_result);
 }
 
@@ -1068,7 +1084,7 @@ void test_dt_101_smallint_null(void)
     sqli_result_t *result = make_single_row_result(SQLI_TYPE_SMALLINT, 2, tuple, sizeof(tuple));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(result, 0));
-    TEST_ASSERT_EQUAL_INT(0, sqli_result_get_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(0, test_read_int(result, 0));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_was_null(result));
     sqli_result_destroy(result);
 }
@@ -1078,13 +1094,13 @@ void test_dt_102_integer_bounds(void)
     const uint8_t tuple_min[] = {0x80, 0x00, 0x00, 0x01}; /* -2147483647 */
     sqli_result_t *min_result = make_single_row_result(SQLI_TYPE_INT, 4, tuple_min, sizeof(tuple_min));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(min_result));
-    TEST_ASSERT_EQUAL_INT32(-2147483647, sqli_result_get_int(min_result, 0));
+    TEST_ASSERT_EQUAL_INT32(-2147483647, test_read_int(min_result, 0));
     sqli_result_destroy(min_result);
 
     const uint8_t tuple_max[] = {0x7F, 0xFF, 0xFF, 0xFF}; /* INT32_MAX */
     sqli_result_t *max_result = make_single_row_result(SQLI_TYPE_INT, 4, tuple_max, sizeof(tuple_max));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(max_result));
-    TEST_ASSERT_EQUAL_INT32(INT32_MAX, sqli_result_get_int(max_result, 0));
+    TEST_ASSERT_EQUAL_INT32(INT32_MAX, test_read_int(max_result, 0));
     sqli_result_destroy(max_result);
 }
 
@@ -1094,7 +1110,7 @@ void test_dt_102_integer_null(void)
     sqli_result_t *result = make_single_row_result(SQLI_TYPE_INT, 4, tuple, sizeof(tuple));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(result, 0));
-    TEST_ASSERT_EQUAL_INT(0, sqli_result_get_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(0, test_read_int(result, 0));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_was_null(result));
     sqli_result_destroy(result);
 }
@@ -1104,13 +1120,13 @@ void test_dt_103_bigint_bounds(void)
     const uint8_t tuple_min[] = {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}; /* -9223372036854775807LL */
     sqli_result_t *min_result = make_single_row_result(SQLI_TYPE_BIGINT, 8, tuple_min, sizeof(tuple_min));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(min_result));
-    TEST_ASSERT_EQUAL_INT64(-9223372036854775807LL, sqli_result_get_int64(min_result, 0));
+    TEST_ASSERT_EQUAL_INT64(-9223372036854775807LL, test_read_int64(min_result, 0));
     sqli_result_destroy(min_result);
 
     const uint8_t tuple_max[] = {0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; /* INT64_MAX */
     sqli_result_t *max_result = make_single_row_result(SQLI_TYPE_BIGINT, 8, tuple_max, sizeof(tuple_max));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(max_result));
-    TEST_ASSERT_EQUAL_INT64(INT64_MAX, sqli_result_get_int64(max_result, 0));
+    TEST_ASSERT_EQUAL_INT64(INT64_MAX, test_read_int64(max_result, 0));
     sqli_result_destroy(max_result);
 }
 
@@ -1120,7 +1136,7 @@ void test_dt_103_bigint_null(void)
     sqli_result_t *result = make_single_row_result(SQLI_TYPE_BIGINT, 8, tuple, sizeof(tuple));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(result, 0));
-    TEST_ASSERT_EQUAL_INT(0, sqli_result_get_int64(result, 0));
+    TEST_ASSERT_EQUAL_INT(0, test_read_int64(result, 0));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_was_null(result));
     sqli_result_destroy(result);
 }
@@ -1132,14 +1148,14 @@ void test_dt_104_serial8_bounds(void)
     sqli_result_t *min_result = make_single_row_result(SQLI_TYPE_SERIAL8, 10,
                                                         tuple_min, sizeof(tuple_min));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(min_result));
-    TEST_ASSERT_EQUAL_INT64(INT64_MIN, sqli_result_get_int64(min_result, 0));
+    TEST_ASSERT_EQUAL_INT64(INT64_MIN, test_read_int64(min_result, 0));
     sqli_result_destroy(min_result);
 
     const uint8_t tuple_max[] = {0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F, 0xFF, 0xFF, 0xFF};
     sqli_result_t *max_result = make_single_row_result(SQLI_TYPE_SERIAL8, 10,
                                                         tuple_max, sizeof(tuple_max));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(max_result));
-    TEST_ASSERT_EQUAL_INT64(INT64_MAX, sqli_result_get_int64(max_result, 0));
+    TEST_ASSERT_EQUAL_INT64(INT64_MAX, test_read_int64(max_result, 0));
     sqli_result_destroy(max_result);
 }
 
@@ -1168,7 +1184,7 @@ void test_dt_201_decimal_get_double_packed(void)
                                                     tuple, sizeof(tuple));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
     TEST_ASSERT_FLOAT_WITHIN(0.000001f, 12345.6789f,
-                             (float)sqli_result_get_double(result, 0));
+                             (float)test_read_double(result, 0));
     sqli_result_destroy(result);
 }
 
@@ -1180,7 +1196,7 @@ void test_dt_202_numeric_get_double_packed(void)
                                                     tuple, sizeof(tuple));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
     TEST_ASSERT_FLOAT_WITHIN(0.000001f, -42.125f,
-                             (float)sqli_result_get_double(result, 0));
+                             (float)test_read_double(result, 0));
     sqli_result_destroy(result);
 }
 
@@ -1192,7 +1208,7 @@ void test_dt_203_money_get_double_packed(void)
                                                     tuple, sizeof(tuple));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
     TEST_ASSERT_FLOAT_WITHIN(0.000001f, -98765.43f,
-                             (float)sqli_result_get_double(result, 0));
+                             (float)test_read_double(result, 0));
     sqli_result_destroy(result);
 }
 
@@ -1202,7 +1218,7 @@ void test_dt_301_float_double_roundtrip(void)
     const uint8_t tuple[] = {0x40, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     sqli_result_t *result = make_single_row_result(SQLI_TYPE_FLOAT, 8, tuple, sizeof(tuple));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
-    TEST_ASSERT_FLOAT_WITHIN(0.000001f, 3.5f, (float)sqli_result_get_double(result, 0));
+    TEST_ASSERT_FLOAT_WITHIN(0.000001f, 3.5f, (float)test_read_double(result, 0));
     sqli_result_destroy(result);
 }
 
@@ -1237,7 +1253,7 @@ void test_dt_501_boolean_roundtrip(void)
                                                        tuple_true_ascii,
                                                        sizeof(tuple_true_ascii));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(true_ascii));
-    TEST_ASSERT_EQUAL_INT(1, sqli_result_get_int(true_ascii, 0));
+    TEST_ASSERT_EQUAL_INT(1, test_read_int(true_ascii, 0));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(true_ascii));
     sqli_result_destroy(true_ascii);
 
@@ -1246,7 +1262,7 @@ void test_dt_501_boolean_roundtrip(void)
                                                         tuple_false_ascii,
                                                         sizeof(tuple_false_ascii));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(false_ascii));
-    TEST_ASSERT_EQUAL_INT(0, sqli_result_get_int(false_ascii, 0));
+    TEST_ASSERT_EQUAL_INT(0, test_read_int(false_ascii, 0));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(false_ascii));
     sqli_result_destroy(false_ascii);
 }
@@ -1266,7 +1282,7 @@ void test_dt_502_boolean_null_roundtrip(void)
                                                         sizeof(tuple_null));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(null_result));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(null_result, 0));
-    TEST_ASSERT_EQUAL_INT(0, sqli_result_get_int(null_result, 0));
+    TEST_ASSERT_EQUAL_INT(0, test_read_int(null_result, 0));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_was_null(null_result));
     sqli_result_destroy(null_result);
 }
@@ -1279,7 +1295,7 @@ void test_dt_503_boolean_true_0xff_roundtrip(void)
                                                     tuple_true_ff,
                                                     sizeof(tuple_true_ff));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(true_ff));
-    TEST_ASSERT_EQUAL_INT(1, sqli_result_get_int(true_ff, 0));
+    TEST_ASSERT_EQUAL_INT(1, test_read_int(true_ff, 0));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(true_ff));
     sqli_result_destroy(true_ff);
 }
@@ -1321,7 +1337,7 @@ void test_dt_206_result_is_null_and_was_null(void)
     sqli_result_t *result = make_single_row_result(SQLI_TYPE_INT, 4, tuple, sizeof(tuple));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(result, 0));
-    (void)sqli_result_get_int(result, 0);
+    (void)test_read_int(result, 0);
     TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(result));
     sqli_result_destroy(result);
 }
@@ -1333,7 +1349,7 @@ void test_dt_207_float_smfloat_null_detection(void)
     sqli_result_t *res1 = make_single_row_result(SQLI_TYPE_SMFLOAT, 4, smfloat_null, sizeof(smfloat_null));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(res1));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(res1, 0));
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, (float)sqli_result_get_double(res1, 0));
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, (float)test_read_double(res1, 0));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_was_null(res1));
     sqli_result_destroy(res1);
 
@@ -1342,7 +1358,7 @@ void test_dt_207_float_smfloat_null_detection(void)
     sqli_result_t *res2 = make_single_row_result(SQLI_TYPE_FLOAT, 8, float_null, sizeof(float_null));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(res2));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_is_null(res2, 0));
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, (float)sqli_result_get_double(res2, 0));
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, (float)test_read_double(res2, 0));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_was_null(res2));
     sqli_result_destroy(res2);
 
@@ -1351,7 +1367,7 @@ void test_dt_207_float_smfloat_null_detection(void)
     sqli_result_t *res3 = make_single_row_result(SQLI_TYPE_FLOAT, 8, float_val, sizeof(float_val));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(res3));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res3, 0));
-    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 1.0f, (float)sqli_result_get_double(res3, 0));
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 1.0f, (float)test_read_double(res3, 0));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(res3));
     sqli_result_destroy(res3);
 }
@@ -1363,7 +1379,7 @@ void test_dt_208_smfloat_decoding(void)
     sqli_result_t *res = make_single_row_result(SQLI_TYPE_SMFLOAT, 4, smfloat_val, sizeof(smfloat_val));
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(res));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_is_null(res, 0));
-    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 3.14f, (float)sqli_result_get_double(res, 0));
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 3.14f, (float)test_read_double(res, 0));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(res));
     sqli_result_destroy(res);
 }
@@ -1809,9 +1825,9 @@ void test_count_zero_decimal_decoding(void)
                                                     tuple, sizeof(tuple));
     TEST_ASSERT_NOT_NULL(result);
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
-    TEST_ASSERT_EQUAL_INT(0, sqli_result_get_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(0, test_read_int(result, 0));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(result));
-    TEST_ASSERT_EQUAL_INT64(0, sqli_result_get_int64(result, 0));
+    TEST_ASSERT_EQUAL_INT64(0, test_read_int64(result, 0));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(result));
     TEST_ASSERT_EQUAL_STRING("0", sqli_result_get_string(result, 0));
     sqli_result_destroy(result);
@@ -1825,9 +1841,9 @@ void test_int8_zero_get_int(void)
                                                     tuple, sizeof(tuple));
     TEST_ASSERT_NOT_NULL(result);
     TEST_ASSERT_EQUAL_INT(1, sqli_result_next(result));
-    TEST_ASSERT_EQUAL_INT(0, sqli_result_get_int(result, 0));
+    TEST_ASSERT_EQUAL_INT(0, test_read_int(result, 0));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(result));
-    TEST_ASSERT_EQUAL_INT64(0, sqli_result_get_int64(result, 0));
+    TEST_ASSERT_EQUAL_INT64(0, test_read_int64(result, 0));
     TEST_ASSERT_EQUAL_INT(0, sqli_result_was_null(result));
     sqli_result_destroy(result);
 }

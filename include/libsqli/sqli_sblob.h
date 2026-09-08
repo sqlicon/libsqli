@@ -49,6 +49,31 @@ void sqli_sblob_destroy(sqli_sblob_t *lob);
 sqli_status sqli_sblob_is_open(const sqli_sblob_t *lob, bool *out);
 sqli_status sqli_sblob_get_type(const sqli_sblob_t *lob, sqli_sblob_type *out);
 
+/** Independent opaque read cursor opened directly from a created handle.
+ * The connection is borrowed and must outlive the cursor's I/O and close calls.
+ * Opening returns an owned pointer, unchanged on failure. It does not move the
+ * upload descriptor or retain the source handle.
+ * The source may be destroyed after opening; close every reader before releasing
+ * its server object. Synchronize all use with connection/handle mutation.
+ */
+typedef struct sqli_sblob_read_cursor sqli_sblob_read_cursor_t;
+sqli_status sqli_sblob_reader_open(sqli_conn_t *conn, const sqli_sblob_t *source,
+                                    sqli_sblob_read_cursor_t **out);
+/** Read up to capacity bytes. A zero-byte success indicates EOF (unless capacity
+ * is zero). Zero capacity is a no-op and permits a NULL buffer. Capacity is at
+ * most INT32_MAX. On error bytes_read is unchanged, buffer contents unspecified.
+ * After a transport/protocol failure, discard the connection before destroy.
+ */
+sqli_status sqli_sblob_reader_read(sqli_sblob_read_cursor_t *reader, void *buffer,
+                                    size_t capacity, size_t *bytes_read);
+/** Seek relative to this reader's position and read. Zero capacity does not seek. */
+sqli_status sqli_sblob_reader_read_seek(sqli_sblob_read_cursor_t *reader, int64_t relative_offset,
+                                         void *buffer, size_t capacity, size_t *bytes_read);
+/** Close the independent server descriptor; repeat close succeeds. */
+sqli_status sqli_sblob_reader_close(sqli_sblob_read_cursor_t *reader);
+/** Free client storage only, after close or connection termination; NULL allowed. */
+void sqli_sblob_reader_destroy(sqli_sblob_read_cursor_t *reader);
+
 typedef sqli_status (*sqli_sblob_reader)(
     void *context,
     unsigned char *buffer,
@@ -133,11 +158,11 @@ sqli_status sqli_sblob_release(sqli_conn_t *conn, sqli_sblob_t *lob);
  * @brief Bind a Smart Large Object locator to a prepared statement parameter.
  *
  * @param[in] stmt Prepared statement handle.
- * @param[in] parameter_index 1-based parameter index.
+ * @param[in] parameter_index 0-based parameter index.
  * @param[in] lob Created Smart-LOB handle with valid locator (or NULL for NULL).
  * @return SQLI_OK on success.
  */
-sqli_status sqli_bind_sblob(sqli_stmt_t *stmt, int parameter_index, const sqli_sblob_t *lob);
+sqli_status sqli_bind_sblob(sqli_stmt_t *stmt, size_t parameter_index, const sqli_sblob_t *lob);
 
 /**
  * @brief Open a smart large object from its hexadecimal locator string (for BLOB).

@@ -114,17 +114,17 @@ typedef struct {
  * allocation. NULL is taken from the object; a NULL C pointer is invalid.
  * Exact representability is required: SQLI_INEXACT or SQLI_OUT_OF_RANGE leaves
  * the preceding binding unchanged. Source ownership may end after binding;
- * batch snapshots retain copies. Parameter indices are 1-based. Synchronize
+ * batch snapshots retain copies. Parameter indices are 0-based. Synchronize
  * statement and source mutation externally. The server converts to the SQL
  * expression's target type; no PREPARE ordinal inference is performed.
  */
-sqli_status sqli_bind_decimal(sqli_stmt_t *stmt, int param_index, const sqli_decimal_t *value,
+sqli_status sqli_bind_decimal(sqli_stmt_t *stmt, size_t param_index, const sqli_decimal_t *value,
                               const sqli_decimal_target_t *target);
 
 /*
  * Bind textual DECIMAL/NUMERIC representation (e.g. "123.45").
  */
-sqli_status sqli_bind_decimal_string(sqli_stmt_t *stmt, int param_index, const char *value);
+sqli_status sqli_bind_decimal_string(sqli_stmt_t *stmt, size_t param_index, const char *value);
 
 /** DECIMAL/MONEY precision and fixed scale. Floating scale is unavailable. */
 sqli_status sqli_descriptor_field_get_precision(const sqli_descriptor_field_t *field, uint8_t *out);
@@ -148,25 +148,6 @@ sqli_status sqli_result_get_decimal(sqli_result_t *result, size_t index, sqli_de
  * getter and formatter for explicit status and caller-owned buffers.
  */
 const char *sqli_result_get_decimal_string(sqli_result_t *result, size_t col_index);
-
-/*
- * Encode a DECIMAL value into a buffer using BCD encoding.
- *
- * precision: total number of digits (1-15)
- * scale: number of digits after decimal point (0 <= scale <= precision)
- * negative: non-zero for negative numbers
- * digits: array of 'precision' decimal digits (0-9)
- *
- * Wire format (spec §7.4): [2-byte length][exponent byte][BCD digit bytes]
- * exponent byte = ((exp+64) & 0x7F) | (positive ? 0x80 : 0x00)
- * where exp = (precision - scale) - 1.
- * Negative values are 10's-complemented in the BCD digit bytes.
- *
- * Returns bytes written, 0 on error (buffer too small).
- */
-size_t sqli_encode_decimal(uint8_t *buf, size_t buf_size,
-                           uint8_t precision, uint8_t scale,
-                           int negative, const uint8_t *digits);
 
 #ifdef __cplusplus
 }

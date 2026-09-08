@@ -1,3 +1,4 @@
+#include "scalar_assertions.h"
 #include "libsqli/sqli_decimal.h"
 #include "libsqli/sqli.h"
 #include "unity.h"
@@ -81,7 +82,7 @@ static void test_native_values_and_owned_lifetime(void)
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_result_get_decimal(result, native_column, value));
     TEST_ASSERT_TRUE(result->last_was_null);
     expect_text("123.4500");
-    TEST_ASSERT_EQUAL_INT(42, sqli_result_get_int(result, sentinel_column));
+    TEST_ASSERT_EQUAL_INT(42, test_read_int(result, sentinel_column));
     TEST_ASSERT_EQUAL_INT(SQLI_EOF, sqli_result_fetch(result));
     expect_text("123.4500");
     sqli_result_destroy(result);

@@ -153,7 +153,7 @@ static void test_interval_getter_and_typed_null(void)
 static void test_native_bind_copy_batch_and_atomic_failure(void)
 {
     sqli_test_fail_next_allocation();
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_datetime(&statement, 1, datetime, &full_range));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_datetime(&statement, 0, datetime, &full_range));
     TEST_ASSERT_EQUAL_INT(SQLI_BIND_DATETIME, parameter.type);
     TEST_ASSERT_EQUAL_UINT16(0x0e0a, parameter.native_qualifier);
     sqli_datetime_t *allocation = NULL;
@@ -162,15 +162,15 @@ static void test_native_bind_copy_batch_and_atomic_failure(void)
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_stmt_batch_add(&statement));
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_datetime_set_null(datetime));
     TEST_ASSERT_FALSE(parameter.is_null);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_datetime(&statement, 1, datetime, &full_range));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_datetime(&statement, 0, datetime, &full_range));
     TEST_ASSERT_TRUE(parameter.is_null);
     TEST_ASSERT_FALSE(statement.batch_rows[0].params[0].is_null);
     TEST_ASSERT_EQUAL_MEMORY(original.native_bytes, statement.batch_rows[0].params[0].native_bytes,
                              original.native_length);
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_interval(&statement, 1, interval, &day_range, 3));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_interval(&statement, 0, interval, &day_range, 3));
     original = parameter;
-    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_interval(&statement, 1, interval, &day_range, 0));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_bind_datetime(&statement, 1, NULL, &full_range));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_interval(&statement, 0, interval, &day_range, 0));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_bind_datetime(&statement, 0, NULL, &full_range));
     TEST_ASSERT_EQUAL_MEMORY(original.native_bytes, parameter.native_bytes, original.native_length);
     TEST_ASSERT_EQUAL_UINT16(original.native_qualifier, parameter.native_qualifier);
     TEST_ASSERT_EQUAL_INT(SQLI_BIND_INTERVAL, parameter.type);
@@ -182,16 +182,16 @@ static void test_bind_precision_and_range_failures(void)
     const sqli_temporal_range_t wider = {SQLI_FIELD_SECOND, SQLI_FIELD_FRACTION, 9};
     const sqli_interval_parts_t parts = {.range = wider, .seconds = 12, .nanosecond = 123456789};
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_interval_set_parts(interval, &parts));
-    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(&statement, 1, 42));
-    TEST_ASSERT_EQUAL_INT(SQLI_INEXACT, sqli_bind_interval(&statement, 1, interval, &fraction, 2));
-    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_interval(&statement, 1, interval, &wider, 2));
-    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_interval(&statement, 1, interval, &fraction, 1));
-    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_bind_interval(&statement, 1, interval, &day_range, 3));
+    TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_bind_int(&statement, 0, 42));
+    TEST_ASSERT_EQUAL_INT(SQLI_INEXACT, sqli_bind_interval(&statement, 0, interval, &fraction, 2));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_interval(&statement, 0, interval, &wider, 2));
+    TEST_ASSERT_EQUAL_INT(SQLI_OUT_OF_RANGE, sqli_bind_interval(&statement, 0, interval, &fraction, 1));
+    TEST_ASSERT_EQUAL_INT(SQLI_INVALID_ARGUMENT, sqli_bind_interval(&statement, 0, interval, &day_range, 3));
     TEST_ASSERT_EQUAL_INT(SQLI_BIND_INT, parameter.type);
     TEST_ASSERT_EQUAL_INT(42, parameter.value.ival);
     const sqli_temporal_range_t coarse = {SQLI_FIELD_YEAR, SQLI_FIELD_FRACTION, 3};
     TEST_ASSERT_EQUAL_INT(SQLI_OK, sqli_datetime_parse_iso(datetime, "2000-02-29T01:02:03.12345", 25, false));
-    TEST_ASSERT_EQUAL_INT(SQLI_INEXACT, sqli_bind_datetime(&statement, 1, datetime, &coarse));
+    TEST_ASSERT_EQUAL_INT(SQLI_INEXACT, sqli_bind_datetime(&statement, 0, datetime, &coarse));
     TEST_ASSERT_EQUAL_INT(SQLI_BIND_INT, parameter.type);
 }
 
