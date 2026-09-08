@@ -1,10 +1,17 @@
 #ifndef SQLI_VERSION_H
 #define SQLI_VERSION_H
 
-/* Generated from project(sqli VERSION ...) in CMakeLists.txt. */
+/** @file
+ * @brief Version constants generated from the CMake project version.
+ */
+
+/** Generated from project(sqli VERSION ...) in CMakeLists.txt. */
 #define SQLI_VERSION "@sqli_VERSION@"
+/** @brief Major component of the CMake project version. */
 #define SQLI_VERSION_MAJOR @sqli_VERSION_MAJOR@
+/** @brief Minor component of the CMake project version. */
 #define SQLI_VERSION_MINOR @sqli_VERSION_MINOR@
+/** @brief Patch component of the CMake project version. */
 #define SQLI_VERSION_PATCH @sqli_VERSION_PATCH@
 
 #endif

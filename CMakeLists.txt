@@ -344,6 +344,13 @@ if (SQLI_BUILD_TESTS)
             LABELS "live;native" SKIP_RETURN_CODE 77 TIMEOUT 120)
     endif()
 
+    # Manual protocol experiment; deliberately excluded from automatic CTest runs.
+    if (SQLI_ENABLE_LIVE_TESTS AND UNIX)
+        add_executable(sqli_cancel_probe ${SQLI_TEST_DIR}/cancel_probe_posix.c)
+        target_include_directories(sqli_cancel_probe PRIVATE ${SQLI_SRC_DIR})
+        target_link_libraries(sqli_cancel_probe PRIVATE sqli Threads::Threads)
+    endif()
+
     add_executable(sqli_temporal_matrix ${SQLI_TEST_DIR}/test_temporal_matrix.c)
     target_include_directories(sqli_temporal_matrix PRIVATE ${SQLI_SRC_DIR})
     target_link_libraries(sqli_temporal_matrix PRIVATE sqli)

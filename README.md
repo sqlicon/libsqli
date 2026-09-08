@@ -292,3 +292,14 @@ For detailed specifications of the message structures, handshake packets, and fr
 ## License
 
 This project is licensed under the terms of the license file included in the repository root. See [LICENSE](LICENSE) for details.
+
+### API reference and lifecycle contracts
+
+Generate the public C API reference with `doxygen Doxyfile` from the repository
+root; open `build/doxygen/html/index.html`. Generation checks undocumented public
+symbols and Doxygen references. The generated files remain local.
+
+See [process ownership and fork restrictions](doc/PROCESS_LIFECYCLE.md),
+[cancellation feasibility](doc/CANCELLATION_FEASIBILITY.md), and
+[feature request decisions](doc/FEATURE_REQUEST_STATUS.md). Cancellation and
+child-detach APIs are not yet public capabilities.

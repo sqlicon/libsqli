@@ -1,0 +1,25 @@
+PROJECT_NAME           = libsqli
+PROJECT_BRIEF          = "Experimental C11 Informix client API"
+OUTPUT_DIRECTORY       = build/doxygen
+INPUT                  = include/libsqli doc/PROCESS_LIFECYCLE.md doc/CANCELLATION_FEASIBILITY.md doc/FEATURE_REQUEST_STATUS.md doc/APPLICATION_API.md
+FILE_PATTERNS          = *.h *.h.in *.md
+EXTENSION_MAPPING      = in=C
+RECURSIVE              = NO
+EXTRACT_ALL            = NO
+EXTRACT_STATIC         = NO
+JAVADOC_AUTOBRIEF       = YES
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_XML           = YES
+QUIET                  = YES
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_AS_ERROR          = FAIL_ON_WARNINGS
+WARN_LOGFILE           = build/doxygen-warnings.log
+FULL_PATH_NAMES        = NO
+
+HAVE_DOT = NO
+
+EXCLUDE_SYMBOLS = SQLI_VERSION_H
+WARN_IF_UNDOC_ENUM_VAL = YES

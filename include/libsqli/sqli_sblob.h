@@ -1,41 +1,55 @@
 #ifndef SQLI_SBLOB_H
 #define SQLI_SBLOB_H
 
+/** @file sqli_sblob.h
+ * @brief Smart large object upload handles, independent readers and descriptor operations.
+ */
+
 #include "sqli.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* ----------------------------------------------------------------
- * Smart Large Object (BLOB / CLOB) API
- * ---------------------------------------------------------------- */
+/** @name Smart Large Object (BLOB / CLOB) API
+ * @{ */
 
+/** @brief Append-mode flag for explicit descriptor operations. */
 #define SQLI_LO_APPEND       1
+/** @brief Open a smart large object for writing. */
 #define SQLI_LO_WRONLY       2
+/** @brief Open a smart large object for reading. */
 #define SQLI_LO_RDONLY       4
+/** @brief Open a smart large object for reading and writing. */
 #define SQLI_LO_RDWR         8
 
+/** @brief Seek-origin constant for the start of an object; not accepted by read_seek(). */
 #define SQLI_LO_SEEK_SET     0
+/** @brief Seek-origin constant for the current position; read_seek() uses this origin. */
 #define SQLI_LO_SEEK_CUR     1
+/** @brief Seek-origin constant for the end of an object; not accepted by read_seek(). */
 #define SQLI_LO_SEEK_END     2
 
+/** @brief Semantic smart large object kind. */
 typedef enum {
-    SQLI_SBLOB_BLOB = 0,
-    SQLI_SBLOB_CLOB = 1
+    SQLI_SBLOB_BLOB = 0, /**< Binary smart large object. */
+    SQLI_SBLOB_CLOB = 1 /**< Character smart large object. */
 } sqli_sblob_type;
 
+/** @brief Optional creation settings; use SQLI_SBLOB_OPTIONS_INIT for defaults. */
 typedef struct {
-    const char *sbspace;      /* NULL: server/column default */
-    int64_t estimated_bytes;  /* -1: unspecified */
-    int64_t maximum_bytes;    /* -1: unspecified */
-    int32_t extent_kib;       /* -1: unspecified */
-    uint32_t create_flags;    /* 0: inherited defaults */
-    int open_mode;            /* normally SQLI_LO_WRONLY or SQLI_LO_RDWR */
+    const char *sbspace;      /**< NULL: server/column default */
+    int64_t estimated_bytes;  /**< -1: unspecified */
+    int64_t maximum_bytes;    /**< -1: unspecified */
+    int32_t extent_kib;       /**< -1: unspecified */
+    uint32_t create_flags;    /**< 0: inherited defaults */
+    int open_mode;            /**< normally SQLI_LO_WRONLY or SQLI_LO_RDWR */
 } sqli_sblob_options;
 
+/** @brief Default creation options: server defaults and a write-only descriptor. */
 #define SQLI_SBLOB_OPTIONS_INIT { NULL, -1, -1, -1, 0, SQLI_LO_WRONLY }
 
+/** Owned opaque upload handle; close/release before client destruction. */
 typedef struct sqli_sblob sqli_sblob_t;
 
 /** Free only client-side storage; NULL is allowed. Close an open descriptor
@@ -47,6 +61,7 @@ typedef struct sqli_sblob sqli_sblob_t;
 void sqli_sblob_destroy(sqli_sblob_t *lob);
 /** Semantic inspection; invalid pointers fail without modifying outputs. */
 sqli_status sqli_sblob_is_open(const sqli_sblob_t *lob, bool *out);
+/** @brief Inspect the semantic BLOB/CLOB type; failure preserves out. */
 sqli_status sqli_sblob_get_type(const sqli_sblob_t *lob, sqli_sblob_type *out);
 
 /** Independent opaque read cursor opened directly from a created handle.
@@ -57,6 +72,12 @@ sqli_status sqli_sblob_get_type(const sqli_sblob_t *lob, sqli_sblob_type *out);
  * its server object. Synchronize all use with connection/handle mutation.
  */
 typedef struct sqli_sblob_read_cursor sqli_sblob_read_cursor_t;
+/** @brief Open an owned independent read cursor from a created BLOB/CLOB handle.
+ * @param conn Borrowed connection; keep alive through reader I/O and close.
+ * @param source Created handle with valid locator; its position is unchanged.
+ * @param[out] out Owned cursor, unchanged on failure.
+ * @return SQLI_OK on success, otherwise a local or server failure.
+ * @see sqli_sblob_read_cursor_t for source lifetime and synchronization. */
 sqli_status sqli_sblob_reader_open(sqli_conn_t *conn, const sqli_sblob_t *source,
                                     sqli_sblob_read_cursor_t **out);
 /** Read up to capacity bytes. A zero-byte success indicates EOF (unless capacity
@@ -74,6 +95,14 @@ sqli_status sqli_sblob_reader_close(sqli_sblob_read_cursor_t *reader);
 /** Free client storage only, after close or connection termination; NULL allowed. */
 void sqli_sblob_reader_destroy(sqli_sblob_read_cursor_t *reader);
 
+/** Upload callback invoked synchronously by sqli_sblob_write_stream().
+ * @param context Borrowed caller context.
+ * @param[out] buffer Borrowed scratch storage, valid only during this callback.
+ * @param capacity Maximum number of bytes to supply.
+ * @param[out] bytes_read Bytes supplied; zero with SQLI_OK means EOF.
+ * @return SQLI_OK to supply data/EOF; another status aborts the upload.
+ * Never report more than capacity. Do not reenter the same connection.
+ */
 typedef sqli_status (*sqli_sblob_reader)(
     void *context,
     unsigned char *buffer,
@@ -216,7 +245,7 @@ sqli_status sqli_sblob_read(sqli_conn_t *conn, int lofd, void *buf, size_t nbyte
  * @brief Seek and read data from an open smart large object using SQ_LODATA (subCom = 1).
  * @param[in] conn Active connection.
  * @param[in] lofd Open file descriptor handle.
- * @param[in] offset Byte offset to seek to.
+ * @param[in] offset Signed byte displacement from the current reader position.
  * @param[out] buf Destination buffer.
  * @param[in] nbytes Maximum bytes to read.
  * @param[out] bytes_read Number of bytes actually read.
@@ -247,6 +276,8 @@ sqli_status sqli_sblob_write(sqli_conn_t *conn, int lofd, const void *buf, size_
  */
 sqli_status sqli_result_read_sblob(sqli_result_t *res, size_t col_index,
                                    void *buf, size_t nbytes, size_t *bytes_read);
+
+/** @} */
 
 #ifdef __cplusplus
 }

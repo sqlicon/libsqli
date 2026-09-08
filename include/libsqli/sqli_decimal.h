@@ -1,39 +1,11 @@
 #ifndef SQLI_DECIMAL_H
 #define SQLI_DECIMAL_H
 
-#include "sqli.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-/* ----------------------------------------------------------------
- * Exact decimal values (DECIMAL / NUMERIC / MONEY)
- * ---------------------------------------------------------------- */
-
-/** Resource ceilings, independent of server precision/scale limits. */
-enum {
-    SQLI_DECIMAL_LIMB_BASE = 1000000000,
-    SQLI_DECIMAL_MAX_DIGITS = 1000000,
-    SQLI_DECIMAL_MAX_TEXT = SQLI_DECIMAL_MAX_DIGITS + 32
-};
-
-typedef struct sqli_decimal sqli_decimal_t;
-
-/** Borrowed coefficient, least significant base-10^9 limb first.
- * value = sign * coefficient * 10^(-scale). Each limb must be below
- * SQLI_DECIMAL_LIMB_BASE. Zero may have no limbs; its sign is nonnegative
- * and its scale is retained. Numeric fields are ignored for SQL NULL.
- */
-typedef struct {
-    const uint32_t *limbs;
-    size_t limb_count;
-    int32_t scale;
-    bool negative;
-    bool is_null;
-} sqli_decimal_parts_t;
-
-/** The standalone decimal value operations below are reentrant. Distinct objects may be used
+/** @file sqli_decimal.h
+ * @brief Exact decimal values and native decimal read/bind operations.
+ *
+ * @par Standalone value contract
+ * The standalone decimal value operations below are reentrant. Distinct objects may be used
  * concurrently; a shared object requires external synchronization when any
  * thread modifies it. Read-only operations may run concurrently.
  *
@@ -43,12 +15,50 @@ typedef struct {
  * A null C object pointer is SQLI_INVALID_ARGUMENT, never SQL NULL.
  * destroy(NULL) is allowed. No function uses a connection or server conversion.
  */
+
+#include "sqli.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/** @name Exact decimal values (DECIMAL / NUMERIC / MONEY)
+ * @{ */
+
+/** Resource ceilings, independent of server precision/scale limits. */
+enum {
+    SQLI_DECIMAL_LIMB_BASE = 1000000000, /**< Radix of each coefficient limb (10^9). */
+    SQLI_DECIMAL_MAX_DIGITS = 1000000, /**< Maximum application coefficient length in decimal digits. */
+    SQLI_DECIMAL_MAX_TEXT = SQLI_DECIMAL_MAX_DIGITS + 32 /**< Maximum accepted decimal text length in bytes. */
+};
+
+/** @brief Owned opaque exact decimal value with scale and SQL NULL state. */
+typedef struct sqli_decimal sqli_decimal_t;
+
+/** Borrowed coefficient, least significant base-10^9 limb first.
+ * value = sign * coefficient * 10^(-scale). Each limb must be below
+ * SQLI_DECIMAL_LIMB_BASE. Zero may have no limbs; its sign is nonnegative
+ * and its scale is retained. Numeric fields are ignored for SQL NULL.
+ */
+typedef struct {
+    const uint32_t *limbs; /**< Borrowed base-10^9 coefficient limbs, least significant first. */
+    size_t limb_count; /**< Number of coefficient limbs. */
+    int32_t scale; /**< Decimal scale. */
+    bool negative; /**< True when the nonzero value is negative. */
+    bool is_null; /**< True denotes SQL NULL. */
+} sqli_decimal_parts_t;
+
+
 /** Allocate an owned SQL-NULL value. On failure, out is unchanged. */
 sqli_status sqli_decimal_create(sqli_decimal_t **out);
+/** @brief Free an owned decimal value; NULL is allowed. */
 void sqli_decimal_destroy(sqli_decimal_t *value);
+/** @brief Copy a decimal including scale and NULL state; failure preserves destination. */
 sqli_status sqli_decimal_copy(sqli_decimal_t *destination,
                               const sqli_decimal_t *source);
+/** @brief Inspect SQL NULL state without modifying the value; failure preserves out. */
 sqli_status sqli_decimal_is_null(const sqli_decimal_t *value, bool *out);
+/** @brief Replace the value with SQL NULL. */
 sqli_status sqli_decimal_set_null(sqli_decimal_t *value);
 
 /** Import validates and copies. Leading zero limbs are removed; decimal
@@ -62,6 +72,8 @@ sqli_status sqli_decimal_set_parts(sqli_decimal_t *value,
  */
 sqli_status sqli_decimal_get_parts(const sqli_decimal_t *value,
                                    sqli_decimal_parts_t *out);
+/** @brief Set a signed coefficient and decimal scale, preserving the value on failure.
+ * The numeric value is coefficient multiplied by 10 to the power of -scale. */
 sqli_status sqli_decimal_set_i64(sqli_decimal_t *value, int64_t coefficient,
                                  int32_t scale);
 /** Convert the numeric value exactly, not merely its coefficient.
@@ -104,9 +116,9 @@ sqli_status sqli_decimal_format(const sqli_decimal_t *value, char *buffer,
 
 /** Explicit source SQL decimal type. Floating scale ignores scale. */
 typedef struct {
-    uint8_t precision;
-    uint8_t scale;
-    bool floating_scale;
+    uint8_t precision; /**< Source decimal precision, 1..32. */
+    uint8_t scale; /**< Decimal scale. */
+    bool floating_scale; /**< True selects floating scale and ignores scale. */
 } sqli_decimal_target_t;
 
 /** Bind a copied native DECIMAL/NUMERIC/MONEY value using explicit source
@@ -121,13 +133,15 @@ typedef struct {
 sqli_status sqli_bind_decimal(sqli_stmt_t *stmt, size_t param_index, const sqli_decimal_t *value,
                               const sqli_decimal_target_t *target);
 
-/*
+/**
  * Bind textual DECIMAL/NUMERIC representation (e.g. "123.45").
  */
 sqli_status sqli_bind_decimal_string(sqli_stmt_t *stmt, size_t param_index, const char *value);
 
 /** DECIMAL/MONEY precision and fixed scale. Floating scale is unavailable. */
 sqli_status sqli_descriptor_field_get_precision(const sqli_descriptor_field_t *field, uint8_t *out);
+/** @brief Get fixed DECIMAL/MONEY scale; floating scale returns SQLI_METADATA_UNAVAILABLE.
+ * Failure preserves out; the caller must hold the owning descriptor reference. */
 sqli_status sqli_descriptor_field_get_scale(const sqli_descriptor_field_t *field, uint8_t *out);
 /** Read a DECIMAL/NUMERIC/MONEY column directly into an existing native object.
  * The index is zero-based. No implicit conversion from other column types:
@@ -142,12 +156,14 @@ sqli_status sqli_descriptor_field_get_scale(const sqli_descriptor_field_t *field
  */
 sqli_status sqli_result_get_decimal(sqli_result_t *result, size_t index, sqli_decimal_t *out);
 
-/*
+/**
  * Return thread-local decimal text; SQL NULL and failures return an empty
  * string. Successful reads update the legacy was_null flag. Use the native
  * getter and formatter for explicit status and caller-owned buffers.
  */
 const char *sqli_result_get_decimal_string(sqli_result_t *result, size_t col_index);
+
+/** @} */
 
 #ifdef __cplusplus
 }
